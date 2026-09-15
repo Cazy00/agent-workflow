@@ -1,0 +1,4 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0001", "expect": { "outcome": "Needs discovery or resolution", "reasons": ["D-0001", "only in the candidate"] } },
+  { "command": "ci", "task": "T-0001", "changed": ["src/a.ts", "docs/workflow/decisions/D-0001.md"], "expect": { "verdict": "fail", "findings": ["D-0001"] } }
+] }

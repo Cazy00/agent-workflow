@@ -1,0 +1,3 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0001", "expect": { "outcome": "Ready" } }
+] }

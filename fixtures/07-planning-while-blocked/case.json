@@ -1,0 +1,5 @@
+{ "runs": [
+  { "command": "ci", "task": "T-0001", "changed": ["docs/workflow/tasks/T-0001.md", "docs/workflow/feedback/inbox/F-0001.md"], "expect": { "verdict": "pass", "findings": ["planning"] } },
+  { "command": "ci", "changed": ["docs/workflow/tasks/T-0002.md"], "expect": { "verdict": "pass" } },
+  { "command": "ci", "task": "T-0001", "changed": ["src/a.ts"], "expect": { "verdict": "fail", "findings": ["D-0001"] } }
+] }

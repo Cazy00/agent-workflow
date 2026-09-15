@@ -1,0 +1,4 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0001", "expect": { "outcome": "Ready" } },
+  { "command": "ci", "task": "T-0001", "changed": ["src/a.ts"], "expect": { "verdict": "pass" } }
+] }

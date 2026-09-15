@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs the workflow validator pinned by docs/workflow/config.json. Same entry point for humans and CI.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CONFIG="$ROOT/docs/workflow/config.json"
+[ -f "$CONFIG" ] || { echo "wf: $CONFIG not found" >&2; exit 2; }
+read -r REPO REV < <(node -e '
+  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workflow;
+  if (!c.repo || !c.revision) { console.error("wf: workflow.repo and workflow.revision must be set"); process.exit(2); }
+  console.log(c.repo, c.revision)' "$CONFIG")
+CACHE="$ROOT/.cache/agent-workflow"
+if [ -n "${WF_LOCAL:-}" ]; then CACHE="$WF_LOCAL"      # developer override: a local checkout
+elif [ ! -d "$CACHE/.git" ]; then git clone --quiet "https://github.com/$REPO.git" "$CACHE"; fi
+if [ -z "${WF_LOCAL:-}" ] && [ "$(git -C "$CACHE" rev-parse HEAD)" != "$REV" ]; then
+  git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet "$REV"
+fi
+exec node "$CACHE/validator/cli.js" --repo "$ROOT" "$@"

@@ -1,0 +1,12 @@
+{
+  "name": "agent-workflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Policy, templates, readiness validator, and fixtures for the agent-assisted software development workflow",
+  "scripts": {
+    "test": "node --test validator/test/*.test.js",
+    "validate": "node validator/cli.js"
+  },
+  "engines": { "node": ">=22" }
+}

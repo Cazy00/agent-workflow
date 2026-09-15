@@ -1,0 +1,4 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0002", "expect": { "outcome": "Ready" } },
+  { "command": "readiness", "task": "T-0003", "expect": { "outcome": "Needs discovery or resolution", "reasons": ["T-0001"] } }
+] }

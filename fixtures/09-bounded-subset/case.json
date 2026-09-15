@@ -1,0 +1,5 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0001", "expect": { "outcome": "Ready for a bounded subset", "reasons": ["D-0001"] } },
+  { "command": "ci", "task": "T-0001", "changed": ["src/pricing/calc.ts"], "expect": { "verdict": "pass" } },
+  { "command": "ci", "task": "T-0001", "changed": ["src/receipt/pdf.ts"], "expect": { "verdict": "fail", "findings": ["src/receipt/pdf.ts"] } }
+] }

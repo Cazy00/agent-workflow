@@ -1,0 +1,10 @@
+---
+record: profile
+project: Fixture
+workflow_version: 1.0.0
+approval_mechanism: github-rulesets-codeowners
+approval_label: enforced
+coordinator: owner
+setup_budget_days: 2
+---
+# Fixture profile

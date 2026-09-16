@@ -1,11 +1,14 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { loadConfig, validateRecords } from './records.js';
+import { loadConfig, validateRecords, loadAll, list } from './records.js';
 import { classifyPaths } from './paths.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
+import { evaluateAcceptance } from './acceptance.js';
+import { evaluateLifecycle } from './lifecycle.js';
+
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 
-export function evaluateCi({ baseline, candidate = baseline, task, changed = [] }) {
+export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -21,12 +24,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [] 
     fail = true;
   }
 
-  const production = classes.filter((c) => c.category === 'production').map((c) => c.path);
+  const production = classes.filter((c) => ['production', 'generated'].includes(c.category)).map((c) => c.path);
   let readiness = null;
   if (production.length) {
     if (!task) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
     else {
-      readiness = evaluateReadiness({ baseline, candidate, task });
+      readiness = evaluateReadiness({ baseline, candidate, task, trust, changed: production, stage: 'verify' });
       findings.push(`readiness ${task}: ${readiness.outcome}`);
       for (const r of readiness.reasons) findings.push(`  ${r}`);
       const statusOk = ['Ready', 'Active'].includes(readiness.status);
@@ -40,7 +43,23 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [] 
     }
   }
 
-  if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; this run used the trusted baseline validator and config');
+  if (production.length && task) {
+    const t = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
+    const profile = loadAll(baseline, rd).profile?.data;
+    const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(profile?.required_checks), trust, stage: 'integrate' });
+    const execution = trust?.claim('verification', candidate.name)?.execution;
+    const acceptance = evaluateAcceptance({ baseline, candidate, execution, requiredIds: list(t.acceptance) });
+    for (const error of [...lifecycle.errors, ...acceptance.errors]) { findings.push(error); fail = true; }
+  }
+  for (const category of ['governing', 'enforcement']) {
+    const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
+    if (protectedPaths.length) {
+      const purpose = category === 'enforcement' ? 'workflow-change' : 'governing-change';
+      const receipt = trust?.claim(purpose, candidate.name);
+      if (!receipt || !protectedPaths.every(p => receipt.paths?.includes(p))) { findings.push(`${purpose} approval for the exact candidate and protected paths is required`); fail = true; }
+    }
+  }
+  if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 

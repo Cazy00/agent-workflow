@@ -1,52 +1,44 @@
 # Quickstart
 
-The policy is `POLICY.md`; the checked rules are `SCHEMA.md`. This page is the daily procedure.
+Read the relevant procedure, current profile, milestone/task and governing sources. Use `POLICY.md` when a rule is unclear. This checkout is an unreleased candidate; follow `procedures/setup.md` before treating a project as operational.
 
-## Adopting the workflow in a project
+## Adopt
 
-1. Copy `templates/` records into `docs/workflow/` (`profile.md`, `tasks/`, `decisions/`, `feedback/inbox/`).
-2. Copy `config.default.json` to `docs/workflow/config.json`; set `workflow.version` and
-   `workflow.revision` to the adopted tag and its commit; classify the project's paths.
-3. Copy `bin/wf` to `scripts/wf` (executable). It fetches the validator at the pinned revision into
-   `.cache/agent-workflow/` and runs it; CI and humans use the same script. Add `.cache/` to `.gitignore`.
-4. Write a short root `AGENTS.md` (where the profile and governing sources are, how to start or resume a
-   task, which readiness procedure applies, where commands, task records, and feedback live). Give other
-   agents thin adapters (`CLAUDE.md`, …) that point at it.
-5. Protect the repository: `CODEOWNERS`, a ruleset on the trusted branch (pull requests only, one
-   approval, code-owner review, stale approvals dismissed, required check `readiness`, no bypass), and
-   a CI job that runs `scripts/wf ci --base <merge base> --head <head>`.
+1. Create `docs/workflow/profile.md`, `milestones/`, `tasks/`, `decisions/`, `feedback/inbox/` and the governing requirements from the templates. Keep unknowns explicit. Add `docs/workflow/acceptance.json` and `tests/acceptance-map.json`; use an empty mapping array when all applicable acceptance methods are human/operational/inspection.
+2. Copy `config.default.json` to `docs/workflow/config.json`. Set the target `repository`, adopted workflow tag/full hash, authority and classifications. Configure the profile's required checks. Review shared procedures and add short `AGENTS.md` / `CLAUDE.md` adapters pointing to the adopted installation.
+3. Provision the approved workflow Git objects and an owner-installed copy of `bin/wf` outside the candidate checkout. Set `WF_VALIDATOR_REPO` and `WF_VALIDATOR_REV` in the trusted environment. The launcher extracts committed files at that full hash; it ignores candidate choices of executable code and rejects `WF_LOCAL`.
+4. Provision the owner public key and signed receipts through `procedures/approval-evidence.md`. Establish source/result trust and the real approval path. A project-local launcher is convenient feedback only; authoritative CI must use the externally controlled launcher and settings.
+5. Complete identity checks, fixtures, per-tool discovery and the observed assisted pilot. Record limitations in the setup record before declaring supported operation.
 
-## Starting a task
+## Start or resume a task
 
-1. Create `docs/workflow/tasks/T-xxxx.md` from the template. Fill objective, scope, owner, governing
-   records, prerequisites, decisions, assumptions, and deferred inputs.
-2. Branch `T-xxxx-<slug>` from the trusted branch. Record `start_revision`.
-3. Run the baseline checks; record `baseline_revision` and `baseline_result` (`pass` or `fail: …`).
-4. `scripts/wf readiness --task T-xxxx --baseline origin/main`. Act on the outcome: Ready → set
-   `status: Ready` and start; bounded subset → work only inside it; Needs → resolve or do permitted
-   discovery, and set `Blocked` with a `resume_condition` if waiting on someone.
+Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
 
-## Resuming a task
+The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, and `WF_RECEIPTS` were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
 
-Read the task record and its Latest checkpoint; inspect the branch and working tree; rerun readiness;
-record the baseline result and the next bounded action before changing code.
-
-## Checkpoints and handoff
-
-Commit on the task branch with the task id first in the message (`templates/checkpoint.md`), copy the
-checkpoint block into the task record, push. A handoff is the same block with the friction line filled.
-
-## Reporting workflow friction
-
-Copy `templates/feedback.md` to `docs/workflow/feedback/inbox/F-xxxx.md`. Reporting changes nothing
-else; the owner launches a separate maintenance session (POLICY §12).
-
-## Commands
-
+```sh
+"$WF_LAUNCHER" records --baseline "$WF_BASELINE"
+"$WF_LAUNCHER" readiness --baseline "$WF_BASELINE" --task T-0001 \
+  --trust-key "$WF_OWNER_KEY" --receipts "$WF_RECEIPTS" --repository OWNER/REPOSITORY
 ```
-scripts/wf records                                   # schema-check every record in the working tree
-scripts/wf readiness --task T-0001 --baseline origin/main
-scripts/wf paths --base origin/main --head HEAD      # classify the changed paths
-scripts/wf ci --base origin/main --head HEAD         # what CI runs; task id from the branch name
+
+Ready permits promoting a prepared Draft and starting eligible work. A bounded subset permits only the stated scope. Needs discovery or resolution identifies missing prerequisites. If a Blocked task's blocker was resolved, record that fact, clear its blocked state and rerun readiness. Agent-organised task changes cannot erase established prerequisites or change milestone/feature identity to avoid a gate.
+
+## Review and integrate
+
+Commit the candidate with the task ID first. Use a separate review context, resolve findings, assemble the latest baseline and rerun integration checks. Have the owner-controlled collector authenticate and sign verification, review and integration evidence. No owner credentials or signing keys enter the candidate test environment.
+
+```sh
+"$WF_LAUNCHER" ci --baseline "$WF_BASELINE" --candidate "$WF_CANDIDATE" --task T-0001 \
+  --trust-key "$WF_OWNER_KEY" --receipts "$WF_RECEIPTS" --repository OWNER/REPOSITORY
 ```
-Add `--json` for machine-readable output. Exit codes: 0 pass, 1 fail, 2 error.
+
+The actual diff is computed from those immutable revisions. A candidate must include the current baseline. A manually supplied changed-path list is diagnostic only and is refused when approval evidence is supplied. Protected requirements/workflow changes require separate scoped receipts; they do not authorise dependent implementation in the same baseline.
+
+## Accept, release and hand off
+
+Use `procedures/accept-release.md`. `wf lifecycle --stage accept` checks the task's evidence and recorded owner decision; `--stage release` adds release readiness and authority. A milestone acceptance package must cover its complete scenario/task set, not just one task. Preserve the accepted-artifact relationship. Commands validate evidence; they do not deploy or publish.
+
+Record a session outcome using `templates/session.json`, then validate it with `wf session --record PATH` and the same baseline/candidate/trust arguments. A handoff preserves changes, verification revision, uncertainty, next action and **Workflow friction this session: none / report IDs**. Use `procedures/maintenance.md` for feedback and separately authorised repairs.
+
+Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages. All commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.

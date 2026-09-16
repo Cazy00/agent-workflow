@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# Runs the workflow validator pinned by docs/workflow/config.json. Same entry point for humans and CI.
+# Local convenience entry point. Trusted CI must invoke an owner-installed copy outside
+# the candidate checkout, with these settings supplied by its protected environment.
 set -euo pipefail
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-CONFIG="$ROOT/docs/workflow/config.json"
-[ -f "$CONFIG" ] || { echo "wf: $CONFIG not found" >&2; exit 2; }
-read -r REPO REV < <(node -e '
-  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workflow;
-  if (!c.repo || !c.revision) { console.error("wf: workflow.repo and workflow.revision must be set"); process.exit(2); }
-  console.log(c.repo, c.revision)' "$CONFIG")
-CACHE="$ROOT/.cache/agent-workflow"
-if [ -n "${WF_LOCAL:-}" ]; then CACHE="$WF_LOCAL"      # developer override: a local checkout
-elif [ ! -d "$CACHE/.git" ]; then git clone --quiet "https://github.com/$REPO.git" "$CACHE"; fi
-if [ -z "${WF_LOCAL:-}" ] && [ "$(git -C "$CACHE" rev-parse HEAD)" != "$REV" ]; then
-  git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet "$REV"
-fi
-exec node "$CACHE/validator/cli.js" --repo "$ROOT" "$@"
+: "${WF_VALIDATOR_REPO:?set WF_VALIDATOR_REPO to the owner-provisioned workflow Git checkout}"
+: "${WF_VALIDATOR_REV:?set WF_VALIDATOR_REV to its approved full commit hash}"
+[[ "$WF_VALIDATOR_REV" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]] || { echo 'wf: validator revision must be an immutable full hash' >&2; exit 2; }
+[ -z "${WF_LOCAL:-}" ] || { echo 'wf: WF_LOCAL is not an enforcement override' >&2; exit 2; }
+WF_PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+WF_PINNED_REV="$(git -C "$WF_VALIDATOR_REPO" rev-parse --verify "$WF_VALIDATOR_REV^{commit}")"
+[ "$WF_PINNED_REV" = "$WF_VALIDATOR_REV" ] || exit 2
+WF_EXTRACT="$(mktemp -d)"
+trap 'rm -rf "$WF_EXTRACT"' EXIT
+# Execute the committed blob, never a writable cache's working tree or candidate pin.
+git -C "$WF_VALIDATOR_REPO" archive "$WF_VALIDATOR_REV" validator | tar -x -C "$WF_EXTRACT"
+node "$WF_EXTRACT/validator/cli.js" --repo "$WF_PROJECT_ROOT" "$@"

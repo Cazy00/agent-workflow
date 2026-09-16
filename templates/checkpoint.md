@@ -6,7 +6,7 @@ What changed:
 Verified against <revision>:
 Remaining failures / uncertainty:
 Next action:
-Workflow friction: none observed / F-0000
+Workflow friction this session: none / F-0000
 
 # After committing, copy the same five lines into the task record's "Latest checkpoint" section
-# and push the branch; worktrees do not share uncommitted files.
+# and publish to the authorised location after the worker identity check; worktrees do not share uncommitted files.

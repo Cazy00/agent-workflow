@@ -1,109 +1,79 @@
-# Record schema and gate rules (workflow 1.0)
+# Record formats and mechanical gates
 
-The validator implements exactly what this file says. When they disagree, one of them has a bug: fix
-both together and add a fixture. POLICY.md says why; this file says what is checked.
+This describes the unreleased validator candidate. `POLICY.md` governs if a mechanical rule or procedure conflicts with the policy. Record a workflow defect rather than bypassing a gate. The current approval adapter uses explicit manual signed receipts, not inference from GitHub branch contents.
 
-## Front matter
+## Records and sources
 
-A record is a Markdown file that starts with a `---` line, `key: value` lines, and a closing `---`.
-Values are plain text; `[a, b, c]` is a list; an empty value means unset; lines starting with `#` are
-ignored; no multi-line values. Identifiers: `T-0001` tasks, `D-0001` decisions, `F-0001` feedback,
-`PROFILE` the profile. A record's `id` must equal its filename stem.
+Records use Markdown with a leading and closing `---`; one `key: value` per line. Values are scalar strings or `[a, b]` lists; empty values are unset. No multiline YAML. Duplicate keys are rejected. Comments beginning with `#` are ignored. Task, decision, feedback and milestone IDs must match their filename stem.
 
-## Locations
+Config is fixed at `docs/workflow/config.json` on the explicit baseline. `records_dir` defaults to `docs/workflow`. Relative source paths cannot escape a directory root or traverse symlinks. Git sources resolve symbolic refs once to full commit hashes. Change enumeration checks Git failures, uses NUL-delimited paths, and disables rename collapsing so a deleted production path cannot disappear into a planning rename.
 
-Relative to the repository root, under `records_dir` from `config.json` (default `docs/workflow`):
-
-| Record | Path |
+| Record | Location / identifier |
 |---|---|
-| Config | `docs/workflow/config.json` (fixed; the validator reads it from the trusted baseline) |
-| Profile | `profile.md` |
+| Profile | `profile.md`, governing alias `PROFILE` |
 | Task | `tasks/T-0001.md` |
 | Decision | `decisions/D-0001.md` |
+| Milestone | `milestones/M-0001.md` |
 | Feedback | `feedback/inbox/F-0001.md` |
-| Checkpoint | a commit on the task branch whose message starts with the task id (`templates/checkpoint.md`) |
+| Acceptance definitions | Fixed `docs/workflow/acceptance.json`, IDs such as `AC-001-1` |
+| Test mappings | Fixed `tests/acceptance-map.json` |
+| Design, review, acceptance, release, setup, pilot, maintenance | Stable project-selected locations recorded in governing/task records |
+| Session | JSON run record validated explicitly with `wf session --record` |
 
-## Profile
+The last group has complete human-facing templates/procedures; the record parser does not claim to validate their prose semantically. Approval/evidence receipts enforce the consequential stage claims described below.
 
-Required: `record: profile`, `project`, `workflow_version`, `approval_mechanism`, `approval_label`
-(`enforced` | `manual`), `coordinator`, `setup_budget_days`. Body sections follow POLICY §2.
+## Basic schema
 
-## Task
+**Profile:** `record: profile`, project, workflow_version, approval_mechanism, approval_label (`manual` or `enforced`), coordinator, setup_budget_days. Implementation additionally needs `readiness: Ready` on the approved baseline. Define `required_checks` and `permitted_assumptions` as lists. The body covers every policy §2 area, source authority and relevant unknowns.
 
-Required: `record: task`, `id`, `title`, `status` (`Draft` | `Ready` | `Active` | `Blocked` | `Done`),
-`owner`, `objective`.
+**Task:** `record: task`, id, title, status (`Draft`, `Ready`, `Active`, `Blocked`, `Done`), owner, objective. A Blocked task requires resume_condition. Deferred entries look like `D-0001@verify`. Baseline result is `pass` or `fail: summary`.
 
-Optional: `scope`, `governing` (list of `PROFILE` | `D-xxxx` | `T-xxxx` | path), `prerequisites` (list
-of `T-xxxx` | `D-xxxx` | `contract:<path>`), `decisions` (list of `D-xxxx`), `assumptions` (list),
-`deferred_inputs` (list of `D-xxxx@<stage>`), `subset` (list of directory prefixes), `branch`,
-`start_revision`, `baseline_revision`, `baseline_result` (`pass` | `fail: <summary>`),
-`resume_condition` (required when `Blocked`), `implemented`, `verified`, `accepted`, `released` (dates).
+Production readiness additionally needs nonempty scope, milestone, governing, acceptance, branch, start_revision, governing_baseline_revision, feature_readiness, verification, and review. Scope is a list of path prefixes. Feature_readiness is an approved source path. Optional feature identifies feature-scoped decisions; risks is a list; consequential risks require design. Requirements govern decisions, assumptions, prerequisites and required-before stages. `baseline_revision` and `baseline_result` describe the actual starting checks; `governing_baseline_revision` records readiness sources separately.
 
-**Stage** (derived): `release` when `accepted` is set; `accept` when `verified` is set; `verify` when
-`implemented` is set; otherwise `implement`. Order: implement < verify < accept < release.
+**Milestone:** `record: milestone`, id, outcome, status (`Draft`, `Authorised`, `Active`, `Blocked`, `Verified`, `Accepted`, `Released`), coordinator, scope, governing, acceptance, authority, limits, demonstration, stop_conditions and release_authority. The template also records exclusions, tasks, prerequisites, checks/review and cumulative usage. Authorised/Active permits implementation; appropriate later states permit acceptance/release checks. The signed baseline supplies authority, not a candidate status field.
 
-## Decision
+**Decision:** `record: decision`, id, question, type (`decision`, `fact`, `technical`, `assumption`, `deferred`), owner, status (`Open`, `Proposed`, `Resolved`), required_before (`implement`, `verify`, `accept`, `release`, `none`). Optional affects lists task/feature/milestone IDs or `paths:prefix`; supersedes and superseded_by are decision IDs. The body preserves resolution, evidence and rationale at the same location. Unknown required stages are invalid.
 
-Required: `record: decision`, `id`, `question`, `type` (`decision` | `fact` | `technical` |
-`assumption` | `deferred`), `owner`, `status` (`Open` | `Proposed` | `Resolved`), `required_before`
-(`implement` | `verify` | `accept` | `release` | `none`).
+**Feedback:** `record: feedback`, id, task, revision, workflow_version, rule, status (`Open`, `Classified`, `Closed`). Body: expected, actual, evidence, impact; optional classification. Filing it grants no authority.
 
-Optional: `affects` (list of `T-xxxx` | feature name | `paths:<directory prefix>`), `supersedes`
-(`D-xxxx`), `superseded_by` (`D-xxxx`).
+## Approval receipts
 
-**Trusted meaning:** a decision counts as approved only when its record is `Resolved` on the trusted
-baseline. A candidate copy is checked for schema only; its status is evidence of nothing.
+The trusted operator supplies `--trust-key FILE --receipts FILE --repository OWNER/REPOSITORY`. The key must be outside the candidate repository; setup establishes the owner's actual key identity. Receipts sign the complete serialized payload with Ed25519 and bind purpose, repository, immutable revision and expiration. Tampered, expired, ambiguous, wrong-key and wrong-purpose receipts fail closed. The external repository identity must match baseline config.
 
-## Feedback
+`baseline` approval is an explicit owner's approval of that revision's governing records. `governing-change` and `workflow-change` separately enumerate approved candidate paths. `verification`, `review`, `integration`, `acceptance` and `release` receipts carry stage-specific evidence; see `procedures/approval-evidence.md`. No self-declared passed/approved/reviewed field supplies a receipt. This implementation does not automatically verify GitHub protection history or elevate an enforced label into approval evidence.
 
-Required: `record: feedback`, `id`, `task`, `revision`, `workflow_version`, `rule`, `status` (`Open` |
-`Classified` | `Closed`). Optional: `classification`. Body: Expected, Actual, Evidence, Impact.
+## Readiness
 
-## Readiness evaluation
+Read config, profile, milestone, prerequisite tasks/contracts and decisions from the approved baseline; read the working/candidate task with baseline fallback. Require relevant record schema, profile readiness, authorised milestone, task context and signed baseline approval. Enforce task scope inside milestone scope and changed production paths inside task scope. Require feature source and a design when the task records shared-contract, synchronisation, money, stock, security, irreversible-data or cross-component risks. Assumptions must occur in the baseline profile's permitted assumptions.
 
-Inputs: task id `T`, trusted baseline `B` (a git revision or a directory), candidate `C` (the working
-tree, a revision, or a directory). Reads config, profile, decisions, prerequisite tasks, and contracts
-from `B`; reads the task record from `C`, falling back to `B`.
+Candidate task edits cannot remove trusted prerequisites, decisions, deferred inputs, governing sources, acceptance IDs or risk classifications, nor change established feature/milestone identity to bypass authority. The stage is the latest of the requested stage and baseline/candidate implemented/verified/accepted states; candidate fields cannot lower it. Stage order is implement, verify, accept, release. Draft is assessable before promotion; Blocked still reports its resume condition; Done blocks new implementation but permits later-stage evidence checks.
 
-Checks, in order; each failure adds a reason:
+Resolve task prerequisites only when Done on baseline; decision prerequisites require Resolved and not superseded; contract prerequisites require approved source presence. Discover relevant decisions by explicit references and task, feature, milestone or path effects. Apply the same supersession and stage rules through decision/prerequisite/deferred routes. Later-stage decisions remain pending until due.
 
-1. The task record parses and satisfies the schema.
-2. `status`: `Draft` blocks ("not Ready"); `Blocked` blocks and reports `resume_condition`; `Done`
-   blocks ("open a new task").
-3. `profile.md` exists on `B`; every `governing` entry resolves on `B`.
-4. `prerequisites`: `T-xxxx` is `Done` on `B`; `D-xxxx` is `Resolved` on `B`; `contract:<path>` exists
-   on `B`.
-5. Decisions in scope = those listed in `decisions` plus every decision on `B` whose `affects` names
-   `T`. Each must be `Resolved` on `B` (a copy that is `Resolved` only on `C` is reported as "Resolved
-   only in the candidate") and not superseded (`superseded_by` set, or another `Resolved` decision on
-   `B` with `supersedes` naming it). A decision whose `required_before` is later than the current stage
-   is reported as pending, not blocking.
-6. `deferred_inputs` `D-xxxx@<stage>` block when the current stage is at or past `<stage>` and `D-xxxx`
-   is not `Resolved` on `B`.
-7. `baseline_revision` and `baseline_result` are set (`fail: …` is acceptable; it records a known
-   failing baseline).
-8. When `B` is a git revision, `baseline_revision` is an ancestor of `B`.
+Record start and baseline conditions. With Git sources, start_revision and baseline_revision must identify available commits in the candidate history (including authorised milestone branches); governing_baseline_revision must belong to authoritative history. Governing-source changes since the recorded readiness baseline invalidate stale readiness. Reassess from current records rather than trusting an earlier Ready status. Documented failing repair baselines remain allowed.
 
-Outcome: no reasons → **Ready**. Reasons come only from decisions or deferred inputs whose path scopes
-do not overlap the task's `subset` (and `subset` is set) → **Ready for a bounded subset**, naming the
-subset. Otherwise → **Needs discovery or resolution**. Path scopes are directory prefixes; two scopes
-overlap when one is a prefix of the other; a blocking decision with no `paths:` scope blocks everything.
+No blockers gives **Ready**. Decision/deferred blockers whose explicit path scopes do not overlap the declared subset permit **Ready for a bounded subset**. Structural problems and relevant/unscoped blockers give **Needs discovery or resolution**. Subset checks apply to every changed production/generated path.
 
-## Path classification
+## Acceptance and evidence
 
-Categories and precedence: `enforcement` > `production` > `generated` > `governing` > `planning`; a path
-matching none is `unclassified`. Patterns are globs (`**`, `*`, `?`, `{a,b}`); `**/` matches zero or
-more directories. The config is always read from `B`, never from `C`.
+Definitions are `{examples:[{id,requirement,method}]}`. Methods: automated, human, operational, inspection. Requirements must resolve on baseline. Mappings are `[{acceptance,file,name}]`; files must exist in candidate and IDs must be approved. Existing baseline mappings cannot disappear. Current task acceptance IDs require their applicable automated coverage; unrelated future definitions do not require premature implementation.
 
-## CI verdict
+Signed verification receipts contain execution `{revision,tests:[{file,name,status}]}`. Each mapped test must occur exactly once and pass. Missing, skipped, failed, duplicate or stale execution fails. Unknown IDs, removed mappings and missing test files fail. Existing baseline required mappings remain enforced globally. Different parameterized cases must have distinct full test names.
 
-1. Every record on `C` is schema-valid.
-2. No changed path is unclassified.
-3. Changed `production` paths require the task's readiness to be **Ready** with status `Ready` or
-   `Active`, or **Ready for a bounded subset** whose subset contains every changed production path. No
-   task id → fail.
-4. `enforcement`, `governing`, and `generated` changes are reported as findings (the repository's
-   required review enforces them); they do not fail the check by themselves.
-5. Planning-only changes pass regardless of task readiness.
+Semantic review is always required: the checker cannot infer every weakened assertion, helper, fixture, setup or runner change. A justified correction preserving approved behaviour/mapping can proceed with review; changed business acceptance needs its own prior governing approval.
 
-Exit codes: `0` pass, `1` fail, `2` usage or internal error.
+Verification needs candidate-bound check results, environment and raw evidence, plus independent reviewer identity/context, all six review areas and disposition of findings. Review identity must differ from the implementer. Evidence may be a nonempty file in the immutable candidate or raw output in signed receipt artifacts, avoiding circular post-test evidence commits. Integration requires a separate assembled-candidate check receipt. Acceptance adds the owner's accepted scenario IDs. Release adds authority, artifact/candidate relationship and the eight readiness areas. These attestations authenticate a collector's evidence assessment; they do not prove semantics without that assessment.
+
+## Integration and CLI
+
+Classification precedence: enforcement, production, generated, governing, planning. Globs support `**`, `*`, `?`, `{a,b}`. Config always comes from baseline. Generated artifacts conservatively receive production gates. Unclassified paths block. Production changes require Ready/Active task state, current readiness (at least verify stage), passing implementation/review/integration evidence and acceptance traceability. Governing/enforcement changes require separate scoped receipts. Planning-only edits remain possible while implementation is blocked.
+
+Trusted Git integration requires a committed candidate containing the current baseline; `--base`, if given, must equal the authoritative baseline rather than a historical merge base. `--candidate`/`--head` determines both the records read and the actual diff. `--changed` and directory sources are diagnostic fixtures and cannot replace an authoritative diff when trust evidence is supplied. CLI Git failures exit 2 instead of becoming an empty passing diff.
+
+`bin/wf` requires an externally pinned full `WF_VALIDATOR_REV`, extracts its committed validator and verifies the baseline adoption pin. It never fetches/executes a candidate-selected repository or runs changed cache files. The authoritative launcher, environment and result mechanism must be outside candidate control; a copied local script and a familiar CI check name do not provide that trust.
+
+## Session outcomes and supported limits
+
+Session outcomes are progress, ready-for-review, verified-complete, blocked, stopped-by-limit and no-progress. All need next_action and friction. Progress requires a meaningful summary and durable evidence; ready-for-review also names the candidate. Verified-complete requires validated readiness, coverage and lifecycle evidence. Blocked identifies prerequisite, impact and responsible party. Stopped-by-limit records limit, usage, checkpoint and evidence. No-progress states failure and why a retry would differ.
+
+Assisted coordinators maintain cumulative budgets and serial task claims; this is not a durable unattended runner. Automated duplicate claims, process cleanup, retry accounting and crash recovery are conditional runner requirements and remain unadopted. Live identity permission/protection tests, agent discovery, product acceptance and observed pilot evidence cannot be replaced by unit tests. All commands return JSON: exit 0 satisfied, 1 failed/blocked, 2 invalid input/execution error.

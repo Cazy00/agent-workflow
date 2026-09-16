@@ -1,18 +1,80 @@
 {
-  "workflow": { "repo": "Cazy00/agent-workflow", "version": "1.0.0", "revision": "" },
+  "workflow": {
+    "repo": "Cazy00/agent-workflow",
+    "version": "UNRELEASED",
+    "revision": ""
+  },
   "records_dir": "docs/workflow",
   "trusted_branch": "main",
-  "approval": { "mechanism": "github-rulesets-codeowners", "label": "manual", "approver": "", "agent_identity": "" },
+  "approval": {
+    "mechanism": "manual-signed-receipts",
+    "label": "manual",
+    "approver": "",
+    "agent_identity": ""
+  },
   "setup_budget_days": 2,
   "paths": {
-    "enforcement": [".github/**", "CODEOWNERS", "docs/workflow/config.json", "scripts/wf", ".githooks/**"],
+    "enforcement": [
+      ".github/**",
+      "CODEOWNERS",
+      "docs/workflow/config.json",
+      "scripts/wf",
+      ".githooks/**",
+      "validator/**",
+      "bin/**",
+      "adapters/**",
+      ".agents/**",
+      "procedures/**",
+      "config.default.json",
+      "**/CODEOWNERS"
+    ],
     "production": [
-      "src/**", "prisma/**", "scripts/**", "public/**",
-      "package.json", "package-lock.json", "tsconfig*.json", "next.config.*", "*.config.*", ".env*", "Dockerfile",
-      "**/*.{sh,sql,ts,tsx,js,mjs,cjs,py,ps1}"
+      "src/**",
+      "prisma/**",
+      "scripts/**",
+      "public/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig*.json",
+      "next.config.*",
+      "*.config.*",
+      ".env*",
+      "Dockerfile",
+      "**/*.{sh,sql,ts,tsx,js,mjs,cjs,py,ps1}",
+      "tests/**",
+      "test/**",
+      "infra/**",
+      "infrastructure/**",
+      "migrations/**",
+      "**/Dockerfile*",
+      "**/Makefile",
+      "**/*.{go,rs,java,kt,swift,c,cpp,h,rb,php,tf,tfvars,wasm}"
     ],
     "generated": [],
-    "governing": ["docs/workflow/profile.md", "docs/workflow/decisions/**", "docs/specs/**", "docs/contracts/**", "AGENTS.md", "CLAUDE.md"],
-    "planning": ["docs/workflow/tasks/**", "docs/workflow/feedback/**", "docs/workflow/checkpoints/**", "docs/**", "README.md", "LICENSE", ".gitignore"]
+    "governing": [
+      "docs/workflow/profile.md",
+      "docs/workflow/decisions/**",
+      "docs/specs/**",
+      "docs/contracts/**",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "docs/workflow/milestones/**",
+      "docs/workflow/acceptance.json"
+    ],
+    "planning": [
+      "docs/workflow/tasks/**",
+      "docs/workflow/feedback/**",
+      "docs/workflow/checkpoints/**",
+      "docs/**",
+      "README.md",
+      "LICENSE",
+      ".gitignore",
+      "evidence/**"
+    ]
+  },
+  "repository": "",
+  "execution": {
+    "mode": "assisted",
+    "runner_adopted": false
   }
 }

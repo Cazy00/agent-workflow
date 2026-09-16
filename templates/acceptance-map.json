@@ -1,0 +1,7 @@
+[
+  {
+    "acceptance": "AC-001-1",
+    "file": "tests/feature.test.js",
+    "name": "AC-001-1 describes the approved observable behaviour"
+  }
+]

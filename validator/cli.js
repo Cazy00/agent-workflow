@@ -1,94 +1,120 @@
 #!/usr/bin/env node
-// wf <records|readiness|paths|ci> — see QUICKSTART.md "Commands" and SCHEMA.md for the rules.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, validateRecords } from './lib/index.js';
-
-const USAGE = `usage: wf <records|readiness|paths|ci> [--repo DIR] [--baseline REV|DIR] [--candidate REV|DIR]
-          [--task T-0001 | --branch NAME] [--changed PATH]... [--base REV --head REV] [--json]`;
-const COMMANDS = ['records', 'readiness', 'paths', 'ci'];
-
-function parseArgs(argv) {
+import { fileURLToPath } from 'node:url';
+import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
+import { createTrust } from './lib/trust.js';
+import { evaluateAcceptance } from './lib/acceptance.js';
+import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record'];
+const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
+  [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
+  Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
+const git = (repo, ...args) => {
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  if (r.status !== 0) throw new WfError(`git ${args[0]} failed: ${r.error?.message ?? r.stderr.trim()}`);
+  return r.stdout;
+};
+function main() {
   const o = { changed: [] };
-  let cmd = null;
+  let cmd;
+  const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') { o.json = true; continue; }
     if (a.startsWith('--')) {
-      const v = argv[++i];
-      if (v === undefined) throw new WfError(`${a} needs a value`);
-      if (a === '--changed') o.changed.push(v); else o[a.slice(2)] = v;
+      const name = a.slice(2);
+      if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
+      const value = argv[++i];
+      if (name === 'changed') o.changed.push(value);
+      else if (o[name] !== undefined) throw new WfError(`duplicate option: ${a}`);
+      else o[name] = value;
     } else if (!cmd) cmd = a;
-    else throw new WfError(`unexpected argument ${a}`);
+    else throw new WfError(`unexpected argument: ${a}`);
   }
-  return { cmd, o };
-}
-
-const git = (repo, ...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
-
-function main() {
-  const { cmd, o } = parseArgs(process.argv.slice(2));
-  if (!COMMANDS.includes(cmd)) { console.error(USAGE); return 2; }
-  const repo = path.resolve(o.repo ?? (git(process.cwd(), 'rev-parse', '--show-toplevel').stdout.trim() || process.cwd()));
-  const source = (spec) => {
+  if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
+  const repo = path.resolve(o.repo ?? process.cwd());
+  const source = spec => {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  const candidate = o.candidate ? source(o.candidate) : dirSource(repo);
-  let baseline;
-  if (o.baseline) baseline = source(o.baseline);
-  else {
-    const branch = (() => { try { return loadConfig(candidate).trusted_branch ?? 'main'; } catch { return 'main'; } })();
-    baseline = gitSource(repo, `origin/${branch}`);
+  if (!o.baseline && cmd !== 'records') throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
+  const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
+  const candidate = o.candidate || o.head ? source(o.candidate ?? o.head) : dirSource(repo);
+  const config = loadConfig(baseline);
+  const rd = config.records_dir ?? 'docs/workflow';
+  if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
+  let trust = null;
+  if (o['trust-key'] || o.receipts || o.repository) {
+    if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
+    if (baseline.kind !== 'git') throw new WfError('approval requires an immutable Git baseline');
+    const keyPath = fs.realpathSync(o['trust-key']);
+    const relative = path.relative(fs.realpathSync(repo), keyPath);
+    if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('owner trust key must be provisioned outside the candidate repository');
+    const envelopes = JSON.parse(fs.readFileSync(o.receipts, 'utf8'));
+    if (!Array.isArray(envelopes)) throw new WfError('receipts must be an array');
+    trust = createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes });
+    if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
   }
-  const rd = (() => { try { return loadConfig(baseline).records_dir ?? 'docs/workflow'; } catch { return 'docs/workflow'; } })();
-
   const changed = () => {
-    if (o.changed.length) return o.changed;
-    if (o.base && o.head) return git(repo, 'diff', '--name-only', `${o.base}...${o.head}`).stdout.split('\n').filter(Boolean);
-    if (baseline.kind !== 'git') throw new WfError('give --changed PATH... or --base REV --head REV when the baseline is a directory');
-    const tracked = git(repo, 'diff', '--name-only', baseline.name).stdout.split('\n');
-    const untracked = git(repo, 'ls-files', '--others', '--exclude-standard').stdout.split('\n');
-    return [...new Set([...tracked, ...untracked].filter(Boolean))];
+    if (o.changed.length) {
+      if (trust) throw new WfError('--changed cannot replace actual Git diff in a trusted gate');
+      return o.changed;
+    }
+    if (o.base && o.head) {
+      const base = gitSource(repo, o.base);
+      if (base.name !== baseline.name) throw new WfError('--base must equal the authoritative baseline; a merge base does not establish authority');
+    }
+    if (baseline.kind !== 'git') throw new WfError('directory diagnostics require --changed PATH');
+    if (candidate.kind === 'git') {
+      if (!candidate.isAncestor(baseline.name)) throw new WfError('candidate must include the current authoritative baseline; assemble it before integration');
+      return git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
+    }
+    return [...new Set([...git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, '--').split('\0'), ...git(repo, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')].filter(Boolean))];
   };
   const taskId = () => {
-    if (o.task) return o.task;
-    const branch = o.branch ?? git(repo, 'rev-parse', '--abbrev-ref', 'HEAD').stdout.trim();
-    return branch.match(/^(T-\d{4})/)?.[1] ?? null;
+    if (o.task) { if (!/^T-\d{4}$/.test(o.task)) throw new WfError('invalid task id'); return o.task; }
+    let branch = o.branch;
+    if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
+    return branch.match(/^(?:codex\/)?(T-\d{4})(?:-|$)/)?.[1] ?? null;
   };
-  const emit = (result, lines) => { if (o.json) console.log(JSON.stringify(result, null, 2)); else console.log(lines.join('\n')); };
-
-  if (cmd === 'records') {
-    const r = validateRecords(candidate, rd);
-    emit(r, r.ok ? [`records: ok (${r.counts.tasks} tasks, ${r.counts.decisions} decisions, ${r.counts.feedback} feedback)`] : ['records: errors', ...r.errors.map((e) => `  ${e}`)]);
-    return r.ok ? 0 : 1;
-  }
-  if (cmd === 'readiness') {
+  const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
+  let result;
+  if (cmd === 'records') result = validateRecords(candidate, rd);
+  else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
+  else if (cmd === 'ci') result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: changed() });
+  else {
     const task = taskId();
-    if (!task) throw new WfError('no task id: use --task T-0001 or a branch named T-0001-…');
-    const r = evaluateReadiness({ baseline, candidate, task });
-    emit(r, [
-      `readiness ${task} (status ${r.status}, stage ${r.stage}, baseline ${r.baseline}): ${r.outcome}`,
-      ...r.reasons.map((x) => `  ${x}`),
-      ...(r.subset.length ? [`  subset: ${r.subset.join(', ')}`] : []),
-      ...r.pending.map((x) => `  pending: ${x}`),
-    ]);
-    return r.outcome === 'Needs discovery or resolution' ? 1 : 0;
+    if (!task) throw new WfError('--task T-0001 or a matching branch is required');
+    const readiness = evaluateReadiness({ baseline, candidate, task, trust, stage: o.stage === 'integrate' ? 'verify' : o.stage });
+    if (cmd === 'readiness') result = readiness;
+    else {
+      const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
+      const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
+      const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
+      const coverage = evaluateAcceptance({ baseline, candidate, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance) });
+      if (!coverage.ok) { lifecycle.ok = false; lifecycle.errors.push(...coverage.errors); }
+      if (cmd === 'acceptance') result = coverage;
+      if (cmd === 'lifecycle') {
+        const stage = o.stage ?? 'verify';
+        const gate = evaluateReadiness({ baseline, candidate, task, trust, stage: stage === 'integrate' ? 'verify' : stage });
+        result = { ...lifecycle, ok: lifecycle.ok && gate.outcome === 'Ready', readiness: gate };
+      }
+      if (cmd === 'session') {
+        const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
+        if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
+        if (!o.record) throw new WfError('--record is required');
+        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle });
+      }
+    }
   }
-  if (cmd === 'paths') {
-    const classes = classifyPaths(loadConfig(baseline), changed());
-    emit(classes, classes.map((c) => `${c.category}: ${c.path}`));
-    return classes.some((c) => c.category === 'unclassified') ? 1 : 0;
-  }
-  const r = evaluateCi({ baseline, candidate, task: taskId(), changed: changed() });
-  emit(r, [`ci: ${r.verdict}`, ...r.findings.map((x) => `  ${x}`)]);
-  return r.verdict === 'pass' ? 0 : 1;
+  if (cmd === 'ci' && trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
+  emit(result);
+  if (result.verdict) return result.verdict === 'pass' ? 0 : 1;
+  if (result.outcome && cmd === 'readiness') return result.outcome === 'Needs discovery or resolution' ? 1 : 0;
+  return result.ok ? 0 : 1;
 }
-
-try {
-  process.exitCode = main();
-} catch (e) {
-  console.error(e instanceof WfError ? `wf: ${e.message}` : e);
-  process.exitCode = 2;
-}
+try { process.exitCode = main(); } catch (e) { console.error(`wf: ${e.message}`); process.exitCode = 2; }

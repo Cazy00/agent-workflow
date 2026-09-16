@@ -5,14 +5,16 @@ export class WfError extends Error {}
 
 export const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
 
-const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox' };
+const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
 const REQUIRED = {
+  milestone: ['id', 'outcome', 'status', 'coordinator', 'scope', 'governing', 'acceptance', 'authority', 'limits', 'demonstration', 'stop_conditions', 'release_authority'],
   profile: ['project', 'workflow_version', 'approval_mechanism', 'approval_label', 'coordinator', 'setup_budget_days'],
   task: ['id', 'title', 'status', 'owner', 'objective'],
   decision: ['id', 'question', 'type', 'owner', 'status', 'required_before'],
   feedback: ['id', 'task', 'revision', 'workflow_version', 'rule', 'status'],
 };
 const ENUMS = {
+  milestone: { status: ['Draft', 'Authorised', 'Active', 'Blocked', 'Verified', 'Accepted', 'Released'] },
   profile: { approval_label: ['enforced', 'manual'] },
   task: { status: ['Draft', 'Ready', 'Active', 'Blocked', 'Done'] },
   decision: {
@@ -22,7 +24,7 @@ const ENUMS = {
   },
   feedback: { status: ['Open', 'Classified', 'Closed'] },
 };
-const ID_RE = { task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
+const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
 export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|accept|release)$/;
 
 export function loadConfig(source) {
@@ -37,7 +39,7 @@ export function loadRecord(source, relPath, expected) {
   const { data, body, errors } = parseFrontMatter(text);
   if (!data) return { path: relPath, data: null, body, errors: [...errors, 'no front matter'] };
   if (data.record !== expected) errors.push(`record is "${data.record ?? ''}", expected "${expected}"`);
-  for (const f of REQUIRED[expected]) if (data[f] == null) errors.push(`missing ${f}`);
+  for (const f of REQUIRED[expected]) if (data[f] == null || data[f] === '' || (Array.isArray(data[f]) && !data[f].length)) errors.push(`missing ${f}`);
   for (const [f, allowed] of Object.entries(ENUMS[expected])) {
     if (data[f] != null && !allowed.includes(data[f])) errors.push(`${f} must be one of ${allowed.join(', ')} (got "${data[f]}")`);
   }
@@ -58,10 +60,10 @@ export function loadRecord(source, relPath, expected) {
 }
 
 export function loadAll(source, recordsDir) {
-  const all = { profile: null, tasks: new Map(), decisions: new Map(), feedback: new Map(), errors: [] };
+  const all = { profile: null, milestones: new Map(), tasks: new Map(), decisions: new Map(), feedback: new Map(), errors: [] };
   const profile = loadRecord(source, `${recordsDir}/profile.md`, 'profile');
   if (profile) { all.profile = profile; all.errors.push(...profile.errors.map((e) => `${profile.path}: ${e}`)); }
-  const buckets = { task: all.tasks, decision: all.decisions, feedback: all.feedback };
+  const buckets = { milestone: all.milestones, task: all.tasks, decision: all.decisions, feedback: all.feedback };
   for (const [type, dir] of Object.entries(DIRS)) {
     for (const p of source.list(`${recordsDir}/${dir}`)) {
       const r = loadRecord(source, p, type);
@@ -79,6 +81,6 @@ export function validateRecords(source, recordsDir) {
   return {
     ok: all.errors.length === 0,
     errors: all.errors,
-    counts: { tasks: all.tasks.size, decisions: all.decisions.size, feedback: all.feedback.size },
+    counts: { milestones: all.milestones.size, tasks: all.tasks.size, decisions: all.decisions.size, feedback: all.feedback.size },
   };
 }

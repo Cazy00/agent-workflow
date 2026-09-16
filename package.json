@@ -1,12 +1,14 @@
 {
   "name": "agent-workflow",
-  "version": "1.0.0",
+  "version": "1.1.0-dev.0",
   "private": true,
   "type": "module",
-  "description": "Policy, templates, readiness validator, and fixtures for the agent-assisted software development workflow",
+  "description": "Assisted workflow procedures, templates, approval and readiness gates, traceability, lifecycle validation, and regression fixtures",
   "scripts": {
     "test": "node --test validator/test/*.test.js",
     "validate": "node validator/cli.js"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }

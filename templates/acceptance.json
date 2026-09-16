@@ -1,0 +1,9 @@
+{
+  "examples": [
+    {
+      "id": "AC-001-1",
+      "requirement": "docs/specs/feature.md",
+      "method": "automated"
+    }
+  ]
+}

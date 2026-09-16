@@ -1,0 +1,11 @@
+# Present, accept and release
+
+Before requesting owner acceptance, complete implementer verification, independent review and assembled-candidate verification. Prepare `templates/acceptance.md`: candidate revision/build/environment; delivered behaviour and exclusions; access or reproducible demo; scenarios with actions/expected results; persistence/calculations/state-transition evidence; checks/review/resolved findings; issues/unavailable checks; consequential changes; next milestone/prerequisites/proposed limits.
+
+Derive data, access, external services, configuration and operations changes from the actual candidate. Use none only when verified absent, and not verified when evidence is unavailable. Do not include secret values. This summary cannot retroactively authorise reserved choices. Unavailable required technical checks block acceptance presentation.
+
+The owner tests the product experience and outcomes. Record accepted scenarios, exact candidate, issues and owner decision. Include: **Acceptance is not a declaration that you audited its code or security.** Capture the decision through the owner approval receipt, not an agent-written accepted field.
+
+Use `wf lifecycle --stage accept` to validate recorded technical/integration evidence and acceptance. For a complete milestone, its acceptance record and receipt must contain every milestone scenario; checking only a task does not accept the milestone. Changed experience/outcomes after acceptance require acceptance of the new candidate, and affected technical verification always repeats.
+
+Before release, use `templates/release.md` and `wf lifecycle --stage release`: configuration/secrets/permissions, migrations/compatibility, monitoring/failure visibility, backup/restore/rollback/forward recovery, deployment/support instructions, devices/provisioning/updates, deferred inputs and explicit release authority. Document justified not-applicable items. Release the accepted artifact or verify its relationship to the accepted candidate. Keep Implemented, Verified, Accepted and Released distinct. These commands validate evidence; they do not deploy.

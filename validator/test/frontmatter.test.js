@@ -30,3 +30,8 @@ test('a file without front matter yields null data and the whole text as body', 
   assert.equal(r.data, null);
   assert.equal(r.body, '# just markdown');
 });
+
+test('duplicate authority fields are rejected instead of silently taking the last value', () => {
+  const r = parseFrontMatter('---\nstatus: Open\nstatus: Resolved\n---\n');
+  assert.match(r.errors.join(' '), /duplicate.*status/);
+});

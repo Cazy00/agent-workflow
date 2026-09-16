@@ -5,7 +5,15 @@ title:
 status: Draft
 owner:
 objective:
-scope:
+milestone:
+feature:
+acceptance: []
+feature_readiness:
+risks: []
+design:
+verification:
+review:
+scope: []
 governing: [PROFILE]
 prerequisites: []
 decisions: []
@@ -14,6 +22,7 @@ deferred_inputs: []
 subset: []
 branch:
 start_revision:
+governing_baseline_revision:
 baseline_revision:
 baseline_result:
 resume_condition:
@@ -42,6 +51,6 @@ released:
 - Next action:
 - Blockers:
 - Evidence:
-- Workflow friction: none observed
+- Workflow friction this session: none
 
 ## Review, acceptance, integration, release

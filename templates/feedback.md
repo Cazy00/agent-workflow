@@ -3,7 +3,7 @@ record: feedback
 id: F-0000
 task: T-0000
 revision:
-workflow_version: 1.0.0
+workflow_version: UNRELEASED
 rule:
 status: Open
 classification:

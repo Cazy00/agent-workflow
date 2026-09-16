@@ -22,7 +22,7 @@ const scopesOf = (rec) => {
   return s.length ? s : null; // null = blocks everything
 };
 
-export function evaluateReadiness({ baseline, candidate = baseline, task: taskId }) {
+export function evaluateReadiness({ baseline, candidate = baseline, task: taskId, trust = null, stage: requestedStage, changed = [] }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const reasons = [];
@@ -38,11 +38,39 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   for (const e of rec.errors) fail(`task record: ${e}`);
   const t = rec.data ?? {};
 
-  if (t.status === 'Draft') fail('task status is Draft: not Ready');
   if (t.status === 'Blocked') fail(`task status is Blocked; resume condition: ${t.resume_condition ?? 'not recorded'}`);
-  if (t.status === 'Done') fail('task status is Done: open a new task for further work');
+  if (t.status === 'Done' && (!requestedStage || requestedStage === 'implement')) fail('task status is Done: open a new task for further work');
 
   const base = loadAll(baseline, rd);
+  if (!trust?.allows('baseline', baseline.name)) fail('owner approval evidence for the exact baseline is missing or invalid');
+  for (const e of base.errors) fail(`baseline record: ${e}`);
+  for (const field of ['scope', 'milestone', 'governing', 'acceptance', 'branch', 'start_revision', 'governing_baseline_revision', 'feature_readiness', 'verification', 'review']) {
+    if (!list(t[field]).length) fail(`${field} is not recorded`);
+  }
+  if (base.profile?.data?.readiness !== 'Ready') fail('project readiness has not been established on the approved baseline');
+  if (requestedStage && !STAGES.includes(requestedStage)) fail(`unknown stage ${requestedStage}`);
+  const laterStage = ['accept', 'release'].includes(requestedStage);
+  const milestone = base.milestones.get(t.milestone)?.data;
+  if (!milestone || !(laterStage ? ['Authorised', 'Active', 'Verified', 'Accepted', 'Released'] : ['Authorised', 'Active']).includes(milestone.status)) fail(`milestone ${t.milestone ?? '(missing)'} is not authorised for implementation on the baseline`);
+  if (milestone) {
+    for (const scope of list(t.scope)) if (!list(milestone.scope).some(s => scope === s || scope.startsWith(s.replace(/\/$/, '') + '/'))) fail(`task scope ${scope} is outside milestone authority`);
+    for (const id of list(t.acceptance)) if (!list(milestone.acceptance).includes(id)) fail(`acceptance ${id} is outside milestone authority`);
+  }
+  for (const p of changed) if (!list(t.scope).some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'))) fail(`changed production path ${p} is outside task scope`);
+  if (t.feature_readiness && !baseline.exists(t.feature_readiness)) fail(`feature_readiness ${t.feature_readiness} is not on the baseline`);
+  if (list(t.risks).some(r => ['shared-contract', 'synchronisation', 'money', 'stock', 'security', 'irreversible-data', 'cross-component'].includes(r)) && (!t.design || !baseline.exists(t.design))) fail('a governing design is required for the recorded risk');
+  for (const assumption of list(t.assumptions)) if (!list(base.profile?.data?.permitted_assumptions).includes(assumption)) fail(`assumption ${assumption} is not delegated by the profile`);
+  const previous = base.tasks.get(taskId)?.data ?? {};
+  for (const field of ['prerequisites', 'decisions', 'deferred_inputs', 'governing', 'acceptance', 'risks']) {
+    for (const item of list(previous[field])) if (!list(t[field]).includes(item)) fail(`removed trusted ${field} reference ${item}; resolve the governing change first`);
+  }
+  if (previous.feature && t.feature !== previous.feature) fail('task feature changed without governing resolution');
+  if (previous.milestone && t.milestone !== previous.milestone) fail('task milestone changed without governing resolution');
+  if (baseline.kind === 'git') {
+    if (!(candidate.kind === 'git' ? candidate.isAncestor(t.start_revision) : baseline.hasCommit(t.start_revision))) fail('start_revision must identify an available commit in the candidate history');
+    if (!baseline.isAncestor(t.governing_baseline_revision)) fail('governing_baseline_revision is invalid');
+    else if (baseline.changedSince(t.governing_baseline_revision, [`${rd}/profile.md`, `${rd}/milestones`, `${rd}/decisions`, ...list(t.governing).filter(g => g.includes('/'))])) fail('readiness is stale: governing records changed; reassess against the current baseline');
+  }
   if (!base.profile) fail(`${rd}/profile.md is not on the trusted baseline`);
   for (const g of list(t.governing)) {
     const ok = g === 'PROFILE' ? !!base.profile
@@ -65,10 +93,15 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     } else fail(`prerequisite "${p}" is not a task id, decision id, or contract:<path>`);
   }
 
-  const stage = stageOf(t);
+  const stage = STAGES[Math.max(STAGES.indexOf(requestedStage ?? 'implement'), STAGES.indexOf(stageOf(t)), STAGES.indexOf(stageOf(previous)))];
+  if (!STAGES.includes(stage)) fail(`unknown stage ${stage}`);
   const stageIdx = STAGES.indexOf(stage);
-  const inScope = new Set(list(t.decisions));
-  for (const [id, d] of base.decisions) if (list(d.data?.affects).includes(taskId)) inScope.add(id);
+  const inScope = new Set([...list(t.decisions), ...list(t.prerequisites).filter(p => /^D-\d{4}$/.test(p))]);
+  const taskScope = [...list(t.scope), ...changed];
+  for (const [id, d] of base.decisions) {
+    const affects = list(d.data?.affects);
+    if (affects.some(a => a === taskId || a === t.feature || a === previous.feature || a === t.milestone || (a.startsWith('paths:') && taskScope.some(p => overlaps(a.slice(6), p))))) inScope.add(id);
+  }
   const cand = candidate === baseline ? null : loadAll(candidate, rd).decisions;
   const blockedIds = new Set();
   for (const id of inScope) {
@@ -97,13 +130,14 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     const [, id, st] = m;
     if (STAGES.indexOf(st) > stageIdx || blockedIds.has(id)) continue;
     const b = base.decisions.get(id);
-    if (!b || b.data?.status !== 'Resolved') {
-      block(id, `deferred input ${id} is required before ${st}; task stage is ${stage} and it is ${b ? b.data?.status : 'missing'} on the trusted baseline`, scopesOf(b));
+    const superseded = b?.data?.superseded_by || [...base.decisions.values()].some(d => d.data?.status === 'Resolved' && d.data?.supersedes === id);
+    if (!b || b.data?.status !== 'Resolved' || superseded) {
+      block(id, `deferred input ${id} is required before ${st}; task stage is ${stage} and it is ${superseded ? 'superseded' : b ? b.data?.status : 'missing'} on the trusted baseline`, scopesOf(b));
     }
   }
 
   if (!t.baseline_revision) fail('baseline_revision is not recorded');
-  else if (baseline.isAncestor(t.baseline_revision) === false) fail(`baseline_revision ${t.baseline_revision} is not an ancestor of the trusted baseline ${baseline.name}`);
+  else if (baseline.kind === 'git' && !(candidate.kind === 'git' ? candidate.isAncestor(t.baseline_revision) : baseline.hasCommit(t.baseline_revision))) fail(`baseline_revision ${t.baseline_revision} is not an available commit in the candidate history`);
   if (!t.baseline_result) fail('baseline_result is not recorded (pass, or fail: <summary> for a known failing baseline)');
 
   return finish({ taskId, status: t.status, stage, reasons, pending, structural, blocks, subset: list(t.subset).map(trim), baseline: baseline.name });

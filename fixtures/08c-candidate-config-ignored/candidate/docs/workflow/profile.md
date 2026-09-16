@@ -1,5 +1,8 @@
 ---
 record: profile
+readiness: Ready
+required_checks: [unit]
+permitted_assumptions: []
 project: Fixture
 workflow_version: 1.0.0
 approval_mechanism: github-rulesets-codeowners

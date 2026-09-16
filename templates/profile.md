@@ -1,10 +1,13 @@
 ---
 record: profile
 project:
-workflow_version: 1.0.0
-approval_mechanism: github-rulesets-codeowners
+workflow_version: UNRELEASED
+approval_mechanism: manual-signed-receipts
 approval_label: manual
 coordinator:
+readiness: Needs discovery
+required_checks: []
+permitted_assumptions: []
 setup_budget_days: 2
 ---
 # Project profile
@@ -33,6 +36,12 @@ Verification commands · review and approval arrangement · deployment ownership
 ## Quality expectations
 | Expectation | Acceptance condition | Evidence method | Responsible role | Required stage |
 |---|---|---|---|---|
+
+## Operations
+Monitoring, recovery, migrations, support, device provisioning and updates; mark not applicable with reasons.
+
+## Execution
+Tools and versions, actual owner/worker GitHub usernames, separate clones, author/transport/API routes, assisted mode, time/usage/retry/spending limits and cumulative accounting.
 
 ## Workflow configuration
 Adopted version and revision · project settings · approved deviations · setup budget · optional tooling.

@@ -1,0 +1,10 @@
+{
+  "outcome": "progress",
+  "summary": "",
+  "candidate": "",
+  "evidence": [],
+  "next_action": "",
+  "friction": "none",
+  "usage": { "time_seconds": null, "tokens": null, "spend": null, "attempts": null },
+  "checkpoint": ""
+}

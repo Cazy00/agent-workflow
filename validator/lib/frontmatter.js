@@ -11,6 +11,8 @@ export function parseFrontMatter(text) {
     if (!line || line.startsWith('#')) continue;
     const m = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) { errors.push(`unparseable front matter line: ${raw}`); continue; }
+    if (Object.hasOwn(data, m[1])) { errors.push(`duplicate front matter key: ${m[1]}`); continue; }
+    if (['__proto__', 'constructor', 'prototype'].includes(m[1])) { errors.push(`invalid front matter key: ${m[1]}`); continue; }
     data[m[1]] = parseValue(m[2]);
   }
   return { data, body: lines.slice(end + 1).join('\n'), errors };

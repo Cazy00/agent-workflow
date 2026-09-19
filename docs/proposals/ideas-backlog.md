@@ -119,9 +119,60 @@ The owner shared this transcript with the same question. Note-taker's summary:
 
 ---
 
+## IDEA-05 — Choose the development technique per task (TDD / BDD / DDD / prototyping / contract testing / evals)
+
+**Status:** Unevaluated
+
+**Source:** the owner's document, kept verbatim with its references at [`sources/technique-selection.md`](sources/technique-selection.md). Read that file in full. What follows is only a summary and a first map against the workflow.
+
+**Owner's question (paraphrased):** The owner is unsure about three things. Should the workflow adopt a development technique such as TDD, BDD or DDD? Is it better off without one? Or has it effectively adopted one already? The owner wants the evaluator to decide what would genuinely improve the agent flow.
+
+**The document's core argument:**
+- Keep **one consistent discipline** for every task: understand → define success → make a small change → verify → review and record.
+- Choose the **technique per task, even per feature**, based on uncertainty, the consequences of failure, complexity and expected lifetime. Project size is not the deciding factor.
+- The techniques aren't rivals because each answers a different question:
+  - Prototyping / user-centred design: is this the right experience?
+  - BDD / specifications: what should the software do?
+  - DDD: how are the concepts and boundaries organised?
+  - TDD: how do we build it in small, checked steps?
+  - Contract / integration testing: do the components agree?
+  - Evaluations: does an AI feature inside the product behave well enough?
+- The biggest risk: when an AI writes the spec, the code and the tests, all three can agree with one another and still miss the real requirement. Expected results must be checked **against the business requirement**. Agreement between two agents is not proof.
+
+**First map against the current workflow (unverified; check it):**
+
+| Document's point | What seems to exist already | Possible gap |
+|---|---|---|
+| Consistent discipline: understand → define success → small change → verify → review/record | Readiness → execute → review → accept (`procedures/`). Checkpoints and durable records. | Looks covered, and in stricter form. |
+| Choose the technique by uncertainty, consequences, complexity and lifetime | Readiness sets the *level of detail* required. `templates/design.md` is mandatory for money, stock, security boundaries, sync, shared contracts and irreversible data operations. `procedures/execute.md` lists check *types* to "choose applicable". | **No explicit technique-selection step.** Nothing asks "which technique suits this task, and why". `templates/task.md` has a free-text "Approach" section. Would a short selection guide plus an `approach`/`technique` field help, or would it only add paperwork? |
+| Prototyping when the experience is uncertain; prototype code isn't production | POLICY § Discovery allows "explicitly labelled prototypes". POLICY requires prototypes to be kept distinct from approved requirements. Bounded spikes cover feasibility. | Mostly covered. Is there a clear route from **prototype → approved requirement → production task**? |
+| BDD: agree concrete examples with the requirement owner first | Feature readiness requires acceptance examples. Stable acceptance IDs (`AC-…`). Tests map to IDs. Owner acceptance tests scenarios. | Largely covered in substance. Should the Given/When/Then format be recommended for acceptance examples? |
+| TDD done properly: red → green → refactor, and "writing tests after" is not TDD | No mention of test-first. Tests are required, but *when* they are written isn't specified. | **Possible gap.** Should test-first be *preferred* for clear rule/calculation logic, with evidence of the observed failing run recorded in the checkpoint? The owner already has a `tdd` skill installed. Check whether it fits the toolbox process. |
+| DDD for complex business domains, but only as much as complexity justifies | Design records cover ownership and lifecycle. Feature readiness includes "ownership/lifecycle". | Probably enough. Possibly guidance on when a domain model or glossary is warranted (there's also a `domain-modeling` skill installed). |
+| Interfaces first, plus contract and integration tests between components | POLICY: agree shared contracts before work diverges. Approved contracts can satisfy dependencies. Design records are mandatory for shared contracts. | Contracts are covered. Is **contract testing** (such as consumer-driven tests) named as a check type? |
+| Bug fixes: reproduce → regression test → scoped fix → verify the original symptom | POLICY and readiness accept a documented failing baseline for a bug fix. Regression tests appear among the check types. | Is there a **lighter bug-fix lane** that doesn't demand full feature-level readiness? Is "reproduce first, then confirm the original symptom is gone" required? |
+| High-consequence work: test what must never happen; property-based testing; explicit access-control expectations | Check types cover permissions, data exposure, failure/retry/recovery. Design records are mandatory for security/money/irreversible data work. | Possibly add **negative / "must never happen" examples** to acceptance examples, and name property-based testing as an option. |
+| AI features inside the product (chatbots) need evals, not just tests | Not covered. | **Real gap for the owner's projects** (e.g. the Al Nahwi WhatsApp assistant). Should the profile/readiness recognise "the product contains model behaviour" and require an eval set with quality criteria? |
+| Report passed / failed / not tested; never turn "not tested" into "probably works" | POLICY: use "not verified" when evidence is unavailable. Limitations in the acceptance package. Unavailable required checks block acceptance. | Looks covered. |
+| Don't weaken or remove tests just to get a pass; test changes need a stated, reviewed reason | POLICY § *Rules for test changes*, `procedures/review.md`. Validator coverage comparison. | Covered, and in strong form. |
+| Check expected results against the business requirement, not the generated code | Independent review checks "whether tests still represent approved behaviour". Acceptance examples come from approved requirements, not code. | Mostly covered. Check whether tests *authored by the implementer* are compared against owner-approved examples, or only mapped to their IDs. |
+| Keep main instructions short, with pointers to detail | `AGENTS.md` is short and points to procedures. | Covered. |
+| Adjust the process by defects, rework, review effort and total cost | POLICY § maintenance: judge by recurrence, severity, wasted effort, observed benefit. | Covered. |
+
+**Questions for the evaluator:**
+1. Has the workflow already adopted the *substance* of this document without naming the techniques? If so, is naming them (a short technique-selection table in a procedure) worth the extra text?
+2. Which gaps are real and worth closing? Candidates: a technique-selection step, test-first preference with evidence, a bug-fix lane, negative examples, evals for AI features, contract testing as a named check.
+3. Would any addition make simple tasks heavier? The document itself warns against demanding a long planning phase for small, obvious changes.
+4. Could the café example (Bun Alkaif) or the Al Nahwi assistant serve as a representative fixture or pilot for whatever is adopted?
+
+**Expected output:** a verdict per gap (adopt / already covered / reject), and for anything adopted, the smallest change to procedures, templates or fixtures.
+
+---
+
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)
 
 1. **Self-verification by running the app** (IDEA-02, A10, A11). This is the one change the owner explicitly asked for. It is probably the highest-value item, and the harness credential limit needs a practical workaround.
 2. **A sharper task brief** (A2, A8, B2, B3, B5): explicit do-not / out-of-bounds, files to read, "list assumptions first", "present options instead of guessing". These could be small additions to `templates/task.md` and `procedures/execute.md`.
 3. **Tooling and model choices** (IDEA-01, A10, B4): vet external tools through the existing toolbox process. Recommend models only if usage data justifies it.
-4. **Much of the videos' advice already exists here in stricter form** (readiness gates, independent review, stop conditions, durable records). Don't add rules that repeat what the workflow already enforces.
+4. **Technique selection** (IDEA-05, overlapping A2/A6/A11 and B5/B7): mostly present in substance. The likely real gaps are a test-first preference, a lighter bug-fix lane, negative examples, and evals for AI features in the product.
+5. **Much of the videos' advice already exists here in stricter form** (readiness gates, independent review, stop conditions, durable records). Don't add rules that repeat what the workflow already enforces.

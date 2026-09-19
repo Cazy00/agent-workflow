@@ -11,5 +11,6 @@ This repository maintains the workflow itself. Workflow changes need independent
 - Feedback and maintenance: `procedures/maintenance.md`.
 - Validation: `npm test`; command usage: `QUICKSTART.md`.
 - Reusable records: `templates/`; operational evidence and limitations: `docs/audit/`.
+- Owner ideas awaiting evaluation (no authority): `docs/proposals/ideas-backlog.md`.
 
 Default to one coordinator. Independent review uses a separate context and canonical sources, without the implementer's conversation. Preserve task-prefixed checkpoints and an explicit session outcome. Never infer approval from a task field, Git author, process exit, or branch name. Do not publish using an owner account when worker credentials fail.

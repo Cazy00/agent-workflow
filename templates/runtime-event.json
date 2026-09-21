@@ -1,0 +1,13 @@
+{
+  "id": "REPLACE_WITH_RANDOM_UUID_V4",
+  "type": "usage",
+  "milestone": "M-0001",
+  "owner_minutes": null,
+  "api_list_cost_usd": null,
+  "actual_cost_usd": null,
+  "tokens": null,
+  "retries": 0,
+  "signatures": 0,
+  "resigns": 0,
+  "elapsed_seconds": null
+}

@@ -1,5 +1,6 @@
 // Task readiness against the trusted baseline. SCHEMA.md "Readiness evaluation".
 import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js';
+import { governingChanged } from './freshness.js';
 
 export const STAGES = ['implement', 'verify', 'accept', 'release'];
 export const OUTCOMES = {
@@ -69,7 +70,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   if (baseline.kind === 'git') {
     if (!(candidate.kind === 'git' ? candidate.isAncestor(t.start_revision) : baseline.hasCommit(t.start_revision))) fail('start_revision must identify an available commit in the candidate history');
     if (!baseline.isAncestor(t.governing_baseline_revision)) fail('governing_baseline_revision is invalid');
-    else if (baseline.changedSince(t.governing_baseline_revision, [`${rd}/profile.md`, `${rd}/milestones`, `${rd}/decisions`, ...list(t.governing).filter(g => g.includes('/'))])) fail('readiness is stale: governing records changed; reassess against the current baseline');
+    else if (governingChanged({ baseline, revision: t.governing_baseline_revision, recordsDir: rd, task: t, previous })) fail('readiness is stale: governing records changed; reassess against the current baseline');
   }
   if (!base.profile) fail(`${rd}/profile.md is not on the trusted baseline`);
   for (const g of list(t.governing)) {

@@ -20,4 +20,6 @@ Run `npm test`. Authoritative gates require a provisioned validator, external ow
 
 Supported execution is **assisted**. An unattended runner is not adopted; runner-specific claims require implementation, adverse-condition fixtures and an observed pilot. Graphify remains deferred optional tooling. Codex and Claude entry adapters are supplied; live instruction discovery must be tested per project and tool version.
 
+Assisted operations now include fixed-catalog central GitHub reporting, a private runtime ledger and optional feedback cadence, plus unsigned Node-test evidence preparation. See [operations](procedures/operations.md). Configuration and live adoption are still required.
+
 The existing `v1.0.0` tag remains unchanged. Review and owner approval must precede a new release/tag and deliberate project adoption. These edits do not silently upgrade PrintFlow or any other project.

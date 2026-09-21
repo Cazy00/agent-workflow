@@ -12,7 +12,7 @@ Read the repository `AGENTS.md` and current profile, milestone, task, and govern
 | Implement, checkpoint or recover | `procedures/execute.md` |
 | Review candidate and test fidelity | `procedures/review.md` |
 | Present, accept or release | `procedures/accept-release.md` |
-| Report or maintain workflow | `procedures/maintenance.md` |
+| Report or maintain workflow | `procedures/maintenance.md` and `procedures/operations.md` |
 
 Paths above are relative to the workflow repository; adopting projects keep this folder and the procedures together under their recorded workflow installation and point their short repository guide there.
 

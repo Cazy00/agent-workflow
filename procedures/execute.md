@@ -1,6 +1,6 @@
 # Coordinate, implement and hand off
 
-Use one coordinator for an authorised milestone. Read current records and actual Git/external state, recompute readiness, select the highest-priority eligible task and claim it before work. With assisted execution, the coordinator serialises claims in the milestone record. Do not run concurrent coordinators; parallel workers require separately assigned tasks and worktrees, with agreed shared contracts. This manual claim protocol is not an unattended distributed lock.
+Use one coordinator for an authorised milestone. Read current records and actual Git/external state, recompute readiness, select the highest-priority eligible task and claim it before work. With assisted execution, the coordinator serialises claims in the separate operational run record (see `operations.md`); milestone records retain approved limits and authority. Do not run concurrent coordinators; parallel workers require separately assigned tasks and worktrees, with agreed shared contracts. This manual claim protocol is not an unattended distributed lock.
 
 For each task: load governing sources/checkpoint; confirm scope, environment and identity; record the baseline; inspect existing components/helpers/scripts/toolbox; implement the smallest coherent change; run meaningful checks; investigate failures; obtain independent review; resolve findings; save evidence and next action. Register useful reusable assets only after review. Task-specific helpers need not become frameworks.
 
@@ -12,7 +12,9 @@ For bug fixes, reproduce the failure or preserve available failure evidence; add
 
 A shared checkpoint is a commit beginning with the task ID. Its condition may be incomplete if explicit. Publish only to the authorised location after the exact route identity check. Preserve genuine human authorship. Merge traceability may use the PR. Read-only findings may be stored in the task or run log without a code commit.
 
-Before resuming interrupted work, inspect branch, working tree, task claims, logs, PRs and any other external actions already performed. Do not replay side effects from a missing handoff. Save cumulative time/usage/retries/spend in the milestone and run record; unknown usage is unknown. Check the remaining budget before each assisted call. Save progress and stop when a limit is reached.
+Before resuming interrupted work, inspect branch, working tree, task claims, logs, PRs and any other external actions already performed. Do not replay side effects from a missing handoff. Save cumulative time/usage/retries/spend in the operational run record, against the milestone’s approved limits; unknown usage is unknown. Check the remaining budget before each assisted call. Save progress and stop when a limit is reached.
+
+At handoff, report workflow friction through the adopted central reporting route in `operations.md`, including explicit user complaints. A report never changes readiness. Offer the optional feedback question only when runtime cadence allows it.
 
 Every session records one outcome with `templates/session.json`: progress, ready-for-review, verified-complete, blocked, stopped-by-limit, or no-progress. Run `wf session`. Process success or a new commit alone is insufficient; inspect evidence for meaningful progress.
 

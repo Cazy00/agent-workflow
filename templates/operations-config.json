@@ -1,0 +1,11 @@
+{
+  "authorised": false,
+  "project_root": "/absolute/path/to/adopting-project",
+  "destination": "Cazy00/agent-workflow",
+  "worker": "MontaDev-sys",
+  "workflow": { "version": "1.1.0-dev.0", "revision": "REPLACE_WITH_APPROVED_FULL_HASH" },
+  "tools": { "codex": ["0.155.1"], "claude": ["2.1.274"] },
+  "reports_per_session": 3,
+  "survey_cooldown_hours": 24,
+  "limits": { "owner_minutes": 30, "retries": 3, "api_list_cost_usd": 10 }
+}

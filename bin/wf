@@ -13,4 +13,14 @@ WF_EXTRACT="$(mktemp -d)"
 trap 'rm -rf "$WF_EXTRACT"' EXIT
 # Execute the committed blob, never a writable cache's working tree or candidate pin.
 git -C "$WF_VALIDATOR_REPO" archive "$WF_VALIDATOR_REV" validator | tar -x -C "$WF_EXTRACT"
-node "$WF_EXTRACT/validator/cli.js" --repo "$WF_PROJECT_ROOT" "$@"
+# Supply a default only when the caller did not choose a repository. Forward
+# explicit options unchanged so the CLI still rejects duplicates/missing values.
+WF_HAS_REPO=false
+for WF_ARG in "$@"; do
+  if [ "$WF_ARG" = '--repo' ]; then WF_HAS_REPO=true; fi
+done
+if [ "$WF_HAS_REPO" = true ]; then
+  node "$WF_EXTRACT/validator/cli.js" "$@"
+else
+  node "$WF_EXTRACT/validator/cli.js" --repo "$WF_PROJECT_ROOT" "$@"
+fi

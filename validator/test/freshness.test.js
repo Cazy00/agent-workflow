@@ -50,6 +50,14 @@ test('actual extracted CLI runs with automatic module detection disabled',t=>{
  const cp=path.join(project,'docs/workflow/config.json');const c=JSON.parse(fs.readFileSync(cp,'utf8'));c.workflow={revision:rev};fs.writeFileSync(cp,JSON.stringify(c));
  const r=spawnSync('bash',[path.join(root,'bin/wf'),'records'],{cwd:project,encoding:'utf8',env:{...process.env,WF_VALIDATOR_REPO:workflow,WF_VALIDATOR_REV:rev,WF_LOCAL:'',NODE_OPTIONS:'--no-experimental-detect-module'}});
  assert.equal(r.status,0,r.stderr+r.stdout);assert.equal(JSON.parse(r.stdout).ok,true);
+ // An explicit target must work even when the caller is outside that project.
+ const opts={cwd:temp,encoding:'utf8',env:{...process.env,WF_VALIDATOR_REPO:workflow,WF_VALIDATOR_REV:rev,WF_LOCAL:'',NODE_OPTIONS:'--no-experimental-detect-module'}};
+ const explicit=spawnSync('bash',[path.join(root,'bin/wf'),'records','--repo',project],opts);
+ assert.equal(explicit.status,0,explicit.stderr+explicit.stdout);assert.equal(JSON.parse(explicit.stdout).ok,true);
+ const duplicate=spawnSync('bash',[path.join(root,'bin/wf'),'records','--repo',project,'--repo',project],opts);
+ assert.equal(duplicate.status,2);assert.match(duplicate.stderr,/duplicate option: --repo/);
+ const missing=spawnSync('bash',[path.join(root,'bin/wf'),'records','--repo'],opts);
+ assert.equal(missing.status,2);assert.match(missing.stderr,/missing value.*--repo/);
 });
 test('new decisions affecting a transitive prerequisite invalidate dependent readiness',t=>{
  const p=setup(t);const tp='docs/workflow/tasks/T-0001.md';

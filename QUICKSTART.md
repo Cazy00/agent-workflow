@@ -16,6 +16,8 @@ Inspect actual Git/external state before resuming. Confirm the worker route, fet
 
 The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, and `WF_RECEIPTS` were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
 
+Run from the target checkout, or pass `--repo "$WF_PROJECT"` once to select it explicitly. The launcher defaults to the current Git root (current directory outside Git); repeated `--repo` options and missing values remain errors.
+
 ```sh
 "$WF_LAUNCHER" records --baseline "$WF_BASELINE"
 "$WF_LAUNCHER" readiness --baseline "$WF_BASELINE" --task T-0001 \

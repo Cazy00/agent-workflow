@@ -1,6 +1,6 @@
 # Workflow ideas — Codex and Fable conclusion
 
-**Status:** settled recommendation, not adoption. **Date:** 2026-09-21. **Task:** [T-0002](../workflow/tasks/T-0002.md).
+**Status:** four additions authorised and implemented locally; unreleased. **Date:** 2026-09-21. **Task:** [T-0002](../workflow/tasks/T-0002.md).
 
 The owner requested a short discussion with Fable 5.1 at high effort. After authentication was restored, two successful Claude Code calls used `claude-fable-5-1`; the CLI invocation specified `--effort high`, and both result objects report that exact reviewer model. The first response took 53.6 seconds; the follow-up took 27.2 seconds. Fable initially received canonical sources and the original unevaluated backlog without Codex's assessment or conversation. The follow-up challenged specific disagreements and supplied additional evidence.
 
@@ -29,7 +29,7 @@ Codex accepted Fable's pressure to reduce paperwork: the initial standalone tech
 
 Both agree that a domain glossary can coexist with the workflow when canonical records designate or link it; it is not inherently a competing decision system. Neither installed skill is adopted by this assessment.
 
-Fable suggested an “adopted” backlog label for a partial recommendation. Codex did not apply that label: expert agreement supplies a recommendation, not evidence of implementation, owner approval, release, or adoption. The backlog remains **Needs owner decision**, with the evaluation complete.
+Fable suggested an “adopted” backlog label for a partial recommendation. Codex did not apply that label: expert agreement supplies a recommendation, not evidence of implementation, owner approval, release, or adoption. At the end of that discussion the backlog remained **Needs owner decision**. The subsequent owner authorisation and local implementation are recorded below.
 
 ## Evidence and limits
 
@@ -37,6 +37,6 @@ The [initial response](../audit/fable-ideas-2026-09-21/round1-retry.json) and [f
 
 The successful calls report API list-cost estimates of USD 0.87462625 and USD 0.34759250, including a small auxiliary harness-model call in the first result; these are not a statement of actual subscription charges. No permission denials occurred. No workflow implementation or installed-tool changes were made, so the unchanged validator suite was not rerun after this discussion. The earlier evaluation's 95-test result remains evidence for that unchanged code only.
 
-**Next action:** prepare only the four selected additions as a reviewable implementation if authorised. Preserve existing safeguards and validate representative behavior. Independent review of that implementation, owner approval, a versioned release, and explicit adoption remain separate from this design discussion.
+**Implementation follow-up:** the owner subsequently gave the green light for these four additions, conditional on preserving safeguards and validating representative behavior. [T-0003](../workflow/tasks/T-0003.md) records that authority, and the [implementation report](../audit/T-0003/report.md) records the changes, independent Fable review, 95 passing tests and eight instruction scenarios. This local implementation is complete; release approval, versioned release and explicit project adoption remain separate. The consultation evidence above describes the earlier discussion, before implementation.
 
 **Session outcome:** progress — requested consultation completed and recommendation settled. Workflow friction this session: none; the earlier authentication blocker was resolved.

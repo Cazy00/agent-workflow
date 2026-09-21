@@ -1,0 +1,21 @@
+{
+  "candidate": "5f6426854871612c29d1510172e1e956ba8e80b7",
+  "base": "221ba5cfb535d058398aa839f5ba329f91b11997",
+  "node": "v22.23.1",
+  "test_exit_code": 0,
+  "elapsed_seconds": 4.83,
+  "summary": [
+    "1..95",
+    "# tests 95",
+    "# suites 0",
+    "# pass 95",
+    "# fail 0",
+    "# cancelled 0",
+    "# skipped 0",
+    "# todo 0",
+    "# duration_ms 4639.538833"
+  ],
+  "policy_schema_validator_fixtures_and_enforcement": "byte-preserved by empty Git diff",
+  "template_frontmatter": "unchanged",
+  "policy_sha256": "a22660feea76ea7f163efd749e578fc07438b08c013a036327b071d201788476"
+}

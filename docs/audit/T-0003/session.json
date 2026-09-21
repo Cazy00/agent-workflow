@@ -1,0 +1,63 @@
+{
+  "outcome": "progress",
+  "task": "T-0003",
+  "maintenance": "MAINT-T-0003",
+  "summary": "Completed the four owner-authorised local guidance additions; resolved both independent review findings; all 95 tests and eight instruction scenarios passed. This is unreleased source maintenance, not trusted lifecycle completion or project adoption.",
+  "candidate": "1926c86579d7f9427ecf9b4a3baa34d17731a2f8",
+  "source_base": "221ba5cfb535d058398aa839f5ba329f91b11997",
+  "evidence": [
+    "docs/audit/T-0003/report.md",
+    "docs/audit/T-0003/final-checks.json",
+    "docs/audit/T-0003/final-tests.tap",
+    "docs/audit/T-0003/review-followup.parsed.json",
+    "docs/audit/T-0003/scenario-assessment.json"
+  ],
+  "next_action": "Retain the reviewed implementation for a separately authorised release; no automatic release, publication or project adoption.",
+  "friction": "none",
+  "checkpoint": "T-0003 task-prefixed source commits and a record-only final checkpoint on codex/T-0003-workflow-verification.",
+  "usage": {
+    "time_seconds": null,
+    "tokens": null,
+    "spend": null,
+    "attempts": 2,
+    "review_elapsed_seconds": [
+      62.2,
+      30.7
+    ],
+    "review_list_cost_estimate_usd": 1.22099575,
+    "limitation": "Coordinator total usage is unknown; CLI cost values are list-price estimates, not actual subscription charges."
+  },
+  "timing": {
+    "first_checkpoint_utc": "2026-09-21T10:14:58+00:00",
+    "recorded_utc": "2026-09-21T10:27:49.739825+00:00",
+    "measured_interval_seconds": 772,
+    "limitation": "Preparation before the first checkpoint was not measured."
+  },
+  "review": {
+    "model": "claude-fable-5-1",
+    "effort": "high",
+    "session_id": "c57d12ee-7ff9-4eb2-9444-3d4977780e06",
+    "initial_context": "fresh, no consultation session or implementer conversation",
+    "result": "pass",
+    "resolved_findings": 2,
+    "remaining_findings": 0,
+    "signed_receipt": null
+  },
+  "verification": {
+    "command": "npm test",
+    "passed": 95,
+    "failed": 0,
+    "skipped": 0,
+    "instruction_scenarios_passed": 8,
+    "instruction_scenarios_failed": 0,
+    "live_product_pilot": false
+  },
+  "lifecycle_limitation": "No adopting-project configuration or trusted receipt chain; direct session-record check only, with no authoritative integration, acceptance or release claim.",
+  "session_record_check": {
+    "ok": true,
+    "errors": [],
+    "outcome": "progress",
+    "limitation": "Evidence content must still be assessed for meaningful progress; process exit and record fields do not prove it.",
+    "method": "Direct local evaluateSession against durable files; no authoritative readiness or lifecycle claim."
+  }
+}

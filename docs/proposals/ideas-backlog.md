@@ -1,12 +1,12 @@
 # Owner ideas backlog
 
-**Status of this file:** the owner's list of ideas, recorded 2026-09-19. Nothing here is approved, and nothing here changes the workflow.
+**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. Their local implementation and validation are recorded in [T-0003](../audit/T-0003/report.md); they remain unreleased. Original ideas and first-read notes below are historical, not operating instructions.
 **Audience:** the agent asked to evaluate these ideas. For each idea, decide whether it adds value, and if it does, write an implementation plan.
 **Authority:** none. `POLICY.md` still governs. An adopted idea goes through `procedures/maintenance.md`: classify it as an *improvement proposal*, then get independent review, owner approval, a new workflow version and explicit project adoption. A working agent must not weaken its own rules, and an idea written here does not count as permission to do so.
 
-**Evaluation:** all five groups were assessed on 2026-09-21 in [MAINT-2026-09-21-IDEAS](ideas-evaluation-2026-09-21.md). The assessment and implementation proposals supersede the unverified first-read notes below where they differ. No recommendation has been adopted; the original ideas and quotations are preserved.
+**Evaluation:** all five groups were assessed on 2026-09-21 in [MAINT-2026-09-21-IDEAS](ideas-evaluation-2026-09-21.md). The assessment and implementation proposals supersede the unverified first-read notes below where they differ. The original ideas and quotations are preserved; implementation status below distinguishes local changes from release and project adoption.
 
-**Expert discussion:** the owner-requested [Codex/Fable conclusion](ideas-joint-conclusion-2026-09-21.md) settles the recommended include/defer/pass list and narrows the implementation plan. Adoption remains undecided.
+**Expert discussion:** the owner-requested [Codex/Fable conclusion](ideas-joint-conclusion-2026-09-21.md) settles the recommended include/defer/pass list and narrows the implementation plan. The owner subsequently authorised its four-item implementation package. Release and adoption in other projects remain separate.
 
 ## How to evaluate each idea
 
@@ -16,13 +16,13 @@
 4. When you adopt something, propose the smallest change that works (instructions, a template, config, the validator, or a fixture). Show that existing safeguards still hold.
 5. Update this file's **Status** line for the idea, and link any resulting maintenance record, decision or plan.
 
-Status values: `Unevaluated` · `Under evaluation` · `Adopted → <link>` · `Partly adopted → <link>` · `Rejected (reason)` · `Needs owner decision`.
+Status values: `Unevaluated` · `Under evaluation` · `Adopted → <link>` · `Partly adopted → <link>` · `Rejected (reason)` · `Needs owner decision` · `Implemented (unreleased)` · `Partly implemented (unreleased)` · `Deferred`.
 
 ---
 
 ## IDEA-01 — Evaluate ECC (`https://github.com/affaan-m/ECC`)
 
-**Status:** Needs owner decision — [evaluation complete: selected adapted parts only; no bundle installation](ideas-evaluation-2026-09-21.md#idea-01--ecc).
+**Status:** Deferred — no ECC bundle installation or asset adoption in this package; individual assets need a concrete task and vetting. See the [settled scope](ideas-joint-conclusion-2026-09-21.md#defer-or-pass).
 
 **Owner's question (verbatim):**
 > how can we use https://github.com/affaan-m/ECC.git ?? is it good as thay are saying ?? what can we do with it ?? or its just a hype ?
@@ -46,7 +46,7 @@ Status values: `Unevaluated` · `Under evaluation` · `Adopted → <link>` · `P
 
 ## IDEA-02 — Let the agent open, log into and look at the running app itself, then iterate
 
-**Status:** Needs owner decision — [evaluation complete: explicit running-app verification guidance](ideas-evaluation-2026-09-21.md#idea-02--run-the-app-log-in-inspect-it-and-iterate).
+**Status:** Implemented (unreleased) — running-app verification with authorised test accounts/data and existing safeguards. [Implementation and validation](../audit/T-0003/report.md).
 
 **Owner's words (verbatim):**
 > Is there any rule in the current agent that prohibits the agent from actually open and seize the output itself? If there is, let's remove this policy. As long the app have demo credentials or it have credentials that have been provided by me, the agent should be able to log in and actually test and see the output by itself.
@@ -83,7 +83,7 @@ Status values: `Unevaluated` · `Under evaluation` · `Adopted → <link>` · `P
 
 ## IDEA-03 — Lessons from YouTube video A ("tips after hundreds of hours coding with AI", sponsored by JetBrains Junie)
 
-**Status:** Needs owner decision — [evaluation complete: small task-brief improvements; most advice already covered](ideas-evaluation-2026-09-21.md#idea-03--video-a).
+**Status:** Partly implemented (unreleased) — optional references and exclusions in the existing task brief; most advice was already covered. [Implementation](../audit/T-0003/report.md) and [remaining dispositions](ideas-joint-conclusion-2026-09-21.md#defer-or-pass).
 
 The owner shared a transcript and asked "what can we take from it?". Below is the note-taker's summary of the video's claims, each with a first guess at where this workflow already stands. The evaluator decides what, if anything, is worth adding.
 
@@ -104,7 +104,7 @@ The owner shared a transcript and asked "what can we take from it?". Below is th
 
 ## IDEA-04 — Lessons from YouTube video B ("code with AI, not vibe code", sponsored by Warp)
 
-**Status:** Needs owner decision — [evaluation complete: selective context guidance; reject blanket stops and fixed agent teams](ideas-evaluation-2026-09-21.md#idea-04--video-b).
+**Status:** Partly implemented (unreleased) — starting read hints and preserved behaviour, without new approval stops or fixed agent teams. [Implementation](../audit/T-0003/report.md) and [remaining dispositions](ideas-joint-conclusion-2026-09-21.md#defer-or-pass).
 
 The owner shared this transcript with the same question. Note-taker's summary:
 
@@ -125,7 +125,7 @@ The owner shared this transcript with the same question. Note-taker's summary:
 
 ## IDEA-05 — Choose the development technique per task (TDD / BDD / DDD / prototyping / contract testing / evals)
 
-**Status:** Needs owner decision — [evaluation complete: task-appropriate techniques and conditional product-AI evaluations](ideas-evaluation-2026-09-21.md#idea-05--select-techniques-by-the-task).
+**Status:** Partly implemented (unreleased) — task-appropriate testing examples, practical bug repair guidance and conditional product-AI evaluations. No mandatory technique field, standalone guide or skill adoption. [Implementation](../audit/T-0003/report.md).
 
 **Source:** the owner's document, kept verbatim with its references at [`sources/technique-selection.md`](sources/technique-selection.md). Read that file in full. What follows is only a summary and a first map against the workflow.
 

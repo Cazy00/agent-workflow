@@ -1,0 +1,22 @@
+{
+  "base": "221ba5cfb535d058398aa839f5ba329f91b11997",
+  "reviewed_operating_candidate": "1926c86579d7f9427ecf9b4a3baa34d17731a2f8",
+  "operating_files_changed": [
+    "procedures/execute.md",
+    "templates/design.md",
+    "templates/profile.md",
+    "templates/task.md"
+  ],
+  "other_tracked_changes_within_authorised_record_paths": true,
+  "final_operating_files_identical_to_reviewed_candidate": true,
+  "original_owner_blockquotes_unchanged": true,
+  "original_technique_source_unchanged": true,
+  "operating_file_sha256": {
+    "procedures/execute.md": "ce191ab777988f1c9771a6fc1cadeea58c2e13d63e27e76948563cd80131f0b4",
+    "templates/design.md": "184cf7441970aedd68e32d97e72a9c3570d6c4a5a590b9715690c23b00be3747",
+    "templates/profile.md": "7a6f1e4152d77ddf83dcbc911cecf892461ae7c289c1dff8cd4ee9bda182e82b",
+    "templates/task.md": "81e9715cbbd1bb3e47dd8646cd667b6aa260257ea1bde4527fed3a405ad48b28"
+  },
+  "local_markdown_link_targets_checked": 45,
+  "local_markdown_link_targets_missing": []
+}

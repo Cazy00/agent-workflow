@@ -1,0 +1,33 @@
+{
+  "candidate": "1926c86579d7f9427ecf9b4a3baa34d17731a2f8",
+  "base": "221ba5cfb535d058398aa839f5ba329f91b11997",
+  "node": "v22.23.1",
+  "test_exit_code": 0,
+  "elapsed_seconds": 4.89,
+  "summary": [
+    "1..95",
+    "# tests 95",
+    "# suites 0",
+    "# pass 95",
+    "# fail 0",
+    "# cancelled 0",
+    "# skipped 0",
+    "# todo 0",
+    "# duration_ms 4721.069583"
+  ],
+  "policy_schema_validator_fixtures_and_enforcement": "byte-preserved by empty Git diff",
+  "protected_paths": [
+    "POLICY.md",
+    "SCHEMA.md",
+    "config.default.json",
+    "validator",
+    "fixtures",
+    "bin",
+    "adapters",
+    ".github",
+    "package.json",
+    "package-lock.json"
+  ],
+  "template_frontmatter": "unchanged",
+  "policy_sha256": "a22660feea76ea7f163efd749e578fc07438b08c013a036327b071d201788476"
+}

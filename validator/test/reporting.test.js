@@ -65,3 +65,27 @@ test('rate-limited writes wait and bound known rejected retries',async()=>{
  const p=setup();let calls=0;p.transport.create=async()=>{calls++;throw Object.assign(new Error('rate limit'),{status:429,retryAt:120000});};
  await p.deliver(0);assert.equal(p.r.status,'queued');await p.deliver(61000);assert.equal(calls,1);await p.deliver(120001);assert.equal(calls,2);
 });
+test('a later real delivery session can drain a capped event without changing its identity',async()=>{
+ const p=setup();await p.deliver();const r=enqueueReport(p.state,event({session_id:p.r.event.session_id}),config);
+ await deliverReport(p.state,r,config,p.transport,()=>{},0);assert.equal(r.reason,'session-cap');
+ const original=r.event.id;const session=randomUUID();await deliverReport(p.state,r,config,p.transport,()=>{},61000,session);
+ assert.equal(r.status,'delivered');assert.equal(r.event.id,original);assert.equal(r.event.session_id,p.r.event.session_id);assert.deepEqual(r.attempt_sessions,[session]);
+});
+test('a stable UUID is mandatory before any queue or write',()=>{
+ const input=event();delete input.id;assert.throws(()=>publicReport(input,config),/metadata/);
+});
+test('rate reset headers delay only an actually exhausted primary limit',async()=>{
+ const now=Date.now(),reset=Math.floor((now+3600000)/1000).toString();
+ for(const status of [401,404,422]) {
+  const transport=githubTransport('fixture',async()=>new Response('{}',{status,headers:{'x-ratelimit-reset':reset,'x-ratelimit-remaining':'10'}}));
+  await assert.rejects(transport.preflight('worker',config.destination),e=>e.retryAt<now+120000);
+ }
+ const limited=githubTransport('fixture',async()=>new Response('{}',{status:403,headers:{'x-ratelimit-reset':reset,'x-ratelimit-remaining':'0'}}));
+ await assert.rejects(limited.preflight('worker',config.destination),e=>e.retryAt===Number(reset)*1000);
+});
+test('reconciliation uses the persisted enqueue window instead of account lifetime',async()=>{
+ const p=setup();const when=Date.now();p.r.created_at=when;
+ let since;p.transport.list=async(dest,worker,page,window)=>{since=window;return [];};await p.deliver(when);
+ assert.equal(since,new Date(when-300000).toISOString());assert.equal(p.r.status,'delivered');
+ let url;const t=githubTransport('fixture',async(u)=>{url=u;return new Response('[]',{status:200});});await t.list(config.destination,'worker',1,since);assert.equal(new URL(url).searchParams.get('since'),since);
+});

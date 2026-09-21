@@ -26,3 +26,8 @@ test('serial claim survives in state and requires explicit matching release',()=
 test('exposure observations accompany report counts without granting completion authority',()=>{
  const s=fresh();const r=runtimeEvent(s,event('exposure',{task:'T-0001',result:'attempted'}),config);assert.equal(r.exposure.attempted,1);assert.equal(r.exposure.completed,0);
 });
+test('unknown usage cannot erase a limit already exceeded by its known lower bound',()=>{
+ const s=fresh();const usage={owner_minutes:12,api_list_cost_usd:null,actual_cost_usd:null,tokens:null,retries:0,signatures:0,resigns:0,elapsed_seconds:null};
+ assert.equal(runtimeEvent(s,event('usage',usage),config).budget_status,'exhausted');
+ const r=runtimeEvent(s,event('usage',{...usage,owner_minutes:null}),config);assert.equal(r.totals.owner_minutes,null);assert.equal(r.known_lower_bounds.owner_minutes,12);assert.equal(r.budget_status,'exhausted');assert.ok(r.exhausted.includes('owner_minutes'));
+});

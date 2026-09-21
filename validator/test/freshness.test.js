@@ -60,3 +60,25 @@ test('new decisions affecting a transitive prerequisite invalidate dependent rea
  assert.equal(p.run().outcome,'Ready');
  p.write('docs/workflow/decisions/D-0002.md',decision('D-0002','affects: [T-0002]'));p.commit();assert.ok(p.run().reasons.some(s=>s.includes('stale')));
 });
+test('candidate pathspec exclusions cannot suppress a real governing change',t=>{
+ const p=setup(t);p.edit('docs/specs/feature.md',s=>s+'\nChanged requirement.');
+ p.edit('docs/workflow/tasks/T-0001.md',s=>s.replace('review: independent context required','review: independent context required\ndesign: :(exclude)docs/workflow'));
+ p.commit();assert.throws(()=>p.run(),/invalid repository path/);
+ // The underlying Git source treats even unvalidated pathspecs literally.
+ const b=gitSource(p.repo,'HEAD');const tp=fs.readFileSync(path.join(p.repo,'docs/workflow/tasks/T-0001.md'),'utf8');const prior=tp.match(/governing_baseline_revision: ([a-f0-9]+)/)[1];
+ assert.equal(b.changedSince(prior,['docs/specs/feature.md',':(exclude)docs']),true);
+});
+test('root-level governing requirements are freshness dependencies',t=>{
+ const p=setup(t);const tp='docs/workflow/tasks/T-0001.md';p.write('REQUIREMENTS.md','Approved behavior.');p.edit(tp,s=>s.replace('governing: [PROFILE]','governing: [PROFILE, REQUIREMENTS.md]'));
+ const rev=p.commit();p.edit(tp,s=>s.replace(/^governing_baseline_revision:.*$/m,`governing_baseline_revision: ${rev}`));p.commit();assert.equal(p.run().outcome,'Ready');
+ p.edit('REQUIREMENTS.md',s=>s+'\nNew behavior.');p.commit();assert.ok(p.run().reasons.some(s=>s.includes('stale')));
+});
+test('freshness and readiness share normalization for new applicable decisions',t=>{
+ const p=setup(t);p.write('docs/workflow/decisions/D-0002.md',decision('D-0002','affects: [paths:./src]').replace('status: Open','status: Resolved'));p.commit();assert.ok(p.run().reasons.some(s=>s.includes('stale')));
+});
+test('a realistic unrelated milestone with its own acceptance examples remains unrelated',t=>{
+ const p=setup(t);const m=fs.readFileSync(path.join(p.repo,'docs/workflow/milestones/M-0001.md'),'utf8');
+ p.write('docs/workflow/milestones/M-0002.md',m.replaceAll('M-0001','M-0002').replaceAll('AC-001-1','AC-002-1'));
+ p.edit('docs/workflow/acceptance.json',s=>{const a=JSON.parse(s);a.examples.push({id:'AC-002-1',requirement:'docs/specs/other.md',method:'inspection'});return JSON.stringify(a);});p.write('docs/specs/other.md','Unrelated requirement.');p.commit();assert.equal(p.run().outcome,'Ready');
+ p.edit('docs/workflow/acceptance.json',s=>{const a=JSON.parse(s);a.examples[0].method='automated';return JSON.stringify(a);});p.commit();assert.ok(p.run().reasons.some(s=>s.includes('stale')));
+});

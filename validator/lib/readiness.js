@@ -1,6 +1,8 @@
 // Task readiness against the trusted baseline. SCHEMA.md "Readiness evaluation".
 import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js';
 import { governingChanged } from './freshness.js';
+import { overlaps } from './scope.js';
+export { overlaps } from './scope.js';
 
 export const STAGES = ['implement', 'verify', 'accept', 'release'];
 export const OUTCOMES = {
@@ -17,7 +19,6 @@ export function stageOf(task) {
 }
 
 const trim = (p) => p.replace(/^\.\//, '').replace(/\/+$/, '');
-export const overlaps = (a, b) => { a = trim(a); b = trim(b); return a === b || a.startsWith(b + '/') || b.startsWith(a + '/'); };
 const scopesOf = (rec) => {
   const s = list(rec?.data?.affects).filter((a) => a.startsWith('paths:')).map((a) => trim(a.slice(6)));
   return s.length ? s : null; // null = blocks everything

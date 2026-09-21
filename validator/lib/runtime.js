@@ -4,9 +4,10 @@ const metrics=['owner_minutes','api_list_cost_usd','actual_cost_usd','tokens','r
 export function runtimeSummary(state, config, milestone) {
   const rows=state.runs.filter(r=>r.milestone===milestone && r.type==='usage');
   const totals=Object.fromEntries(metrics.map(k=>[k,rows.length && rows.every(r=>r[k]!==null)?rows.reduce((n,r)=>n+r[k],0):null]));
-  const exhausted=Object.entries(config.limits).filter(([k,v])=>totals[k]!==null && totals[k]>=v).map(([k])=>k);
+  const known_lower_bounds=Object.fromEntries(metrics.map(k=>[k,rows.reduce((n,r)=>n+(r[k]??0),0)]));
+  const exhausted=Object.entries(config.limits).filter(([k,v])=>known_lower_bounds[k]>=v).map(([k])=>k);
   const unknown=Object.keys(config.limits).filter(k=>totals[k]===null);
-  return {exposure:Object.fromEntries(['attempted','completed','blocked'].map(k=>[k,state.runs.filter(r=>r.milestone===milestone && r.type==='exposure' && r.result===k).length])),totals,exhausted,unknown_limits:unknown,budget_status:exhausted.length?'exhausted':unknown.length?'unknown':'within-recorded-limits',limitation:'Assisted accounting from recorded observations, not an unattended budget enforcer. Unknown usage is not zero.'};
+  return {exposure:Object.fromEntries(['attempted','completed','blocked'].map(k=>[k,state.runs.filter(r=>r.milestone===milestone && r.type==='exposure' && r.result===k).length])),totals,known_lower_bounds,exhausted,unknown_limits:unknown,budget_status:exhausted.length?'exhausted':unknown.length?'unknown':'within-recorded-limits',limitation:'Assisted accounting from recorded observations, not an unattended budget enforcer. Unknown usage is not zero.'};
 }
 export function runtimeEvent(state,input,config,now=Date.now()) {
   exactKeys(input,['id','type','milestone','task','worker','answer','value','result',...metrics],'runtime event');

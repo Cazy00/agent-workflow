@@ -23,7 +23,7 @@ export async function runOperations(command,options) {
     }
     if(action==='submit'||action==='deliver') {
       if(!process.env.WF_WORKER_TOKEN && !['delivered','private','held'].includes(r.status)){r.reason='missing-worker-token';save();}
-      else if(process.env.WF_WORKER_TOKEN) await deliverReport(state,r,config,githubTransport(process.env.WF_WORKER_TOKEN),save);
+      else if(process.env.WF_WORKER_TOKEN) await deliverReport(state,r,config,githubTransport(process.env.WF_WORKER_TOKEN),save,Date.now(),options['delivery-session']??r.event.session_id);
     }
     return {id:r.event.id,status:r.status,url:r.url??null,reason:r.reason??null,attempts:r.attempts,reconciliations:r.reconciliations,limitation:'Central issue delivery is separate from readiness, approval and resolution. Held/unknown reports need inspection; no automatic cross-machine exactly-once claim.'};
   });

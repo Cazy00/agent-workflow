@@ -10,7 +10,7 @@ import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'report', 'runtime', 'prepare-evidence'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
@@ -49,7 +49,7 @@ async function main() {
   if (['report','runtime'].includes(cmd)) {
     const result = await runOperations(cmd,o);
     console.log(JSON.stringify(result,null,2));
-    return result.status && result.status !== 'delivered' ? 1 : result.budget_status === 'exhausted' ? 1 : 0;
+    return result.status && result.status !== 'delivered' ? 1 : ['exhausted','unknown'].includes(result.budget_status) ? 1 : 0;
   }
   const repo = path.resolve(o.repo ?? process.cwd());
   const source = spec => {

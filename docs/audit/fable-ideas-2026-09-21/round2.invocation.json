@@ -1,0 +1,29 @@
+{
+  "args": [
+    "claude",
+    "-p",
+    "--model",
+    "claude-fable-5-1",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "plan",
+    "--safe-mode",
+    "--strict-mcp-config",
+    "--no-chrome",
+    "--tools",
+    "Read,Grep,Glob",
+    "--allowedTools",
+    "Read,Grep,Glob",
+    "--output-format",
+    "json",
+    "--max-budget-usd",
+    "6",
+    "--resume",
+    "27927414-a05b-47b1-be46-5baefb7702da"
+  ],
+  "packet": "/var/folders/lm/dj66xmbd5f71q4w619g5tc580000gn/T/workflow-fable-d38xvcfg",
+  "timeout_seconds": 120,
+  "elapsed_seconds": 27.2,
+  "completed_utc": "2026-09-21T10:02:41.338997+00:00"
+}

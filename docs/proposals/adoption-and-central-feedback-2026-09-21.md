@@ -1,8 +1,8 @@
 # Adoption and central feedback: Codex and Fable recommendation
 
-Status: concrete proposal, not implemented, released or adopted. Date: 2026-09-21.
+Status: shared package implemented and independently reviewed locally; unreleased and not adopted. Product-specific setup and pilot remain pending. Date: 2026-09-21. See [implementation evidence](../audit/T-0004/report.md).
 
-The owner wants to adopt the workflow in a large existing project using Codex and Claude Code. They explicitly requested that agents in adopting projects report workflow problems to this repository's GitHub issues, rather than burying reports in the adopting repository. They also requested occasional user feedback and an independent Fable 5.1 assessment before showing it Codex's views. The target project remains unidentified.
+The owner wants to adopt the workflow in a large existing project using Codex and Claude Code. They explicitly requested that agents in adopting projects report workflow problems to this repository's GitHub issues, rather than burying reports in the adopting repository. They also requested occasional user feedback and an independent Fable 5.1 assessment before showing it Codex's views. Bun Alkaif on documents-gathering-and-organizing is the identified source; the owner is choosing between its existing checkout and a curated fresh repository.
 
 ## Joint conclusion
 
@@ -39,7 +39,7 @@ Keep signing in the owner-controlled environment. Preparation does not authorise
 
 ### 3. Central reporting from adopting projects
 
-`wf report` below names a proposed command; it does not exist yet.
+`wf report` is now implemented for the scoped assisted route; installation and live project validation remain pending.
 
 **Trigger and destination.** Agents report an explicit user complaint about workflow behaviour, a suspected safeguard failure, an incorrect block, an identity/handoff problem, or meaningful repeated friction. The canonical record is a GitHub issue in `Cazy00/agent-workflow`. An issue is an observation to triage, not proof of root cause. Product bugs unrelated to the workflow remain product work.
 

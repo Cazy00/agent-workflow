@@ -41,7 +41,7 @@ The actual diff is computed from those immutable revisions. A candidate must inc
 
 Use `procedures/accept-release.md`. `wf lifecycle --stage accept` checks the task's evidence and recorded owner decision; `--stage release` adds release readiness and authority. A milestone acceptance package must cover its complete scenario/task set, not just one task. Preserve the accepted-artifact relationship. Commands validate evidence; they do not deploy or publish.
 
-Record a session outcome using `templates/session.json`, then validate it with `wf session --record PATH` and the same baseline/candidate/trust arguments. A handoff preserves changes, verification revision, uncertainty, next action and **Workflow friction this session: none / report IDs**. Use `procedures/maintenance.md` for feedback and separately authorised repairs.
+Record a session outcome using `templates/session.json` outside the checkout, then validate it with `wf session --record PATH` and the same baseline/candidate/trust arguments. Post the outcome and handoff on the task's pull request (or issue): changes, verification revision, uncertainty, next action and **Workflow friction this session: none / report IDs**. Never commit logs or handoff files; the repository holds only what future work needs. Use `procedures/maintenance.md` for feedback and separately authorised repairs.
 
 Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages. All commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
 

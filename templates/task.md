@@ -46,14 +46,7 @@ Link existing run/check commands. When the choice matters, briefly explain the a
 
 ## Baseline results and known failures
 
-## Latest checkpoint
-- Revision:
-- What changed:
-- Verified (against revision):
-- Remaining failures / uncertainty:
-- Next action:
-- Blockers:
-- Evidence:
-- Workflow friction this session: none
+## Handoffs
+Post checkpoints, evidence and handoffs on the task's pull request (or its issue before one exists), not here. Update this record only with stable facts future work needs, such as a changed blocker or resume condition.
 
 ## Review, acceptance, integration, release

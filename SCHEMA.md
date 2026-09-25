@@ -74,7 +74,7 @@ Trusted Git integration requires a committed candidate containing the current ba
 
 ## Session outcomes and supported limits
 
-Session outcomes are progress, ready-for-review, verified-complete, blocked, stopped-by-limit and no-progress. All need next_action and friction. Progress requires a meaningful summary and durable evidence; ready-for-review also names the candidate. Verified-complete requires validated readiness, coverage and lifecycle evidence. Blocked identifies prerequisite, impact and responsible party. Stopped-by-limit records limit, usage, checkpoint and evidence. No-progress states failure and why a retry would differ.
+Session outcomes are progress, ready-for-review, verified-complete, blocked, stopped-by-limit and no-progress. All need next_action and friction. Progress requires a meaningful summary and durable evidence (a committed record, or a link to the task's GitHub pull request or issue); ready-for-review also names the candidate. Verified-complete requires validated readiness, coverage and lifecycle evidence. Blocked identifies prerequisite, impact and responsible party. Stopped-by-limit records limit, usage, checkpoint and evidence. No-progress states failure and why a retry would differ.
 
 Assisted coordinators maintain cumulative budgets and serial task claims; this is not a durable unattended runner. Automated duplicate claims, process cleanup, retry accounting and crash recovery are conditional runner requirements and remain unadopted. Live identity permission/protection tests, agent discovery, product acceptance and observed pilot evidence cannot be replaced by unit tests. All commands return JSON: exit 0 satisfied, 1 failed/blocked, 2 invalid input/execution error.
 

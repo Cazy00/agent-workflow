@@ -1,5 +1,7 @@
 # Independent review — R-0000
 
+Post this as a comment on the task's pull request; do not commit it.
+
 Task / milestone:
 Candidate revision and diff base:
 Governing requirements, acceptance IDs and design:

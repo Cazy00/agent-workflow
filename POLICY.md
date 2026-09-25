@@ -81,9 +81,10 @@ The repository holds the project’s durable working context:
 - Requirements and acceptance definitions.
 - Designs, contracts, and decision records.
 - Milestones and tasks.
-- Verification and review evidence.
 - Release records.
 - Workflow feedback.
+
+Run evidence stays out of the repository. Test output, review results, session outcomes, usage and handoffs go on the task's GitHub pull request, or on its issue before a pull request exists, with raw logs kept in signed receipt artifacts. The repository holds only what future work needs to read. Record a durable finding by updating the relevant record, not by committing a log.
 
 Give records stable IDs and locations. Record explicit supersession when a decision changes.
 
@@ -284,7 +285,7 @@ A checkpoint may contain incomplete work, provided its condition is explicit.
 
 Publish checkpoints to the authorised shared location when another session or clone needs them.
 
-A handoff states:
+Post each handoff on the task's pull request, or on its issue before a pull request exists. A handoff states:
 
 - What changed.
 - What was verified, against which revision.
@@ -292,7 +293,7 @@ A handoff states:
 - The next eligible action.
 - **Workflow friction this session: none / report IDs.**
 
-Read-only verification or research can produce useful progress without changing production code. Preserve its evidence in the appropriate record or durable run log.
+Read-only verification or research can produce useful progress without changing production code. Record durable findings in the relevant record and post the supporting evidence on the task's pull request or issue.
 
 ---
 

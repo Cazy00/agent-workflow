@@ -2,11 +2,11 @@
 
 An **unreleased implementation candidate** of the supplied consolidated policy, with assisted execution procedures, record templates and a zero-dependency Node.js 22 validator.
 
-Start with [QUICKSTART.md](QUICKSTART.md). The full [conformance report](docs/audit/conformance.md) distinguishes local verification from controls that still require owner setup and live operational evidence.
+Start with [QUICKSTART.md](QUICKSTART.md). Local tests pass; owner setup (trust key, approval path) and live operational evidence are still required before supported operation (see `procedures/setup.md`).
 
 | Material | Purpose |
 |---|---|
-| `POLICY.md` | Exact supplied reference; its original proposed status is preserved |
+| `POLICY.md` | Owner-supplied policy; governs everything else |
 | `AGENTS.md`, `CLAUDE.md`, `.agents/skills/workflow/` | Short repository map and shared agent entry |
 | `procedures/` | Setup, identity, readiness, execution, review, acceptance/release, approval evidence, maintenance |
 | `templates/` | Profile, milestone, task, decision, design, acceptance, review, release, session, setup, pilot, toolbox, feedback and maintenance |
@@ -14,7 +14,9 @@ Start with [QUICKSTART.md](QUICKSTART.md). The full [conformance report](docs/au
 | `validator/`, `bin/wf` | Approval/readiness/coverage/lifecycle checks and externally pinned launcher |
 | `adapters/` | Read-only explicit-worker identity preflight for terminal GitHub routes |
 | `fixtures/`, `validator/test/` | Policy gate cases and adverse acceptance, identity, Git, trust and session tests |
-| `docs/audit/` | Findings, independent review disposition, test output and live read-only setup evidence |
+| `docs/proposals/ideas-backlog.md` | Owner ideas awaiting evaluation (no authority) |
+
+The repository holds only the workflow and its tests. Run history (reviews, test output, handoffs) lives on GitHub pull requests and issues, and in git history.
 
 Run `npm test`. Authoritative gates require a provisioned validator, external owner trust key, and explicit signed approval/evidence receipts. Candidate code runs without owner credentials. Local checks alone do not establish protected integration or product acceptance.
 

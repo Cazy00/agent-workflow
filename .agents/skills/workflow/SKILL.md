@@ -16,4 +16,4 @@ Read the repository `AGENTS.md` and current profile, milestone, task, and govern
 
 Paths above are relative to the workflow repository; adopting projects keep this folder and the procedures together under their recorded workflow installation and point their short repository guide there.
 
-Use approved sources directly. Derived indexes never supply authority. An expected safeguard is not a defect. Preserve a session outcome and handoff even for read-only work, blockers, limits or execution failures. Skills supply a procedure, not extra authority.
+Use approved sources directly. Derived indexes never supply authority. An expected safeguard is not a defect. Post a session outcome and handoff on the task's GitHub pull request or issue even for read-only work, blockers, limits or execution failures. Never commit logs, transcripts or handoff files. Skills supply a procedure, not extra authority.

@@ -48,7 +48,7 @@ Event types:
 - `survey-optout`: include boolean `value`; preserve the user's preference. Do not ask again within the cooldown or because the user ignored an offer.
 - `status`: report current milestone totals and exposure without another question.
 
-Keep approved limits in the milestone. Running totals and claims belong in this runtime record (or another approved planning-class run log), so ordinary tracking does not require editing governing milestone files. Local runtime is durable across sessions on this host, not automatically shared with other clones. Preserve required Git checkpoints and handoff pointers separately.
+Keep approved limits in the milestone. Running totals and claims belong in this private runtime record outside the repository, so ordinary tracking does not require editing or committing project files. Local runtime is durable across sessions on this host, not automatically shared with other clones. Preserve required Git checkpoints and handoff pointers separately.
 
 ## Evidence preparation
 

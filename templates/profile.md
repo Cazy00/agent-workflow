@@ -37,13 +37,19 @@ Verification commands · review and approval arrangement · deployment ownership
 | Expectation | Acceptance condition | Evidence method | Responsible role | Required stage |
 |---|---|---|---|---|
 
+If model behaviour affects the product, define representative evaluation cases, success criteria, unacceptable outcomes and model/prompt/tool configuration and version evidence alongside normal software checks, using the same evidence/role/stage arrangement. An unacceptable outcome is not offset by aggregate success; results apply only to the recorded configuration, and affected checks must be repeated after changes.
+
 ## Operations
 Monitoring, recovery, migrations, support, device provisioning and updates; mark not applicable with reasons.
 
 ## Execution
 Tools and versions, actual owner/worker GitHub usernames, separate clones, author/transport/API routes, assisted mode, time/usage/retry/spending limits and cumulative accounting.
 
+For app verification: startup commands, test URL/environment, supported authentication flow, account roles, secret-store references, permitted test effects, and test-data setup/reset instructions. Use dedicated test accounts and isolated test data in non-production environments or explicitly authorised test tenants. Owner-supplied test accounts are suitable when their permissions and environment fit the test; app-admin roles may be used when required by the journey. Never use the owner's personal or repository-owner account, or accounts with workflow-approval privileges or real production data. Store references only, never credential/session values; keep secrets and tokens out of recorded evidence.
+
 ## Workflow configuration
 Adopted version and revision · project settings · approved deviations · setup budget · optional tooling.
+
+For central reporting, record the owner-directed destination `Cazy00/agent-workflow`, public fixed-catalog data categories (including worker activity/timing), expected worker and actual tested issue route, approved tool versions, external operations configuration and private runtime directory. Store references, never tokens. State whether central issues replace local feedback bodies; handoffs retain UUID/URL references. Identify the authorised collector, actual test reporter, cost limits and optional feedback cadence. See `procedures/operations.md`.
 
 ## Unknowns

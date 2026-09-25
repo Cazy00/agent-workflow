@@ -8,5 +8,5 @@ Remaining failures / uncertainty:
 Next action:
 Workflow friction this session: none / F-0000
 
-# After committing, copy the same five lines into the task record's "Latest checkpoint" section
+# After committing, post the same five lines as the handoff on the task's pull request (or its issue),
 # and publish to the authorised location after the worker identity check; worktrees do not share uncommitted files.

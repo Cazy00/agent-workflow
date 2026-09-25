@@ -35,13 +35,19 @@ export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage 
   }
   return { ok: errors.length === 0, errors, stage, revision: candidate.name };
 }
-export function evaluateSession({ record: r, candidate, lifecycle }) {
+// Run evidence lives on the task's GitHub pull request or issue; a link to it is durable evidence.
+const GITHUB_EVIDENCE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/\d+(#[\w-]+)?$/;
+export function evaluateSession({ record: r, candidate, lifecycle, repository }) {
   const errors = [];
   const require = (...fields) => { for (const f of fields) if (!r?.[f]) errors.push(`session requires ${f}`); };
   require('outcome', 'next_action', 'friction');
   const checkEvidence = () => {
     if (!Array.isArray(r.evidence) || !r.evidence.length) errors.push('session requires durable evidence');
-    for (const p of r.evidence ?? []) { try { if (!candidate.read(p)?.trim()) errors.push(`session evidence missing: ${p}`); } catch { errors.push(`invalid session evidence: ${p}`); } }
+    for (const p of r.evidence ?? []) {
+      const link = typeof p === 'string' && p.match(GITHUB_EVIDENCE);
+      if (link) { if (repository && link[1].toLowerCase() !== repository.toLowerCase()) errors.push(`session evidence is from another repository: ${p}`); continue; }
+      try { if (!candidate.read(p)?.trim()) errors.push(`session evidence missing: ${p}`); } catch { errors.push(`invalid session evidence: ${p}`); }
+    }
   };
   switch (r?.outcome) {
     case 'progress': require('summary'); checkEvidence(); break;

@@ -29,3 +29,16 @@ test('signed raw post-commit evidence can be collected outside the tested tree',
   ]);
   assert.equal(evaluateLifecycle({ candidate: noLogs, task: scope, requiredChecks: ['unit'], trust }).ok, true);
 });
+test('session evidence may be a GitHub pull request or issue link instead of a committed file', () => {
+  for (const link of ['https://github.com/owner/repo/pull/12', 'https://github.com/owner/repo/issues/7#issuecomment-99', 'https://github.com/owner/repo/pull/12#pullrequestreview-5'])
+    assert.equal(evaluateSession({ record: { outcome: 'progress', summary: 'Posted handoff', evidence: [link], next_action: 'Review', friction: 'none' }, candidate }).ok, true, link);
+});
+test('session evidence rejects links that are not GitHub pull requests or issues', () => {
+  for (const link of ['https://example.com/log', 'http://github.com/owner/repo/pull/12', 'https://github.com/owner/repo', 'https://github.com/owner/repo/pull/abc', 'https://github.com.evil.test/owner/repo/pull/1'])
+    assert.equal(evaluateSession({ record: { outcome: 'progress', summary: 'Posted handoff', evidence: [link], next_action: 'Review', friction: 'none' }, candidate }).ok, false, link);
+});
+test('GitHub session evidence must come from the project repository when it is known', () => {
+  const record = link => ({ outcome: 'progress', summary: 'Posted handoff', evidence: [link], next_action: 'Review', friction: 'none' });
+  assert.equal(evaluateSession({ record: record('https://github.com/Owner/Repo/pull/12'), candidate, repository: 'owner/repo' }).ok, true);
+  assert.equal(evaluateSession({ record: record('https://github.com/other/repo/pull/12'), candidate, repository: 'owner/repo' }).ok, false);
+});

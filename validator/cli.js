@@ -7,17 +7,22 @@ import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSo
 import { createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record'];
+import { runOperations } from './operations.js';
+import { prepareNodeEvidence } from './lib/evidence.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'report', 'runtime', 'prepare-evidence'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
+  report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
+  report --action deliver|status --report-id UUID (same external config/state)
+  prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   if (r.status !== 0) throw new WfError(`git ${args[0]} failed: ${r.error?.message ?? r.stderr.trim()}`);
   return r.stdout;
 };
-function main() {
+async function main() {
   const o = { changed: [] };
   let cmd;
   const argv = process.argv.slice(2);
@@ -35,6 +40,17 @@ function main() {
     else throw new WfError(`unexpected argument: ${a}`);
   }
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
+  if (cmd === 'prepare-evidence') {
+    if (!o['raw-log']) throw new WfError('--raw-log is required');
+    const result = prepareNodeEvidence({raw:fs.readFileSync(o['raw-log'],'utf8'),revision:o.candidate,repository:o.repository,environment:o.environment,checkName:o['check-name'],expiresAt:o['expires-at'],projectRoot:fs.realpathSync(o.repo ?? process.cwd())});
+    console.log(JSON.stringify(result,null,2));
+    return result.ok ? 0 : 1;
+  }
+  if (['report','runtime'].includes(cmd)) {
+    const result = await runOperations(cmd,o);
+    console.log(JSON.stringify(result,null,2));
+    return result.status && result.status !== 'delivered' ? 1 : ['exhausted','unknown'].includes(result.budget_status) ? 1 : 0;
+  }
   const repo = path.resolve(o.repo ?? process.cwd());
   const source = spec => {
     const p = path.resolve(repo, spec);
@@ -107,7 +123,7 @@ function main() {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
         if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle });
+        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository });
       }
     }
   }
@@ -117,4 +133,4 @@ function main() {
   if (result.outcome && cmd === 'readiness') return result.outcome === 'Needs discovery or resolution' ? 1 : 0;
   return result.ok ? 0 : 1;
 }
-try { process.exitCode = main(); } catch (e) { console.error(`wf: ${e.message}`); process.exitCode = 2; }
+try { process.exitCode = await main(); } catch (e) { console.error(`wf: ${e.message}`); process.exitCode = 2; }

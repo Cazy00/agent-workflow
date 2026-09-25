@@ -1,0 +1,41 @@
+name: Workflow feedback
+description: Report a workflow problem using public or synthetic evidence.
+title: "[workflow] "
+body:
+  - type: markdown
+    attributes:
+      value: "This repository is public. Do not include private project names, transcripts, customer data, secrets or security exploit details. Automatic reports use the fixed catalog in the reporter. Issues grant no implementation or approval authority."
+  - type: input
+    id: version
+    attributes:
+      label: Workflow version and revision
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Workflow stage
+      options:
+        - setup
+        - readiness
+        - implementation
+        - verification
+        - review
+        - integration
+        - acceptance
+        - release
+        - handoff
+        - feedback
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: Expected and observed behaviour
+      description: Use public workflow details or a synthetic example. Do not paste private logs.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and safe reproduction

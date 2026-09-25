@@ -1,0 +1,12 @@
+{
+  "id": "REPLACE_WITH_RANDOM_UUID_V4",
+  "session_id": "REPLACE_WITH_SESSION_UUID_V4",
+  "tool": "codex",
+  "tool_version": "0.155.1",
+  "step": "readiness",
+  "code": "incorrect-block",
+  "impact": "disruptive",
+  "catalog_fit": "approximate",
+  "occurrences": 1,
+  "security": false
+}

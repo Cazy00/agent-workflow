@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 export function safePath(rel) {
-  if (typeof rel !== 'string' || !rel || rel.includes('\\') || rel.includes('\0') || path.posix.isAbsolute(rel) || rel.split('/').some(p => p === '..' || p === '.' || p === '')) throw new Error(`invalid repository path: ${rel}`);
+  if (typeof rel !== 'string' || !rel || rel.startsWith(':') || rel.includes('\\') || rel.includes('\0') || path.posix.isAbsolute(rel) || rel.split('/').some(p => p === '..' || p === '.' || p === '')) throw new Error(`invalid repository path: ${rel}`);
   return rel;
 }
 export function dirSource(root) {
@@ -33,12 +33,13 @@ export function dirSource(root) {
   };
 }
 export function gitSource(repo, revision) {
-  const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  const git = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   const resolved = git('rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`);
   if (resolved.status !== 0) throw new Error(`invalid git revision: ${revision}`);
   const rev = resolved.stdout.trim();
   return {
     kind: 'git', name: rev,
+    atRevision(commit) { return gitSource(repo, commit); },
     read(rel) { safePath(rel); const r = git('show', `${rev}:${rel}`); return r.status === 0 ? r.stdout : null; },
     exists(rel) { safePath(rel); return git('cat-file', '-e', `${rev}:${rel}`).status === 0; },
     list(relDir) {

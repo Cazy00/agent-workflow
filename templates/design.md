@@ -18,6 +18,7 @@ Supersedes / superseded by:
 ## Dependencies, alternatives and decision rationale
 
 ## Verification and acceptance evidence
+If model behaviour affects the product, define representative evaluation cases, success criteria, unacceptable outcomes and model/prompt/tool configuration and version evidence alongside normal software checks; link the profile's applicable evidence, role and required stage. An unacceptable outcome is not offset by aggregate success; results apply only to the recorded configuration, and affected checks must be repeated after changes.
 
 ## Risks, delegated assumptions and unresolved decisions
 Record required-before stages. Unknowns block only affected work.

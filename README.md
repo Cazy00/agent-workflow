@@ -1,8 +1,8 @@
 # Agent-assisted software development workflow
 
-An **unreleased implementation candidate** of the supplied consolidated policy, with assisted execution procedures, record templates and a zero-dependency Node.js 22 validator.
+Release **v1.1.0** of the supplied consolidated policy: assisted execution procedures, record templates, a one-command adoption scaffold, an owner status view and a zero-dependency Node.js 22 validator. Reviewed in an independent context and approved by the owner before tagging.
 
-Start with [QUICKSTART.md](QUICKSTART.md). Local tests pass; owner setup (trust key, approval path) and live operational evidence are still required before supported operation (see `procedures/setup.md`).
+Start with [QUICKSTART.md](QUICKSTART.md): run `bin/wf-adopt` against the project, then follow `procedures/setup.md`, whose steps say which are the owner's and which the agent's. A project starts in `manual` approval mode and switches to `enforced` once its GitHub protections and approval-path test are verified. Live operational evidence (a pilot on a real project) is still owed for this release.
 
 | Material | Purpose |
 |---|---|
@@ -15,7 +15,7 @@ Start with [QUICKSTART.md](QUICKSTART.md). Local tests pass; owner setup (trust 
 | `bin/wf-adopt` | Deterministic, model-free scaffold that adopts the workflow in a project and writes the owner checklist |
 | `adapters/` | Read-only explicit-worker identity preflight for terminal GitHub routes |
 | `fixtures/`, `validator/test/` | Policy gate cases and adverse acceptance, identity, Git, trust and session tests |
-| `docs/proposals/ideas-backlog.md` | Owner ideas awaiting evaluation (no authority) |
+| `docs/proposals/ideas-backlog.md` | Owner ideas with their verdicts and implementation notes (no authority) |
 
 The repository holds only the workflow and its tests. Run history (reviews, test output, handoffs) lives on GitHub pull requests and issues, and in git history.
 
@@ -23,6 +23,6 @@ Run `npm test`. Authoritative gates require a provisioned validator and either v
 
 Supported execution is **assisted**. An unattended runner is not adopted; runner-specific claims require implementation, adverse-condition fixtures and an observed pilot. Graphify remains deferred optional tooling. Codex and Claude entry adapters are supplied; live instruction discovery must be tested per project and tool version.
 
-Assisted operations now include fixed-catalog central GitHub reporting, a private runtime ledger and optional feedback cadence, plus unsigned Node-test evidence preparation. See [operations](procedures/operations.md). Configuration and live adoption are still required.
+Assisted operations include fixed-catalog central GitHub reporting, a private runtime ledger and optional feedback cadence, plus unsigned Node-test evidence preparation ([operations](procedures/operations.md)); what happens after release is in [operate](procedures/operate.md). Their per-project configuration is part of setup.
 
-The existing `v1.0.0` tag remains unchanged. Review and owner approval must precede a new release/tag and deliberate project adoption. These edits do not silently upgrade PrintFlow or any other project.
+Releases are tags: `v1.0.0` (the version PrintFlow runs) and `v1.1.0`. Review and owner approval precede every tag, and a project adopts a release only by changing its own pin; a new tag never upgrades a project by itself.

@@ -50,6 +50,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     if (!list(t[field]).length) fail(`${field} is not recorded`);
   }
   if (base.profile?.data?.readiness !== 'Ready') fail('project readiness has not been established on the approved baseline');
+  if (base.profile && !list(base.profile.data?.required_checks).length) fail('the profile records no required_checks: project readiness needs at least one check that runs on every candidate (setup step 7)');
   if (requestedStage && !STAGES.includes(requestedStage)) fail(`unknown stage ${requestedStage}`);
   const laterStage = ['accept', 'release'].includes(requestedStage);
   const milestone = base.milestones.get(t.milestone)?.data;

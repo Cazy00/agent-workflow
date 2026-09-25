@@ -15,7 +15,7 @@ Revision, artifact/build, environment and reproducible access:
 Persistence, calculations and state transitions:
 
 ## Technical evidence
-Implementer checks, independent reviewer/context and dispositions, assembled integration checks:
+Implementer checks, independent reviewer/context and dispositions, assembled integration checks; findings by category and by the layer that caught them:
 
 ## Limitations
 Known issues and unavailable verification:

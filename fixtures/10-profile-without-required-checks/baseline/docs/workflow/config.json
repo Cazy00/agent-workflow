@@ -1,0 +1,14 @@
+{
+  "workflow": { "repo": "Cazy00/agent-workflow", "version": "1.0.0", "revision": "fixture" },
+  "records_dir": "docs/workflow",
+  "trusted_branch": "main",
+  "approval": { "mechanism": "github-rulesets-codeowners", "label": "enforced", "approver": "owner", "agent_identity": "agent" },
+  "setup_budget_days": 2,
+  "paths": {
+    "enforcement": [".github/**", "CODEOWNERS", "docs/workflow/config.json"],
+    "production": ["src/**", "prisma/**", "scripts/**", "package.json", "**/*.{sh,sql,ts,tsx,js}"],
+    "generated": [],
+    "governing": ["docs/workflow/profile.md", "docs/workflow/decisions/**", "docs/specs/**", "docs/contracts/**", "AGENTS.md", "CLAUDE.md"],
+    "planning": ["docs/workflow/tasks/**", "docs/workflow/feedback/**", "docs/**", "README.md"]
+  }
+}

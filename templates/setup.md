@@ -17,6 +17,7 @@ Start, two-working-day timebox (or approved alternative), agent allowance (defau
 | Trusted validator revision and external trust anchor | |
 | Result provenance and owner approval alternative | |
 | Acceptance mapping and reporter | |
+| Required checks in the profile; each a required status check, branches up to date | |
 | Gate / acceptance / identity / session fixtures | |
 | Real approval-path exercise | |
 | Observed pilot | |

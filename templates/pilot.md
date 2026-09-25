@@ -9,6 +9,7 @@ What the software or spike established; candidate and verification evidence:
 
 ## Workflow result
 Readiness, actual identities, task claims, handoffs, checks, independent review, integration, acceptance and stop boundary:
+Defects found, by the layer that caught each: implementer checks / independent review / integration / owner acceptance / after release:
 
 ## Adverse cases
 Interruption, no progress, missing access, limits and blocks tested separately:

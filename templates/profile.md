@@ -29,7 +29,7 @@ Existing software, integrations, prototypes, known limitations.
 Important journeys, visual direction, accessibility, languages, target devices.
 
 ## Technical context
-Confirmed architecture, environments, dependencies, data, unresolved technical choices.
+Confirmed architecture, environments, dependencies, data, unresolved technical choices. Components or modules, the dependencies allowed between them and the conventions every change follows, each with the check that enforces it or `none yet`; when this outgrows a paragraph, keep it in a governing document under `docs/specs/` and point to it. Reviewers check changes against it.
 
 ## Authority
 Governing sources · decision owners · delegated choices · reserved decisions · permitted assumptions · authority by lifecycle stage (deployment, incidents, maintenance, upgrades) where it differs from the defaults in `procedures/operate.md`.

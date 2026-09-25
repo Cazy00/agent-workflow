@@ -1,0 +1,5 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0002", "expect": { "outcome": "Needs discovery or resolution", "reasons": ["required_checks"] } },
+  { "command": "ci", "task": "T-0002", "changed": ["src/b.ts"], "expect": { "verdict": "fail", "findings": ["required_checks"] } },
+  { "command": "ci", "task": "T-0002", "changed": ["docs/workflow/tasks/T-0002.md"], "expect": { "verdict": "pass", "findings": ["planning"] } }
+] }

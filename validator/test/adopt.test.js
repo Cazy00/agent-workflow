@@ -45,6 +45,14 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   for (const d of ['milestones', 'tasks', 'decisions', 'feedback/inbox', 'inbox/done']) assert.ok(fs.statSync(path.join(dir, 'docs/workflow', d)).isDirectory(), d);
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
+  assert.match(setup, /required status checks \(`wf ci` now; each entry of the profile's `required_checks` when approving the profile change that defines it\), branches up to date before merging/);
+  assert.match(setup, /7\. The profile's `required_checks` \(readiness fails while it is empty\)/);
+  assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /session \| status`/);
+  if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-status.yml']).status === 0) {
+    const workflow = fs.readFileSync(path.join(dir, '.github/workflows/wf-status.yml'), 'utf8');
+    assert.match(workflow, /branches: \[main\]/); assert.match(workflow, /refs\/heads\/main'/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
+    assert.match(setup, /Pin the \*Project status\* issue/);
+  }
   assert.ok(fs.statSync(path.join(dir, 'scripts/wf')).mode & 0o111, 'launcher is executable');
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.cache\/$/m);
   assert.equal(spawnSync('git', ['-C', path.join(dir, '.cache/agent-workflow'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), rev);

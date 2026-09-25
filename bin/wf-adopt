@@ -14,7 +14,7 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--json]
   The project always starts in manual approval mode; the switch to enforced is a code-owner-reviewed pull request after setup steps 5 and 9.
   Writes docs/workflow/config.json (full-hash pin), the record directories, profile/setup/acceptance seeds,
-  scripts/wf, AGENTS.md and CLAUDE.md when absent, fetches the pinned installation into .cache/agent-workflow/
+  scripts/wf, AGENTS.md, CLAUDE.md and .github/workflows/wf-status.yml when absent, fetches the pinned installation into .cache/agent-workflow/
   and writes the owner checklist. Never overwrites; refuses a second adoption. Exit 0 done, 2 refused/invalid.`;
 
 const fail = (message, code = 2) => { console.error(`wf-adopt: ${message}`); process.exit(code); };
@@ -68,7 +68,7 @@ const show = rel => {
 };
 // Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
 const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
-const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md') };
+const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml') };
 
 const created = [], appended = [], skipped = [];
 const write = (rel, content, mode) => {
@@ -95,6 +95,8 @@ const setLine = (text, key, value) => {
 // Config: the defaults at the pinned revision, plus the pin, the project identity and the stack's extra
 // production patterns. Approval identities stay empty until the owner's identity step fills them.
 const config = JSON.parse(pinned.config);
+const trusted = config.trusted_branch ?? 'main';
+if (!/^[\w./-]+$/.test(trusted)) fail(`trusted_branch ${JSON.stringify(trusted)} is not a plain branch name`);
 const slug = o['workflow-slug'] ?? config.workflow?.repo ?? 'Cazy00/agent-workflow';
 config.workflow = { repo: slug, version, revision };
 config.repository = o.repository;
@@ -120,9 +122,9 @@ const checklist = `
 ## Owner steps (procedures/setup.md; the agent does not attempt, retry or wait on these)
 
 - [ ] 2. Verify the owner and worker GitHub usernames; separate human and agent clones; follow \`identity.md\`
-- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required checks, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
-- [ ] 6. External launcher pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`) outside the agent clone. Approval mode is \`manual\` until steps 5 and 9 pass, and nothing is approved in it; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request, or provision the owner public key and sign receipts (\`approval-evidence.md\`)
-- [ ] 9. Real approval-path test in a disposable branch or repository
+- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required status checks (\`wf ci\` now; each entry of the profile's \`required_checks\` when approving the profile change that defines it), branches up to date before merging, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
+${pinned.status !== null ? '- [ ] Pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab)\n' : ''}- [ ] 6. External launcher pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`) outside the agent clone. Approval mode is \`manual\` until steps 5 and 9 pass, and nothing is approved in it; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request, or provision the owner public key and sign receipts (\`approval-evidence.md\`)
+- [ ] 9. Real approval-path test in a disposable branch or repository, including what bringing an approved branch up to date does
 - [ ] 10. Central reporting config and private runtime directory (\`operations.md\`), if adopted
 - [ ] 11. Observe the pilot milestone
 
@@ -130,7 +132,7 @@ const checklist = `
 
 - [ ] 1. Fill \`docs/workflow/profile.md\` from the owner's input and \`docs/workflow/inbox/\`; leave *Unknowns* honest, each with its required-before stage
 - [ ] 4. Add the stack-specific path classifications the defaults miss (\`docs/workflow/config.json\`)
-- [ ] 7. Acceptance IDs and mappings for the first milestone only
+- [ ] 7. The profile's \`required_checks\` (readiness fails while it is empty); acceptance IDs and mappings for the first milestone only
 - [ ] 8. Fixtures and tool-discovery tests, in their own session
 ${o.lane === 'existing' ? '\nExisting repository: do not inventory the codebase; classification is a config edit; keep the first milestone small enough to be the pilot; porting into a fresh repository is an owner option to record here.\n' : ''}
 Read for setup: \`procedures/setup.md\`, \`identity.md\`, \`templates/profile.md\`, \`templates/setup.md\` and \`config.default.json\` in \`.cache/agent-workflow/\`. Consult \`POLICY.md\` and \`SCHEMA.md\` only when a rule is unclear.
@@ -190,9 +192,10 @@ Read this first; it is a map. The workflow that governs work here is \`${slug}\`
 | Raw owner input awaiting triage (no authority) | \`docs/workflow/inbox/\` |
 | Acceptance definitions and test mappings | \`docs/workflow/acceptance.json\`, \`tests/acceptance-map.json\` |
 | Setup progress, owner checklist and agent steps | \`docs/workflow/setup.md\` |
+| Progress at a glance (derived; never edit it) | ${pinned.status !== null ? 'the pinned *Project status* issue on GitHub, or ' : ''}\`scripts/wf status\` |
 | Procedures, templates, policy | \`.cache/agent-workflow/procedures/\`, \`templates/\`, \`POLICY.md\` |
 
-Commands: \`scripts/wf records | readiness | paths | ci | acceptance | lifecycle | session\` (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue, never into this repository. Never merge, approve, sign or bypass a rule yourself; never switch to the owner's account.
+Commands: \`scripts/wf records | readiness | paths | ci | acceptance | lifecycle | session | status\` (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue, never into this repository. Never merge, approve, sign or bypass a rule yourself; never switch to the owner's account.
 `);
 write('CLAUDE.md', `# Shared repository instructions
 
@@ -202,6 +205,10 @@ Read \`AGENTS.md\`, then \`.cache/agent-workflow/.agents/skills/workflow/SKILL.m
 // Claude Code's independent-reviewer subagent: the separate review context of procedures/review.md.
 if (pinned.reviewer !== null) write('.claude/agents/independent-reviewer.md', pinned.reviewer);
 else skipped.push('.claude/agents/independent-reviewer.md (not in this workflow revision)');
+
+// The owner's status view on GitHub: republishes `wf status` to a pinned issue from the trusted branch.
+if (pinned.status !== null) write('.github/workflows/wf-status.yml', pinned.status.replaceAll('__TRUSTED_BRANCH__', trusted));
+else skipped.push('.github/workflows/wf-status.yml (not in this workflow revision)');
 
 const cache = path.join(project, '.cache/agent-workflow');
 if (fs.existsSync(cache)) skipped.push('.cache/agent-workflow/');

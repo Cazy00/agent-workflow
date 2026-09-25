@@ -12,6 +12,8 @@ export function evaluateStatus({ baseline, candidate = baseline }) {
   const rd = config.records_dir ?? 'docs/workflow';
   const all = loadAll(candidate, rd);
   const profile = all.profile?.data ?? {};
+  const labels = [config.approval?.label ?? null, profile.approval_label ?? null];
+  if (labels[0] && labels[1] && labels[0] !== labels[1]) all.errors.push(`approval label differs between docs/workflow/config.json (${labels[0]}) and the profile (${labels[1]})`);
   const waiting = [];
   const blocked = [];
   const openForAgent = [];
@@ -53,7 +55,7 @@ export function evaluateStatus({ baseline, candidate = baseline }) {
     else openForAgent.push(entry);
   }
 
-  const inboxItems = candidate.list(`${rd}/inbox`).filter(p => !p.endsWith('/README.md'));
+  const inboxItems = (candidate.listAll ?? candidate.list).call(candidate, `${rd}/inbox`).filter(p => !p.endsWith('/README.md') && !p.endsWith('/.gitkeep'));
   if (inboxItems.length) waiting.push({ kind: 'inbox', item: `${rd}/inbox`, owner: 'agent', detail: `${inboxItems.length} item(s) awaiting triage` });
   const setupText = candidate.read(`${rd}/setup.md`);
   let setupOpen = null;

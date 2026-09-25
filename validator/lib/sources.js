@@ -28,6 +28,11 @@ export function dirSource(root) {
       if (!fs.existsSync(dir)) return [];
       return fs.readdirSync(dir, { withFileTypes: true }).filter(f => f.isFile() && f.name.endsWith('.md')).sort((a,b) => a.name.localeCompare(b.name)).map(f => `${relDir}/${f.name}`);
     },
+    listAll(relDir) {
+      const dir = resolve(relDir);
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir, { withFileTypes: true }).filter(f => f.isFile()).sort((a,b) => a.name.localeCompare(b.name)).map(f => `${relDir}/${f.name}`);
+    },
     isAncestor() { return null; },
     changedSince() { return null; },
   };
@@ -47,6 +52,12 @@ export function gitSource(repo, revision) {
       const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
       if (r.status !== 0) throw new Error(`cannot list ${relDir} at ${rev}`);
       return r.stdout.split('\0').filter(f => f.endsWith('.md') && path.posix.dirname(f) === relDir).sort();
+    },
+    listAll(relDir) {
+      safePath(relDir);
+      const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
+      if (r.status !== 0) throw new Error(`cannot list ${relDir} at ${rev}`);
+      return r.stdout.split('\0').filter(f => f && path.posix.dirname(f) === relDir).sort();
     },
     hasCommit(commit) { return /^[a-f0-9]{40,64}$/.test(commit ?? '') && git('cat-file', '-e', `${commit}^{commit}`).status === 0; },
     isAncestor(commit) { if (!/^[a-f0-9]{40,64}$/.test(commit)) return false; return git('merge-base', '--is-ancestor', commit, rev).status === 0; },

@@ -4,10 +4,10 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 
 ## Adopt
 
-1. From the workflow checkout, run the scaffold once against the target repository. It writes `docs/workflow/config.json` with the adopted tag and full hash, creates `docs/workflow/{milestones,tasks,decisions,feedback/inbox,inbox}`, seeds the profile, the setup record, an empty `acceptance.json` and `tests/acceptance-map.json`, installs `scripts/wf` and the `AGENTS.md` / `CLAUDE.md` adapters when absent, fetches the pinned installation into `.cache/agent-workflow/`, and writes the owner checklist into `docs/workflow/setup.md`. It never overwrites an existing file and costs no model usage.
+1. From the workflow checkout, run the scaffold once against the target repository. It writes `docs/workflow/config.json` with the adopted tag and full hash, creates `docs/workflow/{milestones,tasks,decisions,feedback/inbox,inbox}`, seeds the profile, the setup record, an empty `acceptance.json` and `tests/acceptance-map.json`, installs `scripts/wf` and the `AGENTS.md` / `CLAUDE.md` adapters when absent, fetches the pinned installation into `.cache/agent-workflow/`, and writes the owner checklist into `docs/workflow/setup.md`. It never overwrites an existing file and costs no model usage. `TAG` is a release that contains this scaffold; a v1.0.0 adoption follows that version's own quickstart. The project always starts in `manual` mode, in which nothing is approved; the switch to `enforced` is the code-owner-reviewed pull request after setup steps 5 and 9.
 
    ```sh
-   bin/wf-adopt --project /path/to/repo --repository OWNER/REPOSITORY --rev v1.0.0 \
+   bin/wf-adopt --project /path/to/repo --repository OWNER/REPOSITORY --rev TAG \
      --coordinator OWNER_USERNAME --production '**/*.dart' --lane existing
    ```
 
@@ -30,7 +30,7 @@ Run from the target checkout, or pass `--repo "$WF_PROJECT"` once to select it e
   --trust-key "$WF_OWNER_KEY" --receipts "$WF_RECEIPTS" --repository OWNER/REPOSITORY
 ```
 
-In `enforced` mode (the baseline's config and profile both record it after setup steps 5 and 9) omit `--trust-key`, `--receipts` and `--repository`: the fetched authoritative baseline is the approval, and receipt-dependent evidence appears in the output as `unverified` items for the pull request review. In `manual` mode all three are required.
+In `enforced` mode (the baseline's config and profile both record it after setup steps 5 and 9) omit `--trust-key`, `--receipts` and `--repository`: the fetched authoritative baseline is the approval, and receipt-dependent evidence appears in the output as `unverified` items for the pull request review. In `manual` mode all three are required. In enforced mode the CLI is always a trusted gate: run `ci` on committed candidates, and use a directory baseline (`--baseline .` with `--changed`) for local diagnostics; a directory baseline never receives enforced trust.
 
 Ready permits promoting a prepared Draft and starting eligible work. A bounded subset permits only the stated scope. Needs discovery or resolution identifies missing prerequisites. If a Blocked task's blocker was resolved, record that fact, clear its blocked state and rerun readiness. Agent-organised task changes cannot erase established prerequisites or change milestone/feature identity to avoid a gate.
 

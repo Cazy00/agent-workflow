@@ -71,17 +71,30 @@ test('wf-adopt never overwrites an existing file and refuses a second adoption',
   assert.equal(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8'), before);
 });
 
-test('wf-adopt records a verified enforced approval mode in both config and profile', t => {
+test('wf-adopt always scaffolds manual approval and offers no way to start enforced', t => {
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
   const dir = project(t);
-  const r = adopt(dir, '--approval', 'enforced', '--json');
+  const r = adopt(dir, '--json');
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const config = loadConfig(dirSource(dir));
-  assert.deepEqual([config.approval.label, config.approval.mechanism], ['enforced', 'github-rulesets-codeowners']);
+  assert.deepEqual([config.approval.label, config.approval.mechanism], ['manual', 'manual-signed-receipts']);
   const profile = fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8');
-  assert.match(profile, /^approval_label: enforced$/m);
-  assert.match(profile, /^approval_mechanism: github-rulesets-codeowners$/m);
-  assert.equal(adopt(project(t), '--approval', 'trust-me').status, 2);
+  assert.match(profile, /^approval_label: manual$/m);
+  assert.match(profile, /^approval_mechanism: manual-signed-receipts$/m);
+  assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /switch .*enforced.* in one code-owner-reviewed pull request/);
+  const other = project(t);
+  assert.equal(adopt(other, '--approval', 'enforced').status, 2, 'no approval option exists');
+  assert.ok(!fs.existsSync(path.join(other, 'docs/workflow')));
+});
+
+test('wf-adopt refuses a workflow revision that lacks its templates before writing anything', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  if (spawnSync('git', ['-C', root, 'rev-parse', '--verify', 'v1.0.0^{commit}']).status !== 0) return t.skip('v1.0.0 tag not present');
+  const dir = project(t);
+  const r = spawnSync(process.execPath, [script, '--project', dir, '--workflow-repo', root, '--rev', 'v1.0.0', '--repository', 'fixture/project', '--coordinator', 'owner'], { encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /not present at/);
+  assert.ok(!fs.existsSync(path.join(dir, 'docs/workflow')));
 });
 
 test('wf-adopt rejects an unresolvable pin and malformed options without writing anything', t => {

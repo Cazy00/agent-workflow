@@ -66,6 +66,8 @@ async function main() {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
+  // The derived view runs before any trust is established: it checks no approval and grants nothing.
+  if (cmd === 'status') { const view = evaluateStatus({ baseline, candidate }); console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view)); return 0; }
   let trust = null;
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
@@ -109,7 +111,6 @@ async function main() {
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
     return branch.match(/^(?:codex\/)?(T-\d{4})(?:-|$)/)?.[1] ?? null;
   };
-  if (cmd === 'status') { const view = evaluateStatus({ baseline, candidate }); console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view)); return 0; }
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;
   if (cmd === 'records') result = validateRecords(candidate, rd);

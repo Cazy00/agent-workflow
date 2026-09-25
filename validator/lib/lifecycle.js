@@ -68,11 +68,14 @@ export function evaluateSession({ record: r, candidate, lifecycle, repository })
   switch (r?.outcome) {
     case 'progress': require('summary'); checkEvidence(); break;
     case 'ready-for-review': require('candidate', 'summary'); checkEvidence(); if (r.candidate !== candidate.name) errors.push('session candidate does not match'); break;
-    case 'verified-complete': if (!lifecycle?.ok || lifecycle.revision !== candidate.name) errors.push('technical completion evidence has not passed validation'); break;
+    case 'verified-complete':
+      if (!lifecycle?.ok || lifecycle.revision !== candidate.name) errors.push('technical completion evidence has not passed validation');
+      if (lifecycle?.unverified?.length) checkEvidence(); // enforced mode: the pull request that carries the review must be linked
+      break;
     case 'blocked': require('prerequisite', 'impact', 'responsible'); break;
     case 'stopped-by-limit': require('limit', 'usage', 'checkpoint'); checkEvidence(); break;
     case 'no-progress': require('failure', 'retry_difference'); break;
     default: errors.push('unknown session outcome');
   }
-  return { ok: !errors.length, errors, outcome: r?.outcome, limitation: 'Evidence content must still be assessed for meaningful progress; process exit and record fields do not prove it.' };
+  return { ok: !errors.length, errors, outcome: r?.outcome, unverified: lifecycle?.unverified ?? [], limitation: 'Evidence content must still be assessed for meaningful progress; process exit and record fields do not prove it.' };
 }

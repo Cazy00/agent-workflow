@@ -14,7 +14,7 @@ import { evaluateLifecycle } from '../lib/lifecycle.js';
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 const taskPath = 'docs/workflow/tasks/T-0001.md';
-function setup(t, { label = 'enforced', profileLabel = label } = {}) {
+function setup(t, { label = 'enforced', profileLabel = label, decisionOpen = false } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-enforced-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
@@ -24,6 +24,7 @@ function setup(t, { label = 'enforced', profileLabel = label } = {}) {
   git('init', '-q'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
   edit('docs/workflow/config.json', text => { const c = JSON.parse(text); c.approval.label = label; c.repository = 'fixture/project'; return JSON.stringify(c); });
   edit('docs/workflow/profile.md', x => x.replace('approval_label: enforced', `approval_label: ${profileLabel}`));
+  if (decisionOpen) edit('docs/workflow/decisions/D-0001.md', x => x.replace('status: Resolved', 'status: Open'));
   git('add', '.'); git('commit', '-qm', 'initial'); const initial = git('rev-parse', 'HEAD');
   edit(taskPath, x => x.replaceAll('fixture-rev', initial));
   git('add', '.'); git('commit', '-qm', 'authorised baseline'); const baseline = git('rev-parse', 'HEAD');
@@ -96,6 +97,36 @@ test('supplying the trust options in an enforced project runs the full receipt g
   const r = p.run('readiness', { args: ['--trust-key', key, '--receipts', receipts, '--repository', 'fixture/project'] });
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /approval evidence/);
+});
+
+test('enforced mode still blocks on an open reserved decision', t => {
+  const p = setup(t, { decisionOpen: true });
+  const r = p.run('readiness');
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.outcome, 'Needs discovery or resolution');
+  assert.match(out.reasons.join(' '), /D-0001.*Open/);
+  assert.equal(p.run('ci').status, 1);
+});
+
+test('a directory baseline never receives enforced trust, even with enforced labels', t => {
+  const p = setup(t);
+  const r = spawnSync(process.execPath, [cli, 'readiness', '--repo', p.repo, '--baseline', p.repo, '--candidate', p.repo, '--task', 'T-0001', '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /approval evidence/);
+});
+
+test('enforced mode: a verified-complete session must link the evidence it could not verify', t => {
+  const p = setup(t);
+  const record = path.join(p.repo, '..', 'session.json');
+  fs.writeFileSync(record, JSON.stringify({ outcome: 'verified-complete', next_action: 'owner acceptance', friction: 'none' }));
+  const bare = p.run('session', { args: ['--record', record] });
+  assert.equal(bare.status, 1, bare.stdout + bare.stderr);
+  assert.match(bare.stdout, /durable evidence/);
+  fs.writeFileSync(record, JSON.stringify({ outcome: 'verified-complete', next_action: 'owner acceptance', friction: 'none', evidence: ['https://github.com/fixture/project/pull/1'] }));
+  const linked = p.run('session', { args: ['--record', record] });
+  assert.equal(linked.status, 0, linked.stdout + linked.stderr);
+  assert.ok(JSON.parse(linked.stdout).unverified.some(u => u.startsWith('review:')));
 });
 
 test('enforced trust is bound to the exact baseline and supplies no receipts of its own', () => {

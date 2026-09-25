@@ -45,11 +45,16 @@ test('status reports blocked tasks, inbox items, setup steps and agent questions
   fs.mkdirSync(path.join(dir, 'docs/workflow/inbox/done'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'docs/workflow/inbox/README.md'), '# Inbox\n');
   fs.writeFileSync(path.join(dir, 'docs/workflow/inbox/voice-note.md'), 'raw owner note\n');
+  fs.writeFileSync(path.join(dir, 'docs/workflow/inbox/screen.png'), 'not really a png');
+  fs.writeFileSync(path.join(dir, 'docs/workflow/inbox/links.txt'), 'https://example.invalid\n');
+  const profilePath = path.join(dir, 'docs/workflow/profile.md');
+  fs.writeFileSync(profilePath, fs.readFileSync(profilePath, 'utf8').replace('approval_label: enforced', 'approval_label: manual'));
   fs.writeFileSync(path.join(dir, 'docs/workflow/setup.md'), '# Setup\n\n## Owner steps\n\n- [ ] 2. accounts\n- [x] 5. protections\n\n## Agent steps\n\n- [ ] 1. profile\n');
   fs.writeFileSync(path.join(dir, 'docs/workflow/decisions/D-0002.md'), '---\nrecord: decision\nid: D-0002\nquestion: Which library version is current?\ntype: fact\nowner: agent\nrequired_before: verify\nstatus: Open\n---\n');
   const s = evaluateStatus({ baseline: dirSource(dir) });
   assert.deepEqual(s.blocked.map(b => [b.task, b.resume_condition]), [['T-0001', 'owner answers D-0001']]);
-  assert.equal(s.inbox.count, 1);
+  assert.equal(s.inbox.count, 3, 'every inbox file counts, not only Markdown');
+  assert.ok(s.record_errors.some(e => /approval label differs/.test(e)), s.record_errors.join(' | '));
   assert.deepEqual(s.setup_open, { owner: 1, agent: 1 });
   assert.ok(s.waiting.some(w => w.kind === 'setup' && w.owner === 'owner'));
   assert.ok(s.waiting.some(w => w.kind === 'inbox' && w.owner === 'agent'));

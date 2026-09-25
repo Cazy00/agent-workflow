@@ -65,5 +65,14 @@ export function gitSource(repo, revision) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;
       return git('diff', '--quiet', commit, rev, '--', ...paths).status !== 0;
     },
+    // The latest commit on this revision's first-parent line (the trusted branch's own history, so not a
+    // record added and removed inside a merged branch) that added or modified rel, or null.
+    lastVersion(rel) {
+      safePath(rel);
+      const r = git('log', '--first-parent', '-1', '--format=%H', '--diff-filter=AM', rev, '--', rel);
+      if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
+      return r.stdout.trim() || null;
+    },
+    isShallow() { const r = git('rev-parse', '--is-shallow-repository'); return r.status !== 0 || r.stdout.trim() !== 'false'; },
   };
 }

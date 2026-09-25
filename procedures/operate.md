@@ -16,7 +16,7 @@ Dependency, security and platform updates, certificate and key rotation, backup 
 
 ## Updates and upgrades
 
-Product changes are new milestones. A project's move to a newer workflow version is a task of its own under an authorised milestone: update the pin in `docs/workflow/config.json`, migrate the records the new schema needs, copy any new scaffold file the project wants (such as `templates/github/wf-status.yml` into `.github/workflows/`, with the trusted branch filled in), rerun `wf records` and the fixtures, and post the outcome. Active milestones stay on their adopted version unless the owner decides otherwise (`maintenance.md`).
+Product changes are new milestones. A project's move to a newer workflow version is a task of its own under an authorised milestone: update the pin in `docs/workflow/config.json`, migrate the records the new schema needs, copy any new scaffold file the project wants from the same release (such as `templates/github/wf-status.yml` into `.github/workflows/`, with the trusted branch filled in), rerun `wf records` and the fixtures, and post the outcome. Active milestones stay on their adopted version unless the owner decides otherwise (`maintenance.md`).
 
 ## Authority by stage
 

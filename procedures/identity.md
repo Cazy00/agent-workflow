@@ -2,7 +2,7 @@
 
 Account references: personal owner `oman.m123456@gmail.com`; development worker `almuntaser.dev@gmail.com`. Verify actual GitHub usernames; emails and commit metadata do not authenticate a GitHub session. The AI-service login is a separate identity.
 
-Keep the personal owner clone and the agent clone separate. Configure commit author metadata, Git transport credentials, and GitHub API/CLI credentials independently and locally. Use worker worktrees only for task isolation. Never switch machine-global Git or GitHub accounts for routine agent work. Preserve genuine human attribution, including when moving or integrating human changes. Store credentials in the OS secret store or a restricted worker environment, never repository files.
+In a shared project each person does all of this with their own accounts, clone and worker token, never another person's (`setup.md`, *Shared project*). Keep the personal owner clone and the agent clone separate. Configure commit author metadata, Git transport credentials, and GitHub API/CLI credentials independently and locally. Use worker worktrees only for task isolation. Never switch machine-global Git or GitHub accounts for routine agent work. Preserve genuine human attribution, including when moving or integrating human changes. Store credentials in the OS secret store or a restricted worker environment, never repository files.
 
 The terminal adapter supports GitHub.com HTTPS and `gh` with an explicitly supplied worker token. From the agent clone, run:
 

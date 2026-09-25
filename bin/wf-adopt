@@ -9,9 +9,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane'];
+const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner'];
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
-  [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--json]
+  [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
+  --owner, given once for each person (two or more), sets up a shared project: the profile's owners and their setup steps.
   The project always starts in manual approval mode; the switch to enforced is a code-owner-reviewed pull request after setup steps 5 and 9.
   Writes docs/workflow/config.json (full-hash pin), the record directories, profile/setup/acceptance seeds,
   scripts/wf, AGENTS.md, CLAUDE.md and .github/workflows/wf-status.yml when absent, fetches the pinned installation into .cache/agent-workflow/
@@ -20,7 +21,7 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
 const fail = (message, code = 2) => { console.error(`wf-adopt: ${message}`); process.exit(code); };
 
 function parse(argv) {
-  const o = { production: [], lane: 'new' };
+  const o = { production: [], owner: [], lane: 'new' };
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -31,7 +32,7 @@ function parse(argv) {
     const value = argv[i + 1];
     if (!OPTIONS.includes(name) || value == null || value.startsWith('--')) fail(`invalid option or missing value: ${a}\n${USAGE}`);
     i++;
-    if (name === 'production') o.production.push(value);
+    if (name === 'production' || name === 'owner') o[name].push(value);
     else if (seen.has(name)) fail(`duplicate option: ${a}`);
     else { seen.add(name); o[name] = value; }
   }
@@ -48,6 +49,10 @@ const o = parse(process.argv.slice(2));
 for (const k of ['project', 'repository', 'rev', 'coordinator']) if (!o[k]) fail(`--${k} is required\n${USAGE}`);
 if (!/^[\w.-]+\/[\w.-]+$/.test(o.repository)) fail('--repository must be OWNER/REPOSITORY');
 if (!['new', 'existing'].includes(o.lane)) fail('--lane must be new or existing');
+if (o.owner.length === 1) fail('--owner is for a shared project: give it once for each person, two or more');
+for (const name of o.owner) if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(name)) fail(`--owner ${name} is not a GitHub username`);
+if (new Set(o.owner).size !== o.owner.length) fail('--owner names a person twice');
+const shared = o.owner.length >= 2;
 const workflowRepo = path.resolve(o['workflow-repo'] ?? path.join(HERE, '..'));
 const project = path.resolve(o.project);
 if (!fs.existsSync(project) || !fs.statSync(project).isDirectory()) fail(`project directory not found: ${project}`);
@@ -69,6 +74,7 @@ const show = rel => {
 // Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
 const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
 const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml') };
+if (shared && !/^owners:/m.test(pinned.profile)) fail(`the workflow revision ${revision} has no shared-project support (its profile template lacks owners); pin a later release or omit --owner`);
 
 const created = [], appended = [], skipped = [];
 const write = (rel, content, mode) => {
@@ -115,6 +121,7 @@ profile = setLine(profile, 'workflow_version', version);
 profile = setLine(profile, 'coordinator', o.coordinator);
 profile = setLine(profile, 'approval_mechanism', 'manual-signed-receipts');
 profile = setLine(profile, 'approval_label', 'manual');
+if (shared) profile = setLine(profile, 'owners', `[${o.owner.join(', ')}]`);
 write('docs/workflow/profile.md', profile);
 
 const today = new Date().toISOString().slice(0, 10);
@@ -122,7 +129,7 @@ const checklist = `
 ## Owner steps (procedures/setup.md; the agent does not attempt, retry or wait on these)
 
 - [ ] 2. Verify the owner and worker GitHub usernames; separate human and agent clones; follow \`identity.md\`
-- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required status checks (\`wf ci\` now; each entry of the profile's \`required_checks\` when approving the profile change that defines it), branches up to date before merging, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
+${shared ? `- [ ] Shared project (\`procedures/setup.md\`, *Shared project*): the repository owner invites the other people and every worker account with write access; \`CODEOWNERS\` names ${o.owner.join(', ')} and no worker; each person verifies their own worker username, keeps their own agent clone and token, and runs the identity check and step 8 with their own tools; the profile's *Authority* records who approves what, and who approves when one of you is away\n` : ''}- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required status checks (\`wf ci\` now; each entry of the profile's \`required_checks\` when approving the profile change that defines it), branches up to date before merging, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
 ${pinned.status !== null ? '- [ ] Pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab)\n' : ''}- [ ] 6. External launcher pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`) outside the agent clone. Approval mode is \`manual\` until steps 5 and 9 pass, and nothing is approved in it; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request, or provision the owner public key and sign receipts (\`approval-evidence.md\`)
 - [ ] 9. Real approval-path test in a disposable branch or repository, including what bringing an approved branch up to date does
 - [ ] 10. Central reporting config and private runtime directory (\`operations.md\`), if adopted
@@ -196,7 +203,7 @@ Read this first; it is a map. The workflow that governs work here is \`${slug}\`
 | Procedures, templates, policy | \`.cache/agent-workflow/procedures/\`, \`templates/\`, \`POLICY.md\` |
 
 Commands: \`scripts/wf records | readiness | paths | ci | acceptance | lifecycle | session | status\` (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue, never into this repository. Never merge, approve, sign or bypass a rule yourself; never switch to the owner's account.
-`);
+${shared ? `\nSeveral people share the owner role (\`owners\` in the profile): work only on tasks whose \`owner\` is the person you work for, and claim each one before starting (\`procedures/execute.md\`, *More than one person*). Never use another person's worker account.\n` : ''}`);
 write('CLAUDE.md', `# Shared repository instructions
 
 Read \`AGENTS.md\`, then \`.cache/agent-workflow/.agents/skills/workflow/SKILL.md\` and the relevant procedure it identifies. They are the shared workflow for this repository. Tool-specific defaults do not grant additional authority. Check the current baseline and task records before continuing.
@@ -221,7 +228,7 @@ else {
   created.push('.cache/agent-workflow/ (ignored by Git)');
 }
 
-const result = { ok: true, project, repository: o.repository, workflow: config.workflow, revision, version, lane: o.lane, created, appended, skipped };
+const result = { ok: true, project, repository: o.repository, workflow: config.workflow, revision, version, lane: o.lane, owners: o.owner, created, appended, skipped };
 if (o.json) console.log(JSON.stringify(result, null, 2));
 else {
   console.log(`Adopted ${slug} ${version} (${revision}) in ${project} for ${o.repository}.`);

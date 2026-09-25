@@ -75,8 +75,26 @@ export function loadAll(source, recordsDir) {
   return all;
 }
 
+// With two or more people in the profile's `owners`, every task names the person whose agents implement it
+// and every milestone the person who authorises and accepts it, so work cannot sit unassigned or with a
+// misspelt owner that no one's agents pick up (procedures/execute.md, "More than one person").
+export function ownerErrors(all) {
+  const owners = list(all.profile?.data?.owners);
+  if (owners.length < 2) return [];
+  const errors = [];
+  const check = (r, owner) => { if (!owners.includes(owner)) errors.push(`${r.path}: owner ${owner} is not one of the profile's owners (${owners.join(', ')})`); };
+  for (const r of all.tasks.values()) if (r.data?.owner != null) check(r, r.data.owner); // a missing task owner is a schema error
+  for (const r of all.milestones.values()) {
+    if (!r.data) continue;
+    if (r.data.owner == null) errors.push(`${r.path}: missing owner (the profile lists owners ${owners.join(', ')})`);
+    else check(r, r.data.owner);
+  }
+  return errors;
+}
+
 export function validateRecords(source, recordsDir) {
   const all = loadAll(source, recordsDir);
+  all.errors.push(...ownerErrors(all));
   if (!all.profile) all.errors.unshift(`${recordsDir}/profile.md: missing`);
   return {
     ok: all.errors.length === 0,

@@ -1,5 +1,6 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { loadConfig, validateRecords, loadAll, list } from './records.js';
+import { WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
+import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths } from './paths.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
@@ -7,6 +8,32 @@ import { evaluateAcceptance } from './acceptance.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
+
+// A record ID names one piece of work for good: once a task record is removed at merge, its pull requests
+// are the permanent record. Two planners on two branches, or one planner reading the directory after a
+// removal, can pick the same number, and a branch that adds a removed path merges without a conflict. So an
+// added record whose path already existed on the trusted branch must be that same record (same title,
+// question, outcome or rule), as when a removal is reverted; otherwise it needs a new ID. The check needs
+// the full history: a shallow clone is an execution error, not a pass.
+const IDENTITY = { tasks: 'title', decisions: 'question', milestones: 'outcome', 'feedback/inbox': 'rule' };
+function recordIds({ baseline, candidate, rd, changed }) {
+  const result = { errors: [], notes: [] };
+  if (baseline.kind !== 'git') return result;
+  for (const p of changed) {
+    const dir = Object.keys(IDENTITY).find(d => p.startsWith(`${rd}/${d}/`) && /^[^/]+\.md$/.test(p.slice(rd.length + d.length + 2)));
+    if (!dir || baseline.exists(p) || !candidate.exists(p)) continue;
+    if (baseline.isShallow()) throw new WfError(`cannot check whether ${p} reuses an ID: the clone is shallow; fetch the full history (fetch-depth: 0)`);
+    const last = baseline.lastVersion(p);
+    if (!last) continue;
+    const field = IDENTITY[dir];
+    const before = parseFrontMatter(baseline.atRevision(last).read(p) ?? '').data?.[field] ?? null;
+    const now = parseFrontMatter(candidate.read(p) ?? '').data?.[field] ?? null;
+    const at = last.slice(0, 12);
+    if (before !== null && before === now) result.notes.push(`record ${p} restores the record last present at ${at} (same ${field})`);
+    else result.errors.push(`record ${p} reuses an ID already used on the trusted branch (${field} "${before ?? '?'}" at ${at}); give it a new ID, or restore that record with its exact ${field}`);
+  }
+  return result;
+}
 
 export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null }) {
   const config = loadConfig(baseline);
@@ -16,6 +43,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
 
   const records = validateRecords(candidate, rd);
   for (const e of records.errors) { findings.push(`record: ${e}`); fail = true; }
+  const ids = recordIds({ baseline, candidate, rd, changed });
+  for (const e of ids.errors) { findings.push(e); fail = true; }
+  findings.push(...ids.notes);
 
   const classes = classifyPaths(config, changed);
   for (const c of classes) findings.push(`${c.category}: ${c.path}`);

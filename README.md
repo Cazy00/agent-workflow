@@ -12,7 +12,7 @@ Start with [QUICKSTART.md](QUICKSTART.md): run `bin/wf-adopt` against the projec
 | `templates/` | Profile, milestone, task, decision, design, acceptance, review, release, session, setup, pilot, toolbox, feedback and maintenance; `claude/agents/` holds the Claude Code independent-reviewer subagent and `github/` the status-issue workflow |
 | `SCHEMA.md`, `config.default.json` | Mechanical gates, record formats, limits and path defaults |
 | `validator/`, `bin/wf` | Approval/readiness/coverage/lifecycle checks, the derived `status` view, and externally pinned launcher |
-| `bin/wf-adopt` | Deterministic, model-free scaffold that adopts the workflow in a project and writes the owner checklist |
+| `bin/wf-adopt` | Deterministic, model-free scaffold that adopts the workflow in a project and writes the owner checklist, for one owner or, with `--owner`, a project two or more people share |
 | `adapters/` | Read-only explicit-worker identity preflight for terminal GitHub routes |
 | `fixtures/`, `validator/test/` | Policy gate cases and adverse acceptance, identity, Git, trust and session tests |
 | `docs/proposals/ideas-backlog.md` | Owner ideas with their verdicts and implementation notes (no authority) |

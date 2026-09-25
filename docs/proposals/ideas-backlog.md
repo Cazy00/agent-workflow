@@ -1,10 +1,10 @@
 # Owner ideas backlog
 
-**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and remain unreleased. On 2026-09-25 the owner added two observations from a real adoption attempt, recorded as IDEA-06 and IDEA-07; they are unevaluated. Original ideas and first-read notes below are historical, not operating instructions.
+**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and remain unreleased. On 2026-09-25 the owner added three ideas, two from a real adoption attempt and one about oversight, recorded as IDEA-06 to IDEA-08; they are unevaluated. Original ideas and first-read notes below are historical, not operating instructions.
 **Audience:** the agent asked to evaluate these ideas. For each idea, decide whether it adds value, and if it does, write an implementation plan.
 **Authority:** none. `POLICY.md` still governs. An adopted idea goes through `procedures/maintenance.md`: classify it as an *improvement proposal*, then get independent review, owner approval, a new workflow version and explicit project adoption. A working agent must not weaken its own rules, and an idea written here does not count as permission to do so.
 
-**Evaluation:** all five groups were assessed on 2026-09-21, and a Codex/Fable discussion settled what to include, defer or pass (see [Settled: defer or pass](#settled-defer-or-pass)). Those conclusions supersede the unverified first-read notes below where they differ. The original ideas and quotations are preserved; the status lines distinguish local changes from release and project adoption. IDEA-06 and IDEA-07 are not covered by that evaluation.
+**Evaluation:** all five groups were assessed on 2026-09-21, and a Codex/Fable discussion settled what to include, defer or pass (see [Settled: defer or pass](#settled-defer-or-pass)). Those conclusions supersede the unverified first-read notes below where they differ. The original ideas and quotations are preserved; the status lines distinguish local changes from release and project adoption. IDEA-06 to IDEA-08 are not covered by that evaluation.
 
 ## Settled: defer or pass
 
@@ -273,6 +273,47 @@ The owner shared this transcript with the same question. Note-taker's summary:
 
 ---
 
+## IDEA-08 — A progress view for the owner who oversees rather than implements
+
+**Status:** Unevaluated. Recorded 2026-09-25.
+
+**Owner's words (verbatim):**
+> another idea, i feel we lack a UI for the prograss and the ongoing work, what is done , what is not , the blockings, prerequisites, etc..... like the UI where i (the developer who is working with the agent knows what is going on , etc..... , note that i migh not do any work just manage and overseas everything and coordinate )
+
+**Restated:** The owner wants one place to see the state of the work: what is done, what is not, what is blocked and why, which prerequisites are unmet, and what is happening now. The owner expects to spend most of their time managing, overseeing and coordinating rather than writing code, so the view is for a supervisor, not an implementer. Today that picture has to be assembled by reading records, running validator commands and opening pull requests.
+
+**Note-taker's first read of the current rules (verify these):**
+
+- **The data already exists and is structured; the gap is presentation.** Every fact the owner asks for is in a record with a stable field (`SCHEMA.md`): task `status` (Draft, Ready, Active, Blocked, Done) with `prerequisites`, `decisions`, `deferred_inputs`, `resume_condition` and the `implemented` / `verified` / `accepted` / `released` stages; milestone `status`, `tasks`, `prerequisites`, `limits` and `stop_conditions`; decision `status` (Open, Proposed, Resolved), `owner`, `required_before` and `affects`. `wf readiness` returns Ready, a bounded subset, or the missing prerequisite by name; `wf runtime --action status` returns milestone usage totals, exposure and budget status; `wf report --action status` returns a report's delivery state. All commands print JSON. Nothing renders them together.
+- **Part of the picture lives on GitHub, not in the repository.** Since T-0006, session outcomes, checkpoints, handoffs and the "next eligible action" are posted on the task's pull request or issue, and task records are deleted after merge. A view of "what happened last session" and "what is the agent doing now" therefore needs the pull requests and issues as well as the records; the repository alone shows the plan, not the progress. The private runtime directory (`procedures/operations.md`) holds the active claim and usage, outside the repository and readable only on the coordinator's host.
+- **The owner's own queue is scattered.** The things only the owner can do are reserved decisions with status Open or Proposed (`decisions/`), acceptance packages awaiting the owner's test (`templates/acceptance.md`), receipts to sign (`procedures/approval-evidence.md`), release authority, and setup steps that need owner accounts (see IDEA-06). Each is discoverable, but no single list says "these items are waiting on you". For an owner who coordinates rather than implements, that list is probably the most valuable view.
+- **Any view must be derived, never authoritative.** POLICY § 3 *Optional navigation tools* and the workflow skill say derived information never supplies authority, gates read authoritative records directly, and agents verify consequential claims against the governing source. A status view is exactly such a derived index. Two consequences: it must be read-only, and it must not become the place where approval happens. An agent-written `approved` field is not approval evidence (POLICY § 6), and a button that writes one would not be either.
+- **No secrets or private material may leak into it.** If the view is published anywhere (a static page, a GitHub Project), the public data boundary in `procedures/operations.md` applies: no tokens, no transcripts, no private identifiers. Usage figures and claims from the private runtime directory are for the owner's local view only.
+- **Tool-neutrality applies.** POLICY § 3 requires records and procedures to work for Codex, Claude Code or another compatible agent. A view built into one harness's UI would not satisfy that; one built from the records and the validator's JSON would.
+- **The existing resume prompt is a natural row in the view.** `procedures/execute.md` requires the agent, when stopping, to state the next action and supply a ready-to-use continuation prompt. A view that shows the next eligible action per task, with that prompt, gives the coordinating owner something to act on directly.
+
+**Candidate directions to evaluate (not decisions), cheapest first:**
+
+1. **Use GitHub as the view, no code.** A GitHub Project board over the project's issues and pull requests, with one issue per task and labels for Blocked, Needs owner decision and Ready for acceptance. Handoffs already land there. Costs no implementation and works from a phone. Weakness: the board mirrors records by hand or by a small sync, and drifts unless the sync is part of the handoff step.
+2. **A `wf status` command.** A read-only validator command that loads the records at a revision (reusing `loadAll` and `evaluateReadiness`), optionally the private runtime state, and prints one summary: milestones and their tasks by state; blocked tasks with resume conditions; unmet prerequisites; open and proposed decisions grouped by owner and required-before stage; usage against limits; and a "waiting on the owner" list. Text and JSON output. Zero dependencies, testable with the existing fixtures, tool-neutral. It does not read GitHub, so "last session" comes from the handoff link in the record.
+3. **A static page generated from the same command.** `wf status --html` writing a single local file the owner opens in a browser, or a Markdown `STATUS.md` regenerated at each handoff. Cheap on top of direction 2. If committed, it is a generated planning artifact and must be marked derived.
+4. **A live local dashboard.** A small local web page that re-reads records, runtime state and, through the GitHub CLI, the open pull requests. Most complete and most expensive to build and maintain; probably not justified before directions 1 to 3 are tried.
+
+**Questions to answer:**
+- Which questions does the owner need answered at a glance? Candidate list: what is waiting on me; what is the agent doing now; what is blocked and on what; what is done but not yet accepted or released; how much of the limit is used. Confirm and rank these with the owner before designing anything.
+- Is the primary view "project status" or "my queue"? For an owner who coordinates, the queue of reserved decisions, acceptances and receipts may matter more than a task board.
+- Local or hosted? A local command or file sees the private runtime state; a GitHub board is reachable anywhere but must stay within the public data boundary.
+- How is "current activity" shown when the agent's session is not visible to the workflow? The active claim and the latest handoff are the only durable signals; the view should say so rather than imply a live feed.
+- Should the view be part of this repository (a validator command, adopted with the workflow) or a separate tool vetted through `templates/toolbox.md`?
+- Does anything existing already suffice, such as GitHub Projects, before building? Try direction 1 on one real project and record whether it answered the owner's questions.
+- Given IDEA-06, what is the smallest first version, and how is its maintenance cost bounded?
+
+**Constraints that already apply:** derived indexes supply no authority and gates read records directly (POLICY § 3, `.agents/skills/workflow/SKILL.md`); approval comes only from signed receipts, never from a field or a button (POLICY § 6, `procedures/approval-evidence.md`); public views respect the fixed data boundary and never carry tokens, transcripts or private identifiers (`procedures/operations.md`); the solution must work for both supported tools (POLICY § 3).
+
+**Expected output:** the ranked list of questions the view must answer, a choice among the directions with reasons, and for the chosen one the smallest change: a `wf status` specification and fixture if a command is adopted, or a short note in `procedures/execute.md` and `QUICKSTART.md` if a GitHub board is adopted, stating in either case that the view is derived and read-only.
+
+---
+
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)
 
 1. **Self-verification by running the app** (IDEA-02, A10, A11). This is the one change the owner explicitly asked for. It is probably the highest-value item, and the harness credential limit needs a practical workaround.
@@ -281,3 +322,4 @@ The owner shared this transcript with the same question. Note-taker's summary:
 4. **Technique selection** (IDEA-05, overlapping A2/A6/A11 and B5/B7): mostly present in substance. The likely real gaps are a test-first preference, a lighter bug-fix lane, negative examples, and evals for AI features in the product.
 5. **Much of the videos' advice already exists here in stricter form** (readiness gates, independent review, stop conditions, durable records). Don't add rules that repeat what the workflow already enforces.
 6. **Cost of adoption and the lifecycle boundary** (IDEA-06, IDEA-07, added 2026-09-25). The first real adoption attempt was too expensive; the fix must come from sequencing, scripting and a usage limit, not from fewer controls. Whatever is added for the operating phase must respect the same cost concern.
+7. **The owner as supervisor** (IDEA-08, added 2026-09-25). The owner expects to coordinate rather than implement. The records and validator already hold the facts; what is missing is a derived, read-only view, and above all a list of what is waiting on the owner.

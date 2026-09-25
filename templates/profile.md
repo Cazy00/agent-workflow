@@ -43,7 +43,7 @@ If model behaviour affects the product, define representative evaluation cases, 
 Monitoring, recovery, migrations, support, device provisioning and updates; mark not applicable with reasons.
 
 ## Execution
-Tools and versions, actual owner/worker GitHub usernames, separate clones, author/transport/API routes, assisted mode, time/usage/retry/spending limits and cumulative accounting.
+Tools and versions, actual owner/worker GitHub usernames, separate clones, author/transport/API routes, assisted mode, time/usage/retry/spending limits and cumulative accounting. Delegation: the harness feature used for review and verification delegates (Claude Code, Codex or Cursor subagents, or fresh sessions), its version, and any model or tool limits.
 
 For app verification: startup commands, test URL/environment, supported authentication flow, account roles, secret-store references, permitted test effects, and test-data setup/reset instructions. Use dedicated test accounts and isolated test data in non-production environments or explicitly authorised test tenants. Owner-supplied test accounts are suitable when their permissions and environment fit the test; app-admin roles may be used when required by the journey. Never use the owner's personal or repository-owner account, or accounts with workflow-approval privileges or real production data. Store references only, never credential/session values; keep secrets and tokens out of recorded evidence.
 

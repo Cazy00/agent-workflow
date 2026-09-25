@@ -5,7 +5,7 @@ Read `README.md`, the relevant procedure in `procedures/`, and the current task 
 This repository maintains the workflow itself. Workflow changes need independent review and owner approval before release; a working agent must not weaken its own rules. Local changes do not publish or adopt a new version in other projects.
 
 - Shared entry: `.agents/skills/workflow/SKILL.md`; Claude entry: `CLAUDE.md`.
-- Setup and identity: `procedures/setup.md`, `procedures/identity.md`.
+- Setup and identity: `procedures/setup.md`, `procedures/identity.md`; model-free scaffold: `bin/wf-adopt`.
 - Readiness and implementation: `procedures/readiness.md`, `procedures/execute.md`.
 - Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`.
 - Feedback and maintenance: `procedures/maintenance.md`.

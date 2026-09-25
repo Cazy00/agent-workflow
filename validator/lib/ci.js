@@ -48,15 +48,19 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const profile = loadAll(baseline, rd).profile?.data;
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(profile?.required_checks), trust, stage: 'integrate' });
     const execution = trust?.claim('verification', candidate.name)?.execution;
-    const acceptance = evaluateAcceptance({ baseline, candidate, execution, requiredIds: list(t.acceptance) });
+    const acceptance = evaluateAcceptance({ baseline, candidate, execution, requiredIds: list(t.acceptance), enforced: trust?.mode === 'enforced' });
     for (const error of [...lifecycle.errors, ...acceptance.errors]) { findings.push(error); fail = true; }
+    for (const item of [...(lifecycle.unverified ?? []), ...(acceptance.unverified ?? [])]) findings.push(`unverified: ${item}`);
   }
   for (const category of ['governing', 'enforcement']) {
     const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
     if (protectedPaths.length) {
       const purpose = category === 'enforcement' ? 'workflow-change' : 'governing-change';
       const receipt = trust?.claim(purpose, candidate.name);
-      if (!receipt || !protectedPaths.every(p => receipt.paths?.includes(p))) { findings.push(`${purpose} approval for the exact candidate and protected paths is required`); fail = true; }
+      if (!receipt || !protectedPaths.every(p => receipt.paths?.includes(p))) {
+        if (trust?.mode === 'enforced' && !receipt) findings.push(`unverified: ${purpose}: no receipt; the code-owner review of this pull request is the approval for ${protectedPaths.join(', ')} (enforced mode)`);
+        else { findings.push(`${purpose} approval for the exact candidate and protected paths is required`); fail = true; }
+      }
     }
   }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');

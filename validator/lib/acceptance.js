@@ -1,7 +1,8 @@
 import { safePath } from './sources.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
-export function evaluateAcceptance({ baseline, candidate, execution, requiredIds = [] }) {
+export function evaluateAcceptance({ baseline, candidate, execution, requiredIds = [], enforced = false }) {
   const errors = [];
+  const unverified = [];
   const read = (source, path, fallback) => {
     try { const raw = source.read(path); if (raw === null) throw new Error('missing'); return JSON.parse(raw); }
     catch (e) { errors.push(`${path}: ${e.message}`); return fallback; }
@@ -29,10 +30,13 @@ export function evaluateAcceptance({ baseline, candidate, execution, requiredIds
   if (!Array.isArray(maps) || !Array.isArray(old)) errors.push('test mappings must be arrays');
   for (const m of Array.isArray(old) ? old : []) if (!seen.has(key(m))) errors.push(`removed required mapping ${key(m)}`);
   for (const d of ids.values()) if (d.method === 'automated' && requiredIds.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
-  if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
-  for (const m of Array.isArray(maps) ? maps : []) {
-    const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
-    if (runs.length !== 1 || runs[0].status !== 'passed') errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
+  if (!execution && enforced) unverified.push('execution: no verification receipt; the required test runs are on the pull request and covered by its code-owner review (enforced mode)');
+  else {
+    if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
+    for (const m of Array.isArray(maps) ? maps : []) {
+      const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
+      if (runs.length !== 1 || runs[0].status !== 'passed') errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
+    }
   }
-  return { ok: errors.length === 0, errors, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
+  return { ok: errors.length === 0, errors, unverified, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
 }

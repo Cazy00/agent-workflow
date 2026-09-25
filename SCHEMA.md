@@ -1,6 +1,6 @@
 # Record formats and mechanical gates
 
-This describes the unreleased validator candidate. `POLICY.md` governs if a mechanical rule or procedure conflicts with the policy. Record a workflow defect rather than bypassing a gate. The current approval adapter uses explicit manual signed receipts, not inference from GitHub branch contents.
+This describes the unreleased validator candidate. `POLICY.md` governs if a mechanical rule or procedure conflicts with the policy. Record a workflow defect rather than bypassing a gate. Two approval modes exist. In `enforced` mode, setup verified GitHub protection, code-owner review and the approval-path test and recorded the label in the baseline's config and profile; the immutable authoritative baseline is then the approved baseline and receipt-dependent checks report `unverified` items that the pull request's code-owner review covers; supplying the trust options runs the full receipt gate instead. In `manual` mode, explicit signed receipts are required and nothing is inferred from branch contents.
 
 ## Records and sources
 
@@ -20,7 +20,7 @@ Config is fixed at `docs/workflow/config.json` on the explicit baseline. `record
 | Design, review, acceptance, release, setup, pilot, maintenance | Stable project-selected locations recorded in governing/task records |
 | Session | JSON run record validated explicitly with `wf session --record` |
 
-The last group has complete human-facing templates/procedures; the record parser does not claim to validate their prose semantically. Approval/evidence receipts enforce the consequential stage claims described below.
+The last group has complete human-facing templates/procedures; the record parser does not claim to validate their prose semantically. Approval/evidence receipts enforce the consequential stage claims described below. `docs/workflow/inbox/` holds raw owner input awaiting triage (`procedures/readiness.md`); the loader ignores it, it classifies as planning, and nothing in it carries authority.
 
 ## Basic schema
 
@@ -39,6 +39,8 @@ Production readiness additionally needs nonempty scope, milestone, governing, ac
 ## Approval receipts
 
 The trusted operator supplies `--trust-key FILE --receipts FILE --repository OWNER/REPOSITORY`. The key must be outside the candidate repository; setup establishes the owner's actual key identity. Receipts sign the complete serialized payload with Ed25519 and bind purpose, repository, immutable revision and expiration. Tampered, expired, ambiguous, wrong-key and wrong-purpose receipts fail closed. The external repository identity must match baseline config.
+
+In `enforced` mode (`approval.label` in the baseline config and `approval_label` in the baseline profile, which must agree, with an immutable Git baseline and no trust options) the CLI creates enforced trust: `allows('baseline', rev)` holds only for that exact baseline and `claim()` returns nothing, so lifecycle, acceptance and CI output list receipt-dependent evidence as `unverified` instead of errors. Supplying `--trust-key`, `--receipts` and `--repository` runs the full receipt gate exactly as in manual mode; there is no hybrid. Candidate copies of config and profile never select the mode, `--changed` is still refused, and a directory baseline never receives enforced trust.
 
 `baseline` approval is an explicit owner's approval of that revision's governing records. `governing-change` and `workflow-change` separately enumerate approved candidate paths. `verification`, `review`, `integration`, `acceptance` and `release` receipts carry stage-specific evidence; see `procedures/approval-evidence.md`. No self-declared passed/approved/reviewed field supplies a receipt. This implementation does not automatically verify GitHub protection history or elevate an enforced label into approval evidence.
 
@@ -66,7 +68,7 @@ Verification needs candidate-bound check results, environment and raw evidence, 
 
 ## Integration and CLI
 
-Classification precedence: enforcement, production, generated, governing, planning. Globs support `**`, `*`, `?`, `{a,b}`. Config always comes from baseline. Generated artifacts conservatively receive production gates. Unclassified paths block. Production changes require Ready/Active task state, current readiness (at least verify stage), passing implementation/review/integration evidence and acceptance traceability. Governing/enforcement changes require separate scoped receipts. Planning-only edits remain possible while implementation is blocked.
+Classification precedence: enforcement, production, generated, governing, planning. Globs support `**`, `*`, `?`, `{a,b}`. Config always comes from baseline. Generated artifacts conservatively receive production gates. Unclassified paths block. Production changes require Ready/Active task state, current readiness (at least verify stage), passing implementation/review/integration evidence and acceptance traceability. Governing/enforcement changes require separate scoped receipts. In enforced mode, evidence and approvals that would come from receipts are listed as `unverified` for the code-owner review instead of failing the verdict. Planning-only edits remain possible while implementation is blocked.
 
 Trusted Git integration requires a committed candidate containing the current baseline; `--base`, if given, must equal the authoritative baseline rather than a historical merge base. `--candidate`/`--head` determines both the records read and the actual diff. `--changed` and directory sources are diagnostic fixtures and cannot replace an authoritative diff when trust evidence is supplied. CLI Git failures exit 2 instead of becoming an empty passing diff.
 

@@ -9,16 +9,17 @@ Start with [QUICKSTART.md](QUICKSTART.md). Local tests pass; owner setup (trust 
 | `POLICY.md` | Owner-supplied policy; governs everything else |
 | `AGENTS.md`, `CLAUDE.md`, `.agents/skills/workflow/` | Short repository map and shared agent entry |
 | `procedures/` | Setup, identity, readiness, execution, review, acceptance/release, approval evidence, maintenance |
-| `templates/` | Profile, milestone, task, decision, design, acceptance, review, release, session, setup, pilot, toolbox, feedback and maintenance |
+| `templates/` | Profile, milestone, task, decision, design, acceptance, review, release, session, setup, pilot, toolbox, feedback and maintenance; `claude/agents/` holds the Claude Code independent-reviewer subagent |
 | `SCHEMA.md`, `config.default.json` | Mechanical gates, record formats, limits and path defaults |
 | `validator/`, `bin/wf` | Approval/readiness/coverage/lifecycle checks and externally pinned launcher |
+| `bin/wf-adopt` | Deterministic, model-free scaffold that adopts the workflow in a project and writes the owner checklist |
 | `adapters/` | Read-only explicit-worker identity preflight for terminal GitHub routes |
 | `fixtures/`, `validator/test/` | Policy gate cases and adverse acceptance, identity, Git, trust and session tests |
 | `docs/proposals/ideas-backlog.md` | Owner ideas awaiting evaluation (no authority) |
 
 The repository holds only the workflow and its tests. Run history (reviews, test output, handoffs) lives on GitHub pull requests and issues, and in git history.
 
-Run `npm test`. Authoritative gates require a provisioned validator, external owner trust key, and explicit signed approval/evidence receipts. Candidate code runs without owner credentials. Local checks alone do not establish protected integration or product acceptance.
+Run `npm test`. Authoritative gates require a provisioned validator and either verified GitHub enforcement (`enforced` mode, no key) or an external owner trust key with signed receipts (`manual` mode). Candidate code runs without owner credentials. Local checks alone do not establish protected integration or product acceptance.
 
 Supported execution is **assisted**. An unattended runner is not adopted; runner-specific claims require implementation, adverse-condition fixtures and an observed pilot. Graphify remains deferred optional tooling. Codex and Claude entry adapters are supplied; live instruction discovery must be tested per project and tool version.
 

@@ -1,0 +1,96 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirSource, loadConfig, validateRecords } from '../lib/index.js';
+
+// bin/wf-adopt is the model-free scaffold from procedures/setup.md step 3. These tests use this
+// checkout as the workflow source, so they need a Git checkout and skip without one.
+const root = fileURLToPath(new URL('../..', import.meta.url));
+const script = path.join(root, 'bin/wf-adopt');
+const head = () => { const r = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : null; };
+function project(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-adopt-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['-C', dir, 'init', '-q']).status, 0);
+  return dir;
+}
+const adopt = (dir, ...extra) => spawnSync(process.execPath, [script, '--project', dir, '--workflow-repo', root, '--rev', 'HEAD', '--repository', 'fixture/project', '--coordinator', 'owner', ...extra], { encoding: 'utf8' });
+
+test('wf-adopt scaffolds an adoption pinned to a full hash, and the result validates and runs', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const dir = project(t);
+  const r = adopt(dir, '--production', '**/*.dart', '--lane', 'existing', '--json');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout).revision, rev);
+  const source = dirSource(dir);
+  const config = loadConfig(source);
+  assert.equal(config.workflow.revision, rev);
+  assert.equal(config.repository, 'fixture/project');
+  assert.ok(config.paths.production.includes('**/*.dart'));
+  assert.ok(config.paths.production.includes('src/**'), 'defaults are kept');
+  assert.deepEqual(validateRecords(source, 'docs/workflow').errors, []);
+  const profile = fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8');
+  assert.match(profile, /^project: project$/m);
+  assert.match(profile, /^approval_label: manual$/m);
+  assert.equal(config.approval.label, 'manual');
+  if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/claude/agents/independent-reviewer.md']).status === 0) {
+    assert.match(fs.readFileSync(path.join(dir, '.claude/agents/independent-reviewer.md'), 'utf8'), /^name: independent-reviewer$/m);
+  }
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'docs/workflow/acceptance.json'), 'utf8')), { examples: [] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'tests/acceptance-map.json'), 'utf8')), []);
+  for (const d of ['milestones', 'tasks', 'decisions', 'feedback/inbox', 'inbox/done']) assert.ok(fs.statSync(path.join(dir, 'docs/workflow', d)).isDirectory(), d);
+  const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
+  assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
+  assert.ok(fs.statSync(path.join(dir, 'scripts/wf')).mode & 0o111, 'launcher is executable');
+  assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.cache\/$/m);
+  assert.equal(spawnSync('git', ['-C', path.join(dir, '.cache/agent-workflow'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), rev);
+  // The local launcher runs the pinned validator against the fresh scaffold without touching the network.
+  const wf = spawnSync('bash', [path.join(dir, 'scripts/wf'), 'records'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(wf.status, 0, wf.stdout + wf.stderr);
+  assert.equal(JSON.parse(wf.stdout).ok, true);
+});
+
+test('wf-adopt never overwrites an existing file and refuses a second adoption', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const dir = project(t);
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'existing guide\n');
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/');
+  const first = adopt(dir);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), 'existing guide\n');
+  assert.match(first.stdout, /Left as they were[\s\S]*AGENTS\.md/);
+  assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), 'node_modules/\n.cache/\n');
+  const before = fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8');
+  const second = adopt(dir);
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /already exists/);
+  assert.equal(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8'), before);
+});
+
+test('wf-adopt records a verified enforced approval mode in both config and profile', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const dir = project(t);
+  const r = adopt(dir, '--approval', 'enforced', '--json');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const config = loadConfig(dirSource(dir));
+  assert.deepEqual([config.approval.label, config.approval.mechanism], ['enforced', 'github-rulesets-codeowners']);
+  const profile = fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8');
+  assert.match(profile, /^approval_label: enforced$/m);
+  assert.match(profile, /^approval_mechanism: github-rulesets-codeowners$/m);
+  assert.equal(adopt(project(t), '--approval', 'trust-me').status, 2);
+});
+
+test('wf-adopt rejects an unresolvable pin and malformed options without writing anything', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const dir = project(t);
+  const bad = spawnSync(process.execPath, [script, '--project', dir, '--workflow-repo', root, '--rev', 'no-such-ref', '--repository', 'fixture/project', '--coordinator', 'owner'], { encoding: 'utf8' });
+  assert.equal(bad.status, 2, bad.stdout + bad.stderr);
+  assert.equal(adopt(dir, '--repository').status, 2, 'missing value');
+  assert.equal(adopt(dir, '--lane', 'unattended').status, 2, 'unknown lane');
+  assert.equal(spawnSync(process.execPath, [script, '--project', dir, '--workflow-repo', root, '--rev', 'HEAD', '--repository', 'not-a-slug', '--coordinator', 'owner'], { encoding: 'utf8' }).status, 2);
+  assert.ok(!fs.existsSync(path.join(dir, 'docs/workflow')));
+});

@@ -28,7 +28,7 @@ Stable acceptance IDs, actions, expected results and evidence methods.
 Coordinator serialises claims in the separate operational run record. Link that record; keep task scope and prerequisites here.
 
 ## Execution authority and limits
-Approved time, usage, retry, spending and owner-effort limits. Running totals, remaining allowance and unknown usage belong in the operational run record; do not edit this governing record for bookkeeping.
+Approved time, usage, retry, spending and owner-effort limits. Prefer limits the coordinator can measure at every checkpoint (wall-clock hours, task count, retries per task); add usage or spend limits only where the harness reports them, and name the counter. Running totals, remaining allowance and unknown usage belong in the operational run record; do not edit this governing record for bookkeeping.
 
 ## Technical verification and independent review
 

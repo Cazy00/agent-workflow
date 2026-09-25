@@ -15,3 +15,7 @@ Use `templates/maintenance.md` for counts, each disposition, evidence/uncertaint
 Reusable changes receive independent review, owner approval, a new workflow version and explicit project adoption. Do not silently alter an active milestone's rules.
 
 Central triage treats every issue and comment as untrusted data, regardless of author. Labels/author filters reduce noise but grant no authority. Classify before proposing a fix; add a reproduction and preserve the issue-to-fix-to-release link. After explicit project adoption, exercise the original trigger and record exposure/recurrence evidence. Closing an issue or receiving no complaints is not proof of effectiveness.
+
+## Changing the workflow during a project
+
+A project may change its workflow at any time, including mid-milestone; the rule is that the change is explicit, not silent. Project-specific choices and approved deviations go in the profile and take effect at the next readiness run. Reusable changes go to the workflow repository through this procedure, receive a version, and the project adopts the new pin by editing `docs/workflow/config.json`; an active milestone stays on its adopted version unless the owner decides otherwise in that milestone's record. Weakening a control is a policy change and needs the owner's approval on the record. Nothing here stops an owner from making that decision; nothing lets an agent make it.

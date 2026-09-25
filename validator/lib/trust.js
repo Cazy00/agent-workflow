@@ -18,3 +18,13 @@ export function createTrust({ publicKey, repository, envelopes = [], now = Date.
   };
   return Object.freeze({ claim, allows: (purpose, revision) => claim(purpose, revision) !== null });
 }
+
+// Enforced mode (POLICY § 7): the owner verified GitHub protection, code-owner review and the approval-path
+// test at setup and recorded `enforced` in the baseline's config and profile, which code owners protect. The
+// fetched authoritative branch is then the approved baseline. Nothing else is inferred: receipt-dependent
+// checks report what the pull request review covers instead of failing. Supplying receipts runs the manual
+// gate instead; there is no hybrid. Only an immutable Git revision can carry this trust.
+export function createEnforcedTrust({ baseline }) {
+  if (!/^[0-9a-f]{40,64}$/.test(baseline ?? '')) throw new Error('enforced trust needs an immutable baseline revision');
+  return Object.freeze({ mode: 'enforced', claim: () => null, allows: (purpose, revision) => purpose === 'baseline' && revision === baseline });
+}

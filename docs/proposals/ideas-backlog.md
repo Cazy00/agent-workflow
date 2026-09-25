@@ -1,10 +1,10 @@
 # Owner ideas backlog
 
-**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and remain unreleased. Original ideas and first-read notes below are historical, not operating instructions.
+**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and remain unreleased. On 2026-09-25 the owner added two observations from a real adoption attempt, recorded as IDEA-06 and IDEA-07; they are unevaluated. Original ideas and first-read notes below are historical, not operating instructions.
 **Audience:** the agent asked to evaluate these ideas. For each idea, decide whether it adds value, and if it does, write an implementation plan.
 **Authority:** none. `POLICY.md` still governs. An adopted idea goes through `procedures/maintenance.md`: classify it as an *improvement proposal*, then get independent review, owner approval, a new workflow version and explicit project adoption. A working agent must not weaken its own rules, and an idea written here does not count as permission to do so.
 
-**Evaluation:** all five groups were assessed on 2026-09-21, and a Codex/Fable discussion settled what to include, defer or pass (see [Settled: defer or pass](#settled-defer-or-pass)). Those conclusions supersede the unverified first-read notes below where they differ. The original ideas and quotations are preserved; the status lines distinguish local changes from release and project adoption.
+**Evaluation:** all five groups were assessed on 2026-09-21, and a Codex/Fable discussion settled what to include, defer or pass (see [Settled: defer or pass](#settled-defer-or-pass)). Those conclusions supersede the unverified first-read notes below where they differ. The original ideas and quotations are preserved; the status lines distinguish local changes from release and project adoption. IDEA-06 and IDEA-07 are not covered by that evaluation.
 
 ## Settled: defer or pass
 
@@ -179,6 +179,100 @@ The owner shared this transcript with the same question. Note-taker's summary:
 
 ---
 
+## IDEA-06 — Setup cost: a plan for new projects and for existing repositories
+
+**Status:** Unevaluated. Recorded 2026-09-25 from the owner's report of a real adoption attempt that exhausted the agent's usage allowance.
+
+**Owner's words (verbatim):**
+> Set up process is taking too long we need to set rules for that in which you cannot actually adopt the agent workflow if you have already a repository in place that repository need to be ported into a new repository that have been built around agent workflow . Because I was trying to set this up but what I got instead is my AI agent has burned all of my usage limit. Which makes it very expensive to actually try to use agent workflow with an existing repository in that in that way that it was actually doing it’s not efficient. It’s burning tokens and it’s something that I would not like to be happen in the next time I actually work on a project if it’s going to be automated like scripted without actually using the power of LLM’s and agents that would be fine or if there is just a minimal set up to be done by the agent that would be fine also but burning my whole tokens is something that I would like to solve in agent workflow we need to actually sit away in which how we are going to use agent workflow with a new project or with an existing already project so we need to have a way or a plan in motion for both scenarios. This is how I am interrupting the situation and the thing that I have noticed
+
+**Restated:** The owner tried to adopt this workflow in a repository that already existed. The agent doing the setup used up the owner's entire usage allowance before setup was done. The owner wants three things. First, a rule about existing repositories; the owner's own proposal is that an existing repository is not adopted in place but ported into a new repository built around the workflow. Second, a setup that costs little or nothing in model usage: either scripted with no model at all, or a small, bounded amount of agent work. Third, a written plan for both starting points, a new project and an existing repository, so the next adoption does not repeat this.
+
+**Evidence available:** the owner's report only. The session that burned the allowance is not recorded in this repository, so which steps consumed the usage is unknown. The design gaps below are visible in the procedure text itself and do not depend on that session.
+
+**Known related report:** issue [#2](https://github.com/Cazy00/agent-workflow/issues/2) (routine bookkeeping requiring governing approval) is a different problem, but it is also about procedural cost. Repeated procedural cost is a recognised report category in POLICY § 12.
+
+**Note-taker's first read of the current rules (verify these):**
+
+- **One setup path for two situations.** `POLICY.md` says the workflow applies to "new and existing software projects", but `procedures/setup.md` and the *Adopt* section of `QUICKSTART.md` describe a single sequence. Nothing distinguishes a fresh repository from a codebase with history, existing branch rules, CI and integrations.
+- **The setup budget is in days, not usage.** POLICY § 11 and `setup_budget_days: 2` set a two-working-day timebox. `templates/setup.md` records usage after the fact. There is no usage or spending limit for setup and no stop rule during it. By contrast `procedures/execute.md` requires an agent to "check the remaining budget before each assisted call" during milestone work. The one place a project is most likely to spend uncontrolled usage is the one place with no usage limit.
+- **The steps are not marked by who performs them.** Of the eleven steps in `procedures/setup.md`, steps 2, 5, 6, 9, 10 and 11 need the owner's accounts, keys, branch protections, a disposable repository or an observer, and several of them must not be done by an agent at all (credentials, protections, trust anchors). Steps 1, 3, 4, 7 and 8 can be done by an agent or a script. The procedure does not say which is which, so an agent reading it as a to-do list will attempt, retry or wait on steps it cannot complete.
+- **Step 3 is mechanical but has no script.** Copying `templates/`, `procedures/` and `.agents/skills/workflow/`, writing `docs/workflow/config.json` from `config.default.json` with the adopted tag and full hash, creating the record directories and writing short `AGENTS.md` / `CLAUDE.md` adapters is deterministic. The validator's commands are `records`, `readiness`, `paths`, `ci`, `acceptance`, `lifecycle`, `session`, `report`, `runtime` and `prepare-evidence`; there is no `init` or `adopt`. Today this step is done by hand or by a model.
+- **Step 4 invites a full-codebase inspection that the validator does not need.** The step says "classify all paths by effects, including migrations, scripts, dependency/configuration files, infrastructure and generated inputs/outputs" and "unclassified paths block integration". Read literally against an existing repository, that is a walk of the whole tree. But `classifyPaths` in `validator/lib/paths.js` classifies only the paths changed in a candidate, and `wf ci` blocks only when a *changed* path is unclassified. `config.default.json` already covers most source through broad globs. For an existing repository, classification is a config edit of a few stack-specific globs (for example `*.dart`, `*.vue`, `Cargo.toml`, `requirements.txt`, which the defaults do not list), not an inventory. The procedure does not say this.
+- **The reading load before any project file is opened is large.** `POLICY.md`, `SCHEMA.md`, `QUICKSTART.md`, `AGENTS.md`, the procedures and the templates total about 14,500 words. The entry chain is `CLAUDE.md` → `AGENTS.md` → `README.md` → `QUICKSTART.md` → `procedures/setup.md` → `identity.md`, `approval-evidence.md`, `operations.md` and the templates. POLICY § 1 *Daily use* already says to load the short guide, the relevant procedure and the current records, and to consult the full policy only when a rule is unclear; setup has no such short reading list, and an agent that follows every pointer loads most of the corpus into one context.
+- **Step 1 for an existing codebase is discovery in disguise.** The profile's *Starting position* and *Technical context* sections, filled from an existing repository, are a codebase study. POLICY § 4 allows a project to "begin discovery with an incomplete profile" and blocks only work that needs the missing information; nothing in setup says to use that allowance and leave *Unknowns* filled rather than researching them up front.
+- **Steps 8 and 9 are each a session of their own.** Running the fixtures, testing instruction discovery in a fresh Codex session and a fresh Claude Code session with transcripts, and exercising the real approval path in a disposable repository are each separate work. Done inside the same context as steps 1 to 7, they compound the cost.
+- **A plausible shape of the failed attempt (hypothesis, not evidence):** the agent loaded the corpus, tried to fill the profile and classify paths by reading the existing codebase, and attempted or retried owner-only steps, all in one long session with no usage stop. The evaluator should ask the owner for whatever breakdown the harness shows before treating any one cause as established.
+
+**On the owner's proposed rule (port into a new repository instead of adopting in place):**
+
+- Porting does simplify the owner-side steps. A repository created fresh under the owner account gets protections, `CODEOWNERS` and worker access from its first revision, with no legacy branch rules, unknown collaborators or old CI secrets, and a clean point at which "normal protections become active" (step 5).
+- Porting does not by itself reduce the agent-side cost. The profile, the classification globs, the baseline results and the acceptance definitions describe the same code wherever it lives. If the setup procedure still tells the agent to inventory the codebase, it will do so in the new repository too.
+- Porting has costs of its own: issues, pull requests, CI configuration, deploy hooks, webhooks and any external system that points at the old repository. Git history can be carried over, but the GitHub-side history cannot.
+- So the note-taker's first read is that "port" is a good *option* inside an existing-repository lane, and possibly the recommended one when the old repository's protections are messy, rather than a prohibition on adopting in place. The owner decides; the evaluator should give evidence either way.
+
+**Candidate directions to evaluate (not decisions):**
+
+1. **Two lanes with the same controls:** a *new project* lane and an *existing repository* lane in `procedures/setup.md` and `QUICKSTART.md`. Both keep every control in POLICY § 11; the difference is sequencing and who does each step. POLICY § 11 already permits narrowing initial scope or extending the budget but forbids silently dropping controls, so the saving must come from automation and ordering, not from fewer safeguards.
+2. **Tag each setup step by actor:** *script*, *owner* or *agent*. Add one rule: the agent performs only agent steps, lists the owner steps with what it needs from each, and stops. It does not attempt, retry or wait on an owner step.
+3. **A scripted scaffold with no model:** a `wf adopt` command, or a shell script beside `bin/wf`, that performs step 3 deterministically from the workflow checkout: copy the shared files, write `config.json` with the tag and full hash, create the record directories, write the `AGENTS.md` / `CLAUDE.md` adapters, seed empty `acceptance.json` and `acceptance-map.json`. Testable with a fixture; costs nothing in usage.
+4. **A setup usage limit and a stop rule:** alongside `setup_budget_days`, a usage or spending limit for setup, recorded through the existing `wf runtime` `usage` event from `procedures/operations.md`, with the same "check before each call, save and stop at the limit" rule that milestone execution already has.
+5. **An existing-repository lane that defers discovery:** start from the minimal profile (purpose, scope, starting position, authority, execution) with *Unknowns* filled honestly, adopt the default classification globs plus the stack's few additions, do not inventory the tree, and make the first milestone the observed pilot, small and bounded. The codebase is then learned per task through task scope, which is how the rest of the workflow already works.
+6. **A setup reading list:** name the files an agent reads for setup (`procedures/setup.md`, `templates/profile.md`, `templates/setup.md`, `config.default.json`) and state that `POLICY.md` and `SCHEMA.md` are consulted only when a rule is unclear, mirroring POLICY § 1 *Daily use*.
+7. **An owner checklist for the owner steps:** a printable or interactive list for steps 2, 5, 6, 9 and 10 so the owner can complete them without an agent in the loop.
+
+**Questions to answer:**
+- Which steps consumed the usage in the failed attempt? Ask the owner for the harness's breakdown, or record the cause as unknown and design against the gaps above.
+- Which steps can be scripted deterministically, and which genuinely need judgement? Where exactly does the agent stop and hand to the owner?
+- Is deferring full classification compatible with "unclassified paths block integration"? The validator suggests yes, because the block applies to changed paths; confirm in `validator/lib/paths.js` and `validator/lib/ci.js` and in fixture 08a.
+- Does porting into a new repository reduce any of the costed agent steps, or only the owner steps? Which of the owner's projects would benefit from porting and which would lose integrations?
+- What is a sensible setup usage limit, in what unit, and how is it measured across tools?
+- Would a two-lane setup make the *new project* case heavier? It should not; the new-project lane is the existing procedure with actors marked.
+
+**Constraints that already apply:** a working agent must not weaken its own rules (`AGENTS.md`); controls may not be removed to save cost, only sequenced, scripted or explicitly narrowed with the owner's decision (POLICY § 11); credentials, keys and protections stay with the owner (POLICY § 7, `procedures/identity.md`). Any change goes through `procedures/maintenance.md` as an improvement proposal with independent review, owner approval, a new version and explicit adoption.
+
+**Expected output:** a two-lane setup design, one for a new project and one for an existing repository, with every step tagged script / owner / agent, a setup usage limit with a stop rule, and a decision with reasons on the owner's "port instead of adopt" rule. If a scaffold command is adopted, its specification and a fixture. The smallest change to `procedures/setup.md`, `QUICKSTART.md`, `templates/setup.md`, `templates/profile.md`, `config.default.json` and, only if scripting is adopted, `validator/`.
+
+---
+
+## IDEA-07 — What happens after development: inside the flow, or something else?
+
+**Status:** Unevaluated. Recorded 2026-09-25.
+
+**Owner's words (verbatim):**
+> Thought about something else now we are concerned and really invested into the development phase itself. What about the things that usually happens after development should we be including it within the agent flow or it’s going to be something else? This is something we actually need to think about.
+
+**Restated:** The workflow is thorough about building software: readiness, implementation, verification, review, acceptance, release. The owner asks what happens once a product is live. Deployment, monitoring, incidents, support, routine maintenance, updates, and taking user feedback back into the next milestone all happen after development. Should those activities be part of this workflow, with the same records and authority rules, or should the workflow stop at release and hand over to something else? The owner has not decided and wants the question worked through.
+
+**Note-taker's first read of the current rules (verify these):**
+
+- **The flow ends at release.** POLICY § 1 states the flow as "Discover → Establish readiness → Authorise a milestone → Implement and verify tasks → Independently review → Verify the assembled milestone → Obtain product acceptance → Release when authorised → Improve from evidence". The last step, § 12, is about improving *the workflow* from reported friction, not about improving *the product* from production evidence.
+- **What exists after development today:**
+  - The profile's *Operations* section (`templates/profile.md`): monitoring, recovery, migrations, support, device provisioning and updates, or "not applicable with reasons". It is information; nothing consumes it after release.
+  - Release readiness (POLICY § 10, `procedures/accept-release.md`, `templates/release.md`): configuration and secrets, permissions, migration and compatibility, monitoring and failure visibility, backup, restore, rollback or forward recovery, deployment and support instructions, device provisioning and updates, deferred information and release authority. The release record also has *Deployment result*, *Post-release verification and recovery* and *Remaining issues and support handoff*.
+  - The consequential-changes summary has an *Operations* row (deployment, recovery, provisioning and update changes).
+  - The bug-fix lane in `procedures/execute.md`: reproduce, add a regression check, scoped fix, recheck the symptom, with existing readiness, checks and review still applying.
+  - Authority limits that would bind any operating activity: "starting another milestone or deploying requires the authority defined in the profile or a subsequent owner instruction" (POLICY § 8); destructive operations outside existing authority are reserved decisions (POLICY § 5); candidate code must not run with owner credentials (POLICY § 9); `wf lifecycle --stage release` validates evidence and "does not deploy".
+- **What does not exist:** no procedure for the operating phase. Nothing covers incident handling (who is alerted, what an agent may do in production, who may roll back), routine maintenance (dependency and security updates, key and certificate rotation, backup verification), what to do with monitoring output, how support requests and user feedback enter discovery, cost review, data retention, or decommissioning. There is no record for an incident, a change window or a production observation, and no hotfix lane: the bug-fix lane is correct for quality but has no stated fast path for an outage. The release record's *Remaining issues and support handoff* is a one-time handoff, not an ongoing loop.
+- **The feedback record is for the workflow, not the product.** `templates/feedback.md` and the central issue route in `procedures/operations.md` carry *workflow* friction. Product feedback from users has no defined entry point; in practice it would be an issue on the project's own repository, which the readiness procedure can treat as a discovery input, but nothing says so.
+
+**Two framings for the owner to choose between (the evaluator should cost both):**
+
+- **A. Development workflow with a defined boundary.** The workflow stops at release and says so. The release record becomes the handover: runbook, monitoring, support contacts, rollback and the owner's operating arrangement. Operations is "something else": the owner's hosting, a separate runbook, or a later companion workflow. Cheapest; adds a paragraph and perhaps a stronger release template. Risk: production problems come back as unstructured requests and the agent has no rule for what it may touch.
+- **B. Operations as recurring inputs to the same flow.** Production incidents and user feedback enter as discovery items and become bug-fix or feature tasks; routine maintenance is a standing, bounded milestone type with its own limits; a hotfix lane keeps all four verification layers but allows an explicitly authorised order (for example deploy under owner instruction, independent review immediately after) for an outage; the agent's production authority (read logs, restart, roll back, run a migration) is recorded in the profile's *Authority* section as delegated or reserved, default reserved. Costs one short procedure and a few profile fields; reuses tasks, milestones and decisions rather than adding record types.
+
+**Questions to answer:**
+- Which post-development activities does the owner actually face on current projects? For example, for the WhatsApp assistant: hosting, message failures, updating prices and products, monitoring, backups. Ground the design in those, not in a generic operations list.
+- Should the agent have any production authority by default? Which actions are always reserved?
+- Is a hotfix lane needed, and what review timing is acceptable for an emergency under owner instruction?
+- How does product feedback enter discovery? Do issues on the project's repository suffice, or is a record needed?
+- If framing A is chosen, what exactly must the release record hand over so the owner can operate without the agent?
+- Given IDEA-06, how is any addition kept small? Prefer a paragraph in `procedures/accept-release.md` or one short `procedures/operate.md` over new record types.
+
+**Expected output:** a decision on the boundary, framing A or B or a stated mix, with reasons. For the chosen framing, the smallest change: profile *Operations* and *Authority* fields, a short procedure or a paragraph in `procedures/accept-release.md`, a hotfix lane in `procedures/execute.md` if adopted, and an explicit statement of what stays outside the workflow.
+
+---
+
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)
 
 1. **Self-verification by running the app** (IDEA-02, A10, A11). This is the one change the owner explicitly asked for. It is probably the highest-value item, and the harness credential limit needs a practical workaround.
@@ -186,3 +280,4 @@ The owner shared this transcript with the same question. Note-taker's summary:
 3. **Tooling and model choices** (IDEA-01, A10, B4): vet external tools through the existing toolbox process. Recommend models only if usage data justifies it.
 4. **Technique selection** (IDEA-05, overlapping A2/A6/A11 and B5/B7): mostly present in substance. The likely real gaps are a test-first preference, a lighter bug-fix lane, negative examples, and evals for AI features in the product.
 5. **Much of the videos' advice already exists here in stricter form** (readiness gates, independent review, stop conditions, durable records). Don't add rules that repeat what the workflow already enforces.
+6. **Cost of adoption and the lifecycle boundary** (IDEA-06, IDEA-07, added 2026-09-25). The first real adoption attempt was too expensive; the fix must come from sequencing, scripting and a usage limit, not from fewer controls. Whatever is added for the operating phase must respect the same cost concern.

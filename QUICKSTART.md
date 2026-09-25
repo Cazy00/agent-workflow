@@ -51,7 +51,7 @@ Use `procedures/accept-release.md`. `wf lifecycle --stage accept` checks the tas
 
 Record a session outcome using `templates/session.json` outside the checkout, then validate it with `wf session --record PATH` and the same baseline/candidate/trust arguments. Post the outcome and handoff on the task's pull request (or issue): changes, verification revision, uncertainty, next action and **Workflow friction this session: none / report IDs**. Never commit logs or handoff files; the repository holds only what future work needs. Use `procedures/maintenance.md` for feedback and separately authorised repairs.
 
-Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages. All commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
+Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages; `status` prints a derived, read-only view for the owner (what is waiting on you, what is next for the agent, milestones and tasks with previewed blockers, open decisions, inbox and setup items) as Markdown, or as JSON with `--json`, and needs no baseline; it never checks approval and grants nothing. All other commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
 
 ## Central reporting and assisted runtime
 

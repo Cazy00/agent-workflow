@@ -9,13 +9,15 @@ import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'report', 'runtime', 'prepare-evidence'];
+import { evaluateStatus, renderStatus } from './lib/status.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
+  status [--baseline REV] [--candidate REV]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
@@ -57,7 +59,7 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && cmd !== 'records') throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
   const candidate = o.candidate || o.head ? source(o.candidate ?? o.head) : dirSource(repo);
@@ -107,6 +109,7 @@ async function main() {
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
     return branch.match(/^(?:codex\/)?(T-\d{4})(?:-|$)/)?.[1] ?? null;
   };
+  if (cmd === 'status') { const view = evaluateStatus({ baseline, candidate }); console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view)); return 0; }
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;
   if (cmd === 'records') result = validateRecords(candidate, rd);

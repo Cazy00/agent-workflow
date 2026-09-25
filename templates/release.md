@@ -11,7 +11,7 @@ Release owner, authority source and signed receipt:
 | Permissions | |
 | Migration and compatibility | |
 | Monitoring and failure visibility | |
-| Backup, restore, rollback or forward recovery | |
+| Backup, restore, rollback or forward recovery (verified means a rollback exercised once and a backup restored once on a non-production target, or justified not applicable) | |
 | Deployment and support | |
 | Device provisioning and updates | |
 | Required deferred information | |

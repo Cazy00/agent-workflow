@@ -10,7 +10,7 @@ Read the applicable workflow version and selected reports. Verify evidence and g
 
 Changing a blocking fixture expectation must cite the contradicted policy and explain the contradiction. A citation alone does not make a policy relaxation a bug fix. Changes to authority or intended permitted behaviour follow owner policy approval.
 
-Use `templates/maintenance.md` for counts, each disposition, evidence/uncertainty, a clear instruction/configuration/implementation/fixture/nothing recommendation, usage and follow-up. Recurrent misunderstanding may call for clearer instructions; repeated safeguard failures require addressing the cause. Judge changes by recurrence, severity, wasted effort and observed benefit, not an empty inbox or arbitrary success percentage.
+Use `templates/maintenance.md` for counts, each disposition, evidence/uncertainty, a clear instruction/configuration/implementation/fixture/nothing recommendation, usage and follow-up. Recurrent misunderstanding may call for clearer instructions; repeated safeguard failures require addressing the cause. Judge changes by recurrence, severity, wasted effort and observed benefit, not an empty inbox or arbitrary success percentage. Every adopted instruction change states the failure it prevents or the cost it removes and names the fixture or check that would catch a recurrence, or says why none can; a change that can say neither is not made. Record the word count of the shared corpus (policy, schema, quickstart, procedures, templates, skill) before and after, so growth stays a visible cost.
 
 Reusable changes receive independent review, owner approval, a new workflow version and explicit project adoption. Do not silently alter an active milestone's rules.
 

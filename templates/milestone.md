@@ -2,6 +2,7 @@
 record: milestone
 id: M-0000
 outcome:
+measure:
 status: Draft
 coordinator:
 scope: []
@@ -18,6 +19,7 @@ prerequisites: []
 # M-0000 — coherent journey or demonstrable technical outcome
 
 ## Outcome and exclusions
+Optional `measure:` above: the one sentence that shows this milestone worked, checkable by a non-technical person.
 
 ## Acceptance scenarios and demonstration
 Stable acceptance IDs, actions, expected results and evidence methods.

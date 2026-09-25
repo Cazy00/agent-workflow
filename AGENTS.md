@@ -8,8 +8,9 @@ This repository maintains the workflow itself. Workflow changes need independent
 - Setup and identity: `procedures/setup.md`, `procedures/identity.md`; model-free scaffold: `bin/wf-adopt`.
 - Readiness and implementation: `procedures/readiness.md`, `procedures/execute.md`.
 - Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`.
+- Deployment, incidents, maintenance, upgrades: `procedures/operate.md`.
 - Feedback and maintenance: `procedures/maintenance.md`.
-- Validation: `npm test`; command usage: `QUICKSTART.md`.
+- Validation: `npm test`; command usage: `QUICKSTART.md`. Owner view: `wf status` (derived, read-only).
 - Reusable records: `templates/`. Run evidence, reviews and handoffs go on the task's GitHub pull request or issue, never into the repository; `npm test` enforces this.
 - Owner ideas awaiting evaluation (no authority): `docs/proposals/ideas-backlog.md`.
 

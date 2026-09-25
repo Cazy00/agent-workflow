@@ -45,7 +45,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   for (const d of ['milestones', 'tasks', 'decisions', 'feedback/inbox', 'inbox/done']) assert.ok(fs.statSync(path.join(dir, 'docs/workflow', d)).isDirectory(), d);
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
-  assert.match(setup, /required status checks \(`wf ci` and each entry of the profile's `required_checks`\), branches up to date before merging/);
+  assert.match(setup, /required status checks \(`wf ci` now; each entry of the profile's `required_checks` when approving the profile change that defines it\), branches up to date before merging/);
   assert.match(setup, /7\. The profile's `required_checks` \(readiness fails while it is empty\)/);
   assert.ok(fs.statSync(path.join(dir, 'scripts/wf')).mode & 0o111, 'launcher is executable');
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.cache\/$/m);

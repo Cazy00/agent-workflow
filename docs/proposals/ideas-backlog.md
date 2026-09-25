@@ -237,12 +237,15 @@ The owner shared this transcript with the same question. Note-taker's summary:
 
 ## IDEA-07 — What happens after development: inside the flow, or something else?
 
-**Status:** Unevaluated. Recorded 2026-09-25.
+**Status:** Unevaluated. Recorded 2026-09-25. Owner direction added the same day: the flow covers the full lifecycle, from preparation through deployment, maintenance, updates and upgrades. The open question is how to do that at the smallest cost, not whether.
 
 **Owner's words (verbatim):**
 > Thought about something else now we are concerned and really invested into the development phase itself. What about the things that usually happens after development should we be including it within the agent flow or it’s going to be something else? This is something we actually need to think about.
 
-**Restated:** The workflow is thorough about building software: readiness, implementation, verification, review, acceptance, release. The owner asks what happens once a product is live. Deployment, monitoring, incidents, support, routine maintenance, updates, and taking user feedback back into the next milestone all happen after development. Should those activities be part of this workflow, with the same records and authority rules, or should the workflow stop at release and hand over to something else? The owner has not decided and wants the question worked through.
+**Owner's direction (verbatim, later on 2026-09-25):**
+> Note that the agent needs to cover everything from preparation for development, the development itself, the deployment and the maintenance and the updates and upgrades down the way.
+
+**Restated:** The workflow is thorough about building software: readiness, implementation, verification, review, acceptance, release. The owner first asked whether what happens once a product is live belongs in the flow, then answered it: the agent's work spans the whole lifecycle. Five stages are named: preparation for development, development, deployment, maintenance, and updates and upgrades. The evaluator's task is to design that coverage with the same records and authority rules, at the smallest cost, and to say which actions in the later stages stay reserved to the owner. A direction recorded here is the owner's stated intent; it becomes policy through the normal approval route, like every other change.
 
 **Note-taker's first read of the current rules (verify these):**
 
@@ -256,20 +259,31 @@ The owner shared this transcript with the same question. Note-taker's summary:
 - **What does not exist:** no procedure for the operating phase. Nothing covers incident handling (who is alerted, what an agent may do in production, who may roll back), routine maintenance (dependency and security updates, key and certificate rotation, backup verification), what to do with monitoring output, how support requests and user feedback enter discovery, cost review, data retention, or decommissioning. There is no record for an incident, a change window or a production observation, and no hotfix lane: the bug-fix lane is correct for quality but has no stated fast path for an outage. The release record's *Remaining issues and support handoff* is a one-time handoff, not an ongoing loop.
 - **The feedback record is for the workflow, not the product.** `templates/feedback.md` and the central issue route in `procedures/operations.md` carry *workflow* friction. Product feedback from users has no defined entry point; in practice it would be an issue on the project's own repository, which the readiness procedure can treat as a discovery input, but nothing says so.
 
-**Two framings for the owner to choose between (the evaluator should cost both):**
+**Stage map against the current workflow (note-taker's first read; verify):**
 
-- **A. Development workflow with a defined boundary.** The workflow stops at release and says so. The release record becomes the handover: runbook, monitoring, support contacts, rollback and the owner's operating arrangement. Operations is "something else": the owner's hosting, a separate runbook, or a later companion workflow. Cheapest; adds a paragraph and perhaps a stronger release template. Risk: production problems come back as unstructured requests and the agent has no rule for what it may touch.
-- **B. Operations as recurring inputs to the same flow.** Production incidents and user feedback enter as discovery items and become bug-fix or feature tasks; routine maintenance is a standing, bounded milestone type with its own limits; a hotfix lane keeps all four verification layers but allows an explicitly authorised order (for example deploy under owner instruction, independent review immediately after) for an outage; the agent's production authority (read logs, restart, roll back, run a migration) is recorded in the profile's *Authority* section as delegated or reserved, default reserved. Costs one short procedure and a few profile fields; reuses tasks, milestones and decisions rather than adding record types.
+| Stage the owner named | What exists | What is missing |
+|---|---|---|
+| Preparation for development | Discovery and the three readiness levels (POLICY § 4, `procedures/readiness.md`); project setup (`procedures/setup.md`); profile, milestone, task and decision records. | Nothing structural. The cost problem is IDEA-06. |
+| Development | Execution, checkpoints, four verification layers, independent review, acceptance (`procedures/execute.md`, `review.md`, `accept-release.md`). | Nothing structural. |
+| Deployment | Release readiness items, release authority, the release record with *Deployment result* and *Post-release verification and recovery* (POLICY § 10, `templates/release.md`); `wf lifecycle --stage release` validates evidence. "Deploying requires the authority defined in the profile or a subsequent owner instruction" (POLICY § 8). | A deployment procedure: environments (test, staging, production), who runs the deploy, whether the agent may deploy to non-production by default, verification after deploy, rollback authority, and how deployment credentials stay out of the agent's reach (POLICY § 9: candidate code must not run with owner credentials). |
+| Maintenance | The bug-fix lane in `procedures/execute.md`; profile *Operations* section as information; the consequential-changes *Operations* row. | Incident handling and a hotfix lane with an explicitly authorised order for outages; monitoring review; backup verification; support and user feedback as discovery inputs; a way for a production observation to become a task without a full new milestone. |
+| Updates and upgrades | Product feature updates are new milestones (exists). Workflow version upgrades for a project are required to be explicit (`procedures/setup.md` step 3, POLICY § 11: active milestones stay on their adopted version). | Routine dependency, security and platform upgrades as a bounded standing milestone type with limits; a procedure for migrating a project to a newer workflow version. The word "upgrades" covers both product and workflow; the design should treat them separately. |
+
+**Framing that was open before the owner's direction:** the note-taker had listed two options, a development-only workflow with a defined handover at release, or operations as recurring inputs to the same flow. The owner's direction rules out the first. What remains of it is still useful: the release record should hand over enough (runbook, monitoring, support contacts, rollback) that the owner can operate if the agent is unavailable.
+
+**Design constraints the evaluator should keep:** reuse tasks, milestones and decisions rather than adding record types; put the agent's authority per stage in the profile's *Authority* section as delegated or reserved, default reserved for production, spending and destructive operations (POLICY § 5); keep every later-stage change under the same four verification layers, with only the *order* relaxed for an authorised emergency; keep additions to one short procedure or paragraphs in existing ones, in line with the cost concern in IDEA-06.
 
 **Questions to answer:**
 - Which post-development activities does the owner actually face on current projects? For example, for the WhatsApp assistant: hosting, message failures, updating prices and products, monitoring, backups. Ground the design in those, not in a generic operations list.
 - Should the agent have any production authority by default? Which actions are always reserved?
 - Is a hotfix lane needed, and what review timing is acceptable for an emergency under owner instruction?
 - How does product feedback enter discovery? Do issues on the project's repository suffice, or is a record needed?
-- If framing A is chosen, what exactly must the release record hand over so the owner can operate without the agent?
+- What must the release record hand over so the owner can operate without the agent, even though the agent is expected to keep operating?
+- Which deployment targets may the agent touch by default, and which need owner instruction each time?
+- Is a project's workflow version upgrade a milestone of its own, and who authorises it?
 - Given IDEA-06, how is any addition kept small? Prefer a paragraph in `procedures/accept-release.md` or one short `procedures/operate.md` over new record types.
 
-**Expected output:** a decision on the boundary, framing A or B or a stated mix, with reasons. For the chosen framing, the smallest change: profile *Operations* and *Authority* fields, a short procedure or a paragraph in `procedures/accept-release.md`, a hotfix lane in `procedures/execute.md` if adopted, and an explicit statement of what stays outside the workflow.
+**Expected output:** a lifecycle design covering the five stages, each mapped to the existing procedure that carries it and naming the smallest addition where one is missing; an authority table per stage (delegated / reserved); the smallest change: profile *Operations* and *Authority* fields, a deployment and maintenance procedure or paragraphs in `procedures/accept-release.md` and `execute.md`, a hotfix lane if adopted, and a note on workflow version upgrades for projects. State explicitly which actions stay with the owner and why.
 
 ---
 
@@ -321,5 +335,5 @@ The owner shared this transcript with the same question. Note-taker's summary:
 3. **Tooling and model choices** (IDEA-01, A10, B4): vet external tools through the existing toolbox process. Recommend models only if usage data justifies it.
 4. **Technique selection** (IDEA-05, overlapping A2/A6/A11 and B5/B7): mostly present in substance. The likely real gaps are a test-first preference, a lighter bug-fix lane, negative examples, and evals for AI features in the product.
 5. **Much of the videos' advice already exists here in stricter form** (readiness gates, independent review, stop conditions, durable records). Don't add rules that repeat what the workflow already enforces.
-6. **Cost of adoption and the lifecycle boundary** (IDEA-06, IDEA-07, added 2026-09-25). The first real adoption attempt was too expensive; the fix must come from sequencing, scripting and a usage limit, not from fewer controls. Whatever is added for the operating phase must respect the same cost concern.
+6. **Cost of adoption and the lifecycle boundary** (IDEA-06, IDEA-07, added 2026-09-25). The first real adoption attempt was too expensive; the fix must come from sequencing, scripting and a usage limit, not from fewer controls. The owner has since directed that the flow cover the full lifecycle; whatever is added for deployment and operation must respect the same cost concern.
 7. **The owner as supervisor** (IDEA-08, added 2026-09-25). The owner expects to coordinate rather than implement. The records and validator already hold the facts; what is missing is a derived, read-only view, and above all a list of what is waiting on the owner.

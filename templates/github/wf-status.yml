@@ -1,8 +1,10 @@
 # Project status on GitHub. Installed by the workflow's bin/wf-adopt; delete this file to opt out.
 # Publishes `scripts/wf status`, the derived, read-only view of docs/workflow/ on the trusted branch,
 # with the open pull requests, as the body of the one open issue labelled wf-status. The owner pins
-# that issue once. It grants no authority and approves nothing. It never runs on pull requests, so
-# candidate code never runs with a token that can write issues. On a public repository it is public.
+# that issue once. It grants no authority and approves nothing. This workflow never runs candidate
+# code: it has no pull-request trigger and acts only on the trusted branch. A collaborator's own
+# workflow could still edit the issue, so it is a convenience view: check anything consequential
+# against the records and pull requests. On a public repository the issue is public.
 name: wf-status
 on:
   push:
@@ -25,10 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0 # readiness previews check each task's recorded revisions against the history
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - name: Render the status view
+        run: scripts/wf status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA" > "$RUNNER_TEMP/view.md"
       - name: Publish the status issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,7 +44,7 @@ jobs:
           {
             echo "_Updated automatically from \`$GITHUB_REF_NAME\` on $(date -u '+%Y-%m-%d %H:%M UTC') by \`.github/workflows/wf-status.yml\`. Each run replaces this text, so do not edit it._"
             echo
-            scripts/wf status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA"
+            cat "$RUNNER_TEMP/view.md"
             echo
             echo '## Open pull requests'
             prs="$(gh pr list --state open --limit 50 --json number,title,isDraft --template '{{range .}}- #{{.number}} {{.title}}{{if .isDraft}} (draft){{end}}{{"\n"}}{{end}}')"

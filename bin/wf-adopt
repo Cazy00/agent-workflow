@@ -192,7 +192,7 @@ Read this first; it is a map. The workflow that governs work here is \`${slug}\`
 | Raw owner input awaiting triage (no authority) | \`docs/workflow/inbox/\` |
 | Acceptance definitions and test mappings | \`docs/workflow/acceptance.json\`, \`tests/acceptance-map.json\` |
 | Setup progress, owner checklist and agent steps | \`docs/workflow/setup.md\` |
-| Progress at a glance (derived; never edit it) | the pinned *Project status* issue on GitHub, or \`scripts/wf status\` |
+| Progress at a glance (derived; never edit it) | ${pinned.status !== null ? 'the pinned *Project status* issue on GitHub, or ' : ''}\`scripts/wf status\` |
 | Procedures, templates, policy | \`.cache/agent-workflow/procedures/\`, \`templates/\`, \`POLICY.md\` |
 
 Commands: \`scripts/wf records | readiness | paths | ci | acceptance | lifecycle | session | status\` (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue, never into this repository. Never merge, approve, sign or bypass a rule yourself; never switch to the owner's account.

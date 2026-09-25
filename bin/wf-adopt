@@ -120,7 +120,7 @@ const checklist = `
 ## Owner steps (procedures/setup.md; the agent does not attempt, retry or wait on these)
 
 - [ ] 2. Verify the owner and worker GitHub usernames; separate human and agent clones; follow \`identity.md\`
-- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required checks, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
+- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required status checks (\`wf ci\` and each entry of the profile's \`required_checks\`), branches up to date before merging, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
 - [ ] 6. External launcher pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`) outside the agent clone. Approval mode is \`manual\` until steps 5 and 9 pass, and nothing is approved in it; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request, or provision the owner public key and sign receipts (\`approval-evidence.md\`)
 - [ ] 9. Real approval-path test in a disposable branch or repository
 - [ ] 10. Central reporting config and private runtime directory (\`operations.md\`), if adopted
@@ -130,7 +130,7 @@ const checklist = `
 
 - [ ] 1. Fill \`docs/workflow/profile.md\` from the owner's input and \`docs/workflow/inbox/\`; leave *Unknowns* honest, each with its required-before stage
 - [ ] 4. Add the stack-specific path classifications the defaults miss (\`docs/workflow/config.json\`)
-- [ ] 7. Acceptance IDs and mappings for the first milestone only
+- [ ] 7. The profile's \`required_checks\` (readiness fails while it is empty); acceptance IDs and mappings for the first milestone only
 - [ ] 8. Fixtures and tool-discovery tests, in their own session
 ${o.lane === 'existing' ? '\nExisting repository: do not inventory the codebase; classification is a config edit; keep the first milestone small enough to be the pilot; porting into a fresh repository is an owner option to record here.\n' : ''}
 Read for setup: \`procedures/setup.md\`, \`identity.md\`, \`templates/profile.md\`, \`templates/setup.md\` and \`config.default.json\` in \`.cache/agent-workflow/\`. Consult \`POLICY.md\` and \`SCHEMA.md\` only when a rule is unclear.

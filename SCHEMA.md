@@ -24,7 +24,7 @@ The last group has complete human-facing templates/procedures; the record parser
 
 ## Basic schema
 
-**Profile:** `record: profile`, project, workflow_version, approval_mechanism, approval_label (`manual` or `enforced`), coordinator, setup_budget_days. Implementation additionally needs `readiness: Ready` on the approved baseline. Define `required_checks` and `permitted_assumptions` as lists. The body covers every policy §2 area, source authority and relevant unknowns.
+**Profile:** `record: profile`, project, workflow_version, approval_mechanism, approval_label (`manual` or `enforced`), coordinator, setup_budget_days. Implementation additionally needs `readiness: Ready` on the approved baseline. Define `required_checks` and `permitted_assumptions` as lists. Readiness fails while `required_checks` is empty: the validator checks records, not code, so the project's checks are the only code gate. The body covers every policy §2 area, source authority and relevant unknowns.
 
 **Task:** `record: task`, id, title, status (`Draft`, `Ready`, `Active`, `Blocked`, `Done`), owner, objective. A Blocked task requires resume_condition. Deferred entries look like `D-0001@verify`. Baseline result is `pass` or `fail: summary`.
 
@@ -46,7 +46,7 @@ In `enforced` mode (`approval.label` in the baseline config and `approval_label`
 
 ## Readiness
 
-Read config, profile, milestone, prerequisite tasks/contracts and decisions from the approved baseline; read the working/candidate task with baseline fallback. Require relevant record schema, profile readiness, authorised milestone, task context and signed baseline approval. Enforce task scope inside milestone scope and changed production paths inside task scope. Require feature source and a design when the task records shared-contract, synchronisation, money, stock, security, irreversible-data or cross-component risks. Assumptions must occur in the baseline profile's permitted assumptions.
+Read config, profile, milestone, prerequisite tasks/contracts and decisions from the approved baseline; read the working/candidate task with baseline fallback. Require relevant record schema, profile readiness with a nonempty `required_checks` list, authorised milestone, task context and signed baseline approval. Enforce task scope inside milestone scope and changed production paths inside task scope. Require feature source and a design when the task records shared-contract, synchronisation, money, stock, security, irreversible-data or cross-component risks. Assumptions must occur in the baseline profile's permitted assumptions.
 
 Candidate task edits cannot remove trusted prerequisites, decisions, deferred inputs, governing sources, acceptance IDs or risk classifications, nor change established feature/milestone identity to bypass authority. The stage is the latest of the requested stage and baseline/candidate implemented/verified/accepted states; candidate fields cannot lower it. Stage order is implement, verify, accept, release. Draft is assessable before promotion; Blocked still reports its resume condition; Done blocks new implementation but permits later-stage evidence checks.
 

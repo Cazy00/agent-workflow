@@ -10,6 +10,7 @@ Supersedes / superseded by:
 ## Business rules, permissions and security boundaries
 
 ## Data ownership, lifecycle and invariants
+Each invariant (what must always or never hold: balances reconcile, stock never negative, no cross-tenant read) gets an acceptance ID with method `automated`, listed in the milestone and the implementing task, and a test that tries to break it (property-based where the stack supports it), or a recorded reason none is possible; `wf ci` fails a task that claims the ID without a mapped test.
 
 ## Interfaces, shared contracts and important UI states
 

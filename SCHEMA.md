@@ -1,6 +1,6 @@
 # Record formats and mechanical gates
 
-This describes the unreleased validator candidate. `POLICY.md` governs if a mechanical rule or procedure conflicts with the policy. Record a workflow defect rather than bypassing a gate. Two approval modes exist. In `enforced` mode, setup verified GitHub protection, code-owner review and the approval-path test and recorded the label in the baseline's config and profile; the immutable authoritative baseline is then the approved baseline and receipt-dependent checks report `unverified` items that the pull request's code-owner review covers; supplying the trust options runs the full receipt gate instead. In `manual` mode, explicit signed receipts are required and nothing is inferred from branch contents.
+This describes the validator at this revision. `POLICY.md` governs if a mechanical rule or procedure conflicts with the policy. Record a workflow defect rather than bypassing a gate. Two approval modes exist. In `enforced` mode, setup verified GitHub protection, code-owner review and the approval-path test and recorded the label in the baseline's config and profile; the immutable authoritative baseline is then the approved baseline and receipt-dependent checks report `unverified` items that the pull request's code-owner review covers; supplying the trust options runs the full receipt gate instead. In `manual` mode, explicit signed receipts are required and nothing is inferred from branch contents.
 
 ## Records and sources
 

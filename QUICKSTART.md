@@ -1,6 +1,6 @@
 # Quickstart
 
-Read the relevant procedure, current profile, milestone/task and governing sources. Use `POLICY.md` when a rule is unclear. This checkout is an unreleased candidate; follow `procedures/setup.md` before treating a project as operational.
+Read the relevant procedure, current profile, milestone/task and governing sources. Use `POLICY.md` when a rule is unclear. Adopt only a released tag, since a checkout between tags is a candidate, and follow `procedures/setup.md` before treating a project as operational.
 
 ## Adopt
 

@@ -5,3 +5,4 @@ export { WfError, list, loadConfig, loadRecord, loadAll, validateRecords } from 
 export { classifyPaths, CATEGORIES } from './paths.js';
 export { evaluateReadiness, stageOf, overlaps, STAGES, OUTCOMES } from './readiness.js';
 export { evaluateCi } from './ci.js';
+export { createTrust, createEnforcedTrust } from './trust.js';

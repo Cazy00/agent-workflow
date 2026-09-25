@@ -1,0 +1,228 @@
+#!/usr/bin/env node
+// Deterministic, model-free scaffold for adopting the workflow in a project: procedures/setup.md step 3.
+// Every shared file is read from the pinned workflow revision, never from a working tree. Existing files
+// are never overwritten. The script grants nothing: owner steps stay the owner's and are written as a
+// checklist into docs/workflow/setup.md.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane'];
+const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
+  [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--json]
+  The project always starts in manual approval mode; the switch to enforced is a code-owner-reviewed pull request after setup steps 5 and 9.
+  Writes docs/workflow/config.json (full-hash pin), the record directories, profile/setup/acceptance seeds,
+  scripts/wf, AGENTS.md and CLAUDE.md when absent, fetches the pinned installation into .cache/agent-workflow/
+  and writes the owner checklist. Never overwrites; refuses a second adoption. Exit 0 done, 2 refused/invalid.`;
+
+const fail = (message, code = 2) => { console.error(`wf-adopt: ${message}`); process.exit(code); };
+
+function parse(argv) {
+  const o = { production: [], lane: 'new' };
+  const seen = new Set();
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') { o.json = true; continue; }
+    if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+    if (!a.startsWith('--')) fail(`unexpected argument: ${a}\n${USAGE}`);
+    const name = a.slice(2);
+    const value = argv[i + 1];
+    if (!OPTIONS.includes(name) || value == null || value.startsWith('--')) fail(`invalid option or missing value: ${a}\n${USAGE}`);
+    i++;
+    if (name === 'production') o.production.push(value);
+    else if (seen.has(name)) fail(`duplicate option: ${a}`);
+    else { seen.add(name); o[name] = value; }
+  }
+  return o;
+}
+
+function git(repo, args, { allowFailure = false } = {}) {
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+  if (r.status !== 0 && !allowFailure) fail(`git ${args[0]} failed: ${(r.stderr || r.error?.message || '').trim()}`);
+  return r;
+}
+
+const o = parse(process.argv.slice(2));
+for (const k of ['project', 'repository', 'rev', 'coordinator']) if (!o[k]) fail(`--${k} is required\n${USAGE}`);
+if (!/^[\w.-]+\/[\w.-]+$/.test(o.repository)) fail('--repository must be OWNER/REPOSITORY');
+if (!['new', 'existing'].includes(o.lane)) fail('--lane must be new or existing');
+const workflowRepo = path.resolve(o['workflow-repo'] ?? path.join(HERE, '..'));
+const project = path.resolve(o.project);
+if (!fs.existsSync(project) || !fs.statSync(project).isDirectory()) fail(`project directory not found: ${project}`);
+if (fs.existsSync(path.join(project, 'docs/workflow/config.json'))) fail('docs/workflow/config.json already exists: this project is adopted; changing its pin is a deliberate edit of that file, not a re-scaffold');
+
+// Resolve the pin to an immutable full hash. A commit that carries a tag is recorded under that tag;
+// anything else is UNRELEASED, because only released tags are meant to be adopted.
+const resolved = git(workflowRepo, ['rev-parse', '--verify', '--end-of-options', `${o.rev}^{commit}`], { allowFailure: true });
+if (resolved.status !== 0) fail(`--rev ${o.rev} does not resolve to a commit in ${workflowRepo}`);
+const revision = resolved.stdout.trim();
+if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(revision)) fail('the pin must be a full commit hash');
+const exactTag = git(workflowRepo, ['describe', '--tags', '--exact-match', revision], { allowFailure: true });
+const version = exactTag.status === 0 ? exactTag.stdout.trim() : 'UNRELEASED';
+const show = rel => {
+  const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true });
+  if (r.status !== 0) fail(`${rel} is not present at ${revision}: this scaffold needs a workflow revision that contains it (releases after v1.0.0); a v1.0.0 adoption follows that version's own QUICKSTART`);
+  return r.stdout;
+};
+// Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
+const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
+const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md') };
+
+const created = [], appended = [], skipped = [];
+const write = (rel, content, mode) => {
+  const target = path.join(project, rel);
+  if (fs.existsSync(target)) { skipped.push(rel); return false; }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content, mode ? { mode } : undefined);
+  created.push(rel);
+  return true;
+};
+const ensureDir = rel => {
+  const dir = path.join(project, rel);
+  if (fs.existsSync(dir)) { skipped.push(`${rel}/`); return; }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '.gitkeep'), '');
+  created.push(`${rel}/`);
+};
+const setLine = (text, key, value) => {
+  const re = new RegExp(`^${key}:.*$`, 'm');
+  if (!re.test(text)) fail(`template lacks a ${key} line`);
+  return text.replace(re, `${key}: ${value}`);
+};
+
+// Config: the defaults at the pinned revision, plus the pin, the project identity and the stack's extra
+// production patterns. Approval identities stay empty until the owner's identity step fills them.
+const config = JSON.parse(pinned.config);
+const slug = o['workflow-slug'] ?? config.workflow?.repo ?? 'Cazy00/agent-workflow';
+config.workflow = { repo: slug, version, revision };
+config.repository = o.repository;
+// Never an enforced label from a scaffold: that switch is the reviewed pull request after steps 5 and 9.
+config.approval = { ...(config.approval ?? {}), mechanism: 'manual-signed-receipts', label: 'manual' };
+config.paths ??= {};
+config.paths.production ??= [];
+for (const g of o.production) if (!config.paths.production.includes(g)) config.paths.production.push(g);
+write('docs/workflow/config.json', JSON.stringify(config, null, 2) + '\n');
+
+// Records: profile, setup record, empty acceptance definitions and mappings, record directories, inbox.
+const name = o.repository.split('/')[1];
+let profile = pinned.profile;
+profile = setLine(profile, 'project', name);
+profile = setLine(profile, 'workflow_version', version);
+profile = setLine(profile, 'coordinator', o.coordinator);
+profile = setLine(profile, 'approval_mechanism', 'manual-signed-receipts');
+profile = setLine(profile, 'approval_label', 'manual');
+write('docs/workflow/profile.md', profile);
+
+const today = new Date().toISOString().slice(0, 10);
+const checklist = `
+## Owner steps (procedures/setup.md; the agent does not attempt, retry or wait on these)
+
+- [ ] 2. Verify the owner and worker GitHub usernames; separate human and agent clones; follow \`identity.md\`
+- [ ] 5. Branch protection or rulesets, \`CODEOWNERS\`, required checks, stale-review dismissal, no worker bypass; record when protections became active; fill \`approval.approver\` and \`approval.agent_identity\` in \`docs/workflow/config.json\`
+- [ ] 6. External launcher pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`) outside the agent clone. Approval mode is \`manual\` until steps 5 and 9 pass, and nothing is approved in it; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request, or provision the owner public key and sign receipts (\`approval-evidence.md\`)
+- [ ] 9. Real approval-path test in a disposable branch or repository
+- [ ] 10. Central reporting config and private runtime directory (\`operations.md\`), if adopted
+- [ ] 11. Observe the pilot milestone
+
+## Agent steps (one session at a time; post progress here and stop)
+
+- [ ] 1. Fill \`docs/workflow/profile.md\` from the owner's input and \`docs/workflow/inbox/\`; leave *Unknowns* honest, each with its required-before stage
+- [ ] 4. Add the stack-specific path classifications the defaults miss (\`docs/workflow/config.json\`)
+- [ ] 7. Acceptance IDs and mappings for the first milestone only
+- [ ] 8. Fixtures and tool-discovery tests, in their own session
+${o.lane === 'existing' ? '\nExisting repository: do not inventory the codebase; classification is a config edit; keep the first milestone small enough to be the pilot; porting into a fresh repository is an owner option to record here.\n' : ''}
+Read for setup: \`procedures/setup.md\`, \`identity.md\`, \`templates/profile.md\`, \`templates/setup.md\` and \`config.default.json\` in \`.cache/agent-workflow/\`. Consult \`POLICY.md\` and \`SCHEMA.md\` only when a rule is unclear.
+`;
+let setup = pinned.setup.replace('SETUP-0000', 'SETUP-0001');
+setup = setup.replace('Profile, repository, workflow tag and immutable revision:', `Profile, repository, workflow tag and immutable revision: docs/workflow/profile.md · ${o.repository} · ${version} · ${revision}`);
+setup = setup.replace('Start, two-working-day timebox (or approved alternative), usage:', `Start, two-working-day timebox (or approved alternative), usage: scaffolded ${today}; lane ${o.lane}; usage per step recorded below`);
+write('docs/workflow/setup.md', setup + checklist);
+
+write('docs/workflow/acceptance.json', JSON.stringify({ examples: [] }, null, 2) + '\n');
+write('tests/acceptance-map.json', '[]\n');
+for (const d of ['docs/workflow/milestones', 'docs/workflow/tasks', 'docs/workflow/decisions', 'docs/workflow/feedback/inbox', 'docs/workflow/inbox/done']) ensureDir(d);
+write('docs/workflow/inbox/README.md', `# Inbox
+
+Drop raw input for the agent here: notes, transcripts, screenshots, links, requirement fragments. Items carry no authority. The agent triages each one at discovery into the profile, a spec, a decision, a milestone or a task, records where it went, and moves it to \`done/\`. A note that resolves a reserved decision is the request, not the approval. See \`procedures/readiness.md\` in the workflow installation.
+`);
+
+// Local convenience launcher, adapters and the ignored installation cache.
+const WF = [
+  '#!/usr/bin/env bash',
+  '# Local convenience launcher: runs the workflow validator at the revision pinned in docs/workflow/config.json.',
+  '# Feedback only. Authoritative gates use the owner-installed launcher outside this checkout (procedures/setup.md step 6).',
+  'set -euo pipefail',
+  'ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
+  'CONFIG="$ROOT/docs/workflow/config.json"',
+  '[ -f "$CONFIG" ] || { echo "wf: $CONFIG not found" >&2; exit 2; }',
+  'read -r REPO REV < <(node -e \'',
+  '  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workflow;',
+  '  if (!c.repo || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(c.revision)) { console.error("wf: workflow.repo and a full workflow.revision must be set"); process.exit(2); }',
+  '  console.log(c.repo, c.revision)\' "$CONFIG")',
+  'CACHE="$ROOT/.cache/agent-workflow"',
+  '[ -d "$CACHE/.git" ] || git clone --quiet "https://github.com/$REPO.git" "$CACHE"',
+  'if [ "$(git -C "$CACHE" rev-parse HEAD)" != "$REV" ]; then',
+  '  git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet --detach "$REV"',
+  'fi',
+  '[ "$(git -C "$CACHE" rev-parse HEAD)" = "$REV" ] || { echo "wf: installation is not at the pinned revision $REV" >&2; exit 2; }',
+  'exec node "$CACHE/validator/cli.js" --repo "$ROOT" "$@"',
+  '',
+].join('\n');
+write('scripts/wf', WF, 0o755);
+
+const gitignore = path.join(project, '.gitignore');
+const ignored = fs.existsSync(gitignore) ? fs.readFileSync(gitignore, 'utf8') : null;
+if (!(ignored ?? '').split(/\r?\n/).some(l => ['.cache/', '.cache'].includes(l.trim()))) {
+  fs.writeFileSync(gitignore, (ignored ?? '') + (ignored && !ignored.endsWith('\n') ? '\n' : '') + '.cache/\n');
+  (ignored == null ? created : appended).push('.gitignore');
+}
+
+write('AGENTS.md', `# ${name} — agent guide
+
+Read this first; it is a map. The workflow that governs work here is \`${slug}\` at the revision pinned in \`docs/workflow/config.json\`, installed at \`.cache/agent-workflow/\` (\`scripts/wf records\` fetches it when missing). Start with its \`.agents/skills/workflow/SKILL.md\`, then only the procedure for your next action.
+
+| Need | Go to |
+|---|---|
+| What the project is, who decides what, quality bar, delivery | \`docs/workflow/profile.md\` |
+| Milestones, tasks, decisions | \`docs/workflow/milestones/\`, \`docs/workflow/tasks/\`, \`docs/workflow/decisions/\`; only records on the approved baseline count |
+| Raw owner input awaiting triage (no authority) | \`docs/workflow/inbox/\` |
+| Acceptance definitions and test mappings | \`docs/workflow/acceptance.json\`, \`tests/acceptance-map.json\` |
+| Setup progress, owner checklist and agent steps | \`docs/workflow/setup.md\` |
+| Procedures, templates, policy | \`.cache/agent-workflow/procedures/\`, \`templates/\`, \`POLICY.md\` |
+
+Commands: \`scripts/wf records | readiness | paths | ci | acceptance | lifecycle | session\` (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue, never into this repository. Never merge, approve, sign or bypass a rule yourself; never switch to the owner's account.
+`);
+write('CLAUDE.md', `# Shared repository instructions
+
+Read \`AGENTS.md\`, then \`.cache/agent-workflow/.agents/skills/workflow/SKILL.md\` and the relevant procedure it identifies. They are the shared workflow for this repository. Tool-specific defaults do not grant additional authority. Check the current baseline and task records before continuing.
+`);
+
+// Claude Code's independent-reviewer subagent: the separate review context of procedures/review.md.
+if (pinned.reviewer !== null) write('.claude/agents/independent-reviewer.md', pinned.reviewer);
+else skipped.push('.claude/agents/independent-reviewer.md (not in this workflow revision)');
+
+const cache = path.join(project, '.cache/agent-workflow');
+if (fs.existsSync(cache)) skipped.push('.cache/agent-workflow/');
+else {
+  fs.mkdirSync(path.dirname(cache), { recursive: true });
+  const clone = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', workflowRepo, cache], { encoding: 'utf8' });
+  if (clone.status !== 0) fail(`could not clone the workflow installation: ${(clone.stderr || '').trim()}`);
+  git(cache, ['checkout', '--quiet', '--detach', revision]);
+  git(cache, ['remote', 'set-url', 'origin', `https://github.com/${slug}.git`]);
+  created.push('.cache/agent-workflow/ (ignored by Git)');
+}
+
+const result = { ok: true, project, repository: o.repository, workflow: config.workflow, revision, version, lane: o.lane, created, appended, skipped };
+if (o.json) console.log(JSON.stringify(result, null, 2));
+else {
+  console.log(`Adopted ${slug} ${version} (${revision}) in ${project} for ${o.repository}.`);
+  if (created.length) console.log(`\nCreated:\n  ${created.join('\n  ')}`);
+  if (appended.length) console.log(`\nAppended:\n  ${appended.join('\n  ')}`);
+  if (skipped.length) console.log(`\nLeft as they were (already present):\n  ${skipped.join('\n  ')}`);
+  if (skipped.some(s => s === 'AGENTS.md' || s === 'CLAUDE.md')) console.log('\nAn adapter already existed: add a pointer to .cache/agent-workflow/.agents/skills/workflow/SKILL.md and docs/workflow/ to it yourself.');
+  if (version === 'UNRELEASED') console.log('\nNote: the pin is not a released tag; recorded as UNRELEASED.');
+  console.log('\nNext: read docs/workflow/setup.md. It holds the owner steps and the agent steps.');
+  console.log(checklist);
+}

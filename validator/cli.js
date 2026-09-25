@@ -4,18 +4,21 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
-import { createTrust } from './lib/trust.js';
+import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'report', 'runtime', 'prepare-evidence'];
+import { evaluateStatus, renderStatus } from './lib/status.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
+  status [--baseline REV] [--candidate REV]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
+  Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
@@ -56,13 +59,15 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && cmd !== 'records') throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
   const candidate = o.candidate || o.head ? source(o.candidate ?? o.head) : dirSource(repo);
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
+  // The derived view runs before any trust is established: it checks no approval and grants nothing.
+  if (cmd === 'status') { const view = evaluateStatus({ baseline, candidate }); console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view)); return 0; }
   let trust = null;
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
@@ -74,6 +79,15 @@ async function main() {
     if (!Array.isArray(envelopes)) throw new WfError('receipts must be an array');
     trust = createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes });
     if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
+  }
+  // Enforced mode: the baseline's own config and profile (both code-owner protected) record that GitHub
+  // enforcement was verified at setup; the immutable baseline is then the approved baseline. Candidate copies of
+  // these files are never consulted, so a candidate cannot switch modes; a directory baseline never qualifies.
+  // Supplying the trust options runs the full receipt gate instead, exactly as in manual mode: no hybrid.
+  if (!trust && config.approval?.label === 'enforced' && baseline.kind === 'git') {
+    const profileLabel = loadAll(baseline, rd).profile?.data?.approval_label;
+    if (profileLabel !== 'enforced') throw new WfError('approval label differs between docs/workflow/config.json and the profile on the baseline');
+    trust = createEnforcedTrust({ baseline: baseline.name });
   }
   const changed = () => {
     if (o.changed.length) {
@@ -111,7 +125,8 @@ async function main() {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
       const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
       const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
-      const coverage = evaluateAcceptance({ baseline, candidate, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance) });
+      const coverage = evaluateAcceptance({ baseline, candidate, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' });
+      lifecycle.unverified = [...(lifecycle.unverified ?? []), ...(coverage.unverified ?? [])];
       if (!coverage.ok) { lifecycle.ok = false; lifecycle.errors.push(...coverage.errors); }
       if (cmd === 'acceptance') result = coverage;
       if (cmd === 'lifecycle') {
@@ -123,7 +138,7 @@ async function main() {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
         if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository });
+        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository });
       }
     }
   }

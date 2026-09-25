@@ -2,7 +2,7 @@
 
 Profile, repository, workflow tag and immutable revision:
 Owner authority for setup:
-Start, two-working-day timebox (or approved alternative), usage:
+Start, two-working-day timebox (or approved alternative), agent allowance (default half a working day across the agent steps), usage per step:
 
 | Control | Evidence and outcome |
 |---|---|

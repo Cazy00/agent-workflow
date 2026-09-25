@@ -1,0 +1,59 @@
+# Project status on GitHub. Installed by the workflow's bin/wf-adopt; delete this file to opt out.
+# Publishes `scripts/wf status`, the derived, read-only view of docs/workflow/ on the trusted branch,
+# with the open pull requests, as the body of the one open issue labelled wf-status. The owner pins
+# that issue once. It grants no authority and approves nothing. It never runs on pull requests, so
+# candidate code never runs with a token that can write issues. On a public repository it is public.
+name: wf-status
+on:
+  push:
+    branches: [__TRUSTED_BRANCH__]
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+concurrency:
+  group: wf-status
+  cancel-in-progress: true
+jobs:
+  status:
+    if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Publish the status issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/status.md"
+          {
+            echo "_Updated automatically from \`$GITHUB_REF_NAME\` on $(date -u '+%Y-%m-%d %H:%M UTC') by \`.github/workflows/wf-status.yml\`. Each run replaces this text, so do not edit it._"
+            echo
+            scripts/wf status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA"
+            echo
+            echo '## Open pull requests'
+            prs="$(gh pr list --state open --limit 50 --json number,title,isDraft --template '{{range .}}- #{{.number}} {{.title}}{{if .isDraft}} (draft){{end}}{{"\n"}}{{end}}')"
+            echo "${prs:-- none}"
+            echo
+            echo "History: [merged pull requests]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pulls?q=is%3Apr+is%3Amerged)"
+          } > "$body"
+          # An issue body holds at most 65,536 characters: cut at a line boundary well before that.
+          node -e 'const fs = require("fs"), f = process.argv[1], t = fs.readFileSync(f, "utf8");
+            if (t.length > 60000) fs.writeFileSync(f, t.slice(0, t.lastIndexOf("\n", 60000)) + "\n\n_Truncated: run `scripts/wf status` for the full view._\n");' "$body"
+          number="$(gh issue list --state open --label wf-status --limit 1 --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$body"
+          else
+            gh label create wf-status --force --color BFD4F2 --description 'Project status from wf status, updated automatically'
+            gh issue create --title 'Project status' --label wf-status --body-file "$body"
+          fi

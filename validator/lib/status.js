@@ -90,7 +90,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     // checked against them: every acceptance ID served by some task, every planned task still recorded.
     const recs = byMilestone.get(id) ?? [];
     const ids = recs.map(r => r.data?.id).filter(Boolean);
-    const planned = list(m.tasks);
+    const planned = [...new Set(list(m.tasks))];
     const plan = { planned, discovered: planned.length ? ids.filter(t => !planned.includes(t)) : [], uncovered: [], missing: [] };
     if (!['Accepted', 'Released'].includes(m.status)) {
       plan.uncovered = list(m.acceptance).filter(a => !recs.some(r => list(r.data?.acceptance).includes(a)));
@@ -130,7 +130,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     }
     for (const b of claimBranches) if (!(claims.get(b) ?? []).some(p => p.branch === b)) waiting.push({ kind: 'claim', item: b, owner: 'agent', person: tasks.get(b)?.owner ?? null, detail: `claim branch ${b} has no open pull request from it: its holder opens one, or releases the claim by deleting the branch` });
     for (const p of prs.filter(p => p.mismatch && !p.fork)) waiting.push({ kind: 'claim', item: `#${p.number}`, owner: 'agent', person: null, detail: `its branch names ${p.mismatch[0]} and its title ${p.mismatch[1]}; rename one so the claim is clear` });
-    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: inspect its last handoff, then resume or release the claim' });
+    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: if its pull request merged, mark it Done; otherwise inspect its last handoff, then resume or release the claim' });
     // Fork pull requests stay in the list below: outside contributions never enter anyone's list of actions.
     for (const p of prs.filter(p => !p.draft && !p.fork)) {
       const label = `#${p.number}${p.task ? ` ${p.task}` : ''}`;
@@ -219,7 +219,7 @@ export function renderStatus(s) {
     }
     lines.push('');
   }
-  if (s.unassigned_tasks.length) { lines.push('## Tasks for milestones not yet recorded'); for (const t of s.unassigned_tasks) lines.push(`- ${t.id} ${t.status ?? '?'} (milestone ${t.milestone})`); lines.push(''); }
+  if (s.unassigned_tasks.length) { lines.push('## Tasks without a milestone record'); for (const t of s.unassigned_tasks) lines.push(`- ${t.id} ${t.status ?? '?'} (${t.milestone === '(none)' ? 'no milestone' : `milestone ${t.milestone}`})`); lines.push(''); }
   if (s.blocked.length) { lines.push('## Blocked'); for (const b of s.blocked) lines.push(`- ${b.task}: resume when ${b.resume_condition ?? 'not recorded'}`); lines.push(''); }
   if (s.open_for_agent.length) { lines.push('## Open questions for the agent'); for (const d of s.open_for_agent) lines.push(`- ${d.id} (${d.type}): ${d.question ?? ''}`); lines.push(''); }
   if (s.feedback_open.length) lines.push(`Open workflow feedback: ${s.feedback_open.join(', ')}`, '');

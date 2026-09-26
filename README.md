@@ -8,7 +8,7 @@ Start with [QUICKSTART.md](QUICKSTART.md): run `bin/wf-adopt` against the projec
 |---|---|
 | `POLICY.md` | Owner-supplied policy; governs everything else |
 | `AGENTS.md`, `CLAUDE.md`, `.agents/skills/workflow/` | Short repository map and shared agent entry |
-| `procedures/` | Setup, identity, readiness, execution, review, acceptance/release, approval evidence, operation (deploy, incidents, maintenance, upgrades), maintenance |
+| `procedures/` | Setup, identity, readiness, execution, shared projects, review, acceptance/release, approval evidence, operation (deploy, incidents, maintenance, upgrades), maintenance |
 | `templates/` | Profile, milestone, task, decision, design, acceptance, review, release, session, setup, pilot, toolbox, feedback and maintenance; `claude/agents/` holds the Claude Code independent-reviewer subagent and `github/` the status-issue workflow |
 | `SCHEMA.md`, `config.default.json` | Mechanical gates, record formats, limits and path defaults |
 | `validator/`, `bin/wf` | Approval/readiness/coverage/lifecycle checks, the derived `status` view, and externally pinned launcher |

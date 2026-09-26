@@ -11,11 +11,11 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
      --coordinator OWNER_USERNAME --production '**/*.dart' --lane existing
    ```
 
-   For a project two or more people share, pass `--owner NAME` once for each and read `procedures/setup.md`, *Shared project*.
+   For a project two or more people share, pass `--owner NAME` once for each and read `procedures/shared.md`.
 
 2. Read `procedures/setup.md`. The agent completes the agent steps (profile with honest unknowns, stack-specific classification, required checks, first-milestone acceptance IDs, fixtures and discovery tests), writes the owner steps into the setup record as a checklist, and stops; the owner completes the owner steps at their own pace. Raw input for the agent (notes, transcripts, screenshots, links) goes in `docs/workflow/inbox/`; it is triaged at discovery and carries no authority.
 3. Provision the approved workflow Git objects and an owner-installed copy of `bin/wf` outside the candidate checkout. Set `WF_VALIDATOR_REPO` and `WF_VALIDATOR_REV` in the trusted environment. The launcher extracts committed files at that full hash; it ignores candidate choices of executable code and rejects `WF_LOCAL`.
-4. Provision the owner public key and signed receipts through `procedures/approval-evidence.md`. Establish source/result trust and the real approval path. A project-local launcher is convenient feedback only; authoritative CI must use the externally controlled launcher and settings.
+4. Choose the approval mode and provision what it needs through `procedures/approval-evidence.md` (setup step 6): the owner public key and signed receipts in `manual` mode; no key in `enforced` mode, which follows setup steps 5 and 9. Establish source/result trust and the real approval path. A project-local launcher is convenient feedback only; authoritative CI must use the externally controlled launcher and settings.
 5. Complete identity checks, fixtures, per-tool discovery and the observed assisted pilot. Record limitations in the setup record before declaring supported operation.
 
 ## Start or resume a task

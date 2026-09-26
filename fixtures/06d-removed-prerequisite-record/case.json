@@ -1,0 +1,6 @@
+{ "runs": [
+  { "command": "readiness", "task": "T-0003", "expect": { "outcome": "Ready" } },
+  { "command": "ci", "changed": ["docs/workflow/tasks/T-0001.md"], "expect": { "verdict": "fail", "findings": ["T-0001.md is removed, but T-0003 (prerequisites) names T-0001; keep the record, set it Done when its work merges"] } },
+  { "command": "ci", "changed": ["docs/workflow/tasks/T-0002.md"], "expect": { "verdict": "pass" } },
+  { "command": "ci", "changed": ["docs/workflow/tasks/T-0004.md"], "expect": { "verdict": "fail", "findings": ["T-0004 names T-0009 in prerequisites, but docs/workflow/tasks/T-0009.md is not in the candidate"] } }
+] }

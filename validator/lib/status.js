@@ -130,7 +130,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     }
     for (const b of claimBranches) if (!(claims.get(b) ?? []).some(p => p.branch === b)) waiting.push({ kind: 'claim', item: b, owner: 'agent', person: tasks.get(b)?.owner ?? null, detail: `claim branch ${b} has no open pull request from it: its holder opens one, or releases the claim by deleting the branch` });
     for (const p of prs.filter(p => p.mismatch && !p.fork)) waiting.push({ kind: 'claim', item: `#${p.number}`, owner: 'agent', person: null, detail: `its branch names ${p.mismatch[0]} and its title ${p.mismatch[1]}; rename one so the claim is clear` });
-    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: if its pull request merged, mark it Done; otherwise inspect its last handoff, then resume or release the claim' });
+    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim' });
     // Fork pull requests stay in the list below: outside contributions never enter anyone's list of actions.
     for (const p of prs.filter(p => !p.draft && !p.fork)) {
       const label = `#${p.number}${p.task ? ` ${p.task}` : ''}`;

@@ -149,7 +149,7 @@ test('status marks a Ready task with no claim, and flags an Active one, only whe
   assert.doesNotMatch(without, /no pull request|## Open pull requests/);
   const none = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(20, 'T-0002', 'T-0003: mixed up', 'bob-worker', { isDraft: true })] }));
   assert.match(none, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · no pull request$/m);
-  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: if its pull request merged, mark it Done; otherwise inspect its last handoff, then resume or release the claim$/m);
+  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim$/m);
   assert.match(none, /^- #20: its branch names T-0002 and its title T-0003; rename one so the claim is clear$/m);
   assert.match(none, /^## Open pull requests\n- #20 · `T-0003: mixed up` · bob-worker \(draft\)$/m);
 });
@@ -280,6 +280,10 @@ test('a Done task still serves its acceptance IDs and counts as planned, a Draft
   assert.deepEqual(s.milestones[0].plan, { planned: ['T-0001', 'T-0009'], discovered: ['T-0002'], uncovered: ['AC-001-3'], missing: ['T-0009'] });
   assert.equal(s.waiting.filter(w => w.kind === 'plan').length, 2);
   assert.match(renderStatus(s), /^### M-0001 — Draft — .* · planned 2 · discovered 1$/m);
+  for (const [from, to] of [['Draft', 'Blocked'], ['Blocked', 'Verified']]) {
+    edit('docs/workflow/milestones/M-0001.md', x => x.replace(`status: ${from}`, `status: ${to}`));
+    assert.equal(evaluateStatus({ baseline: dirSource(dir) }).waiting.filter(w => w.kind === 'plan').length, 2, to);
+  }
 });
 
 test('with two owners, plan items wait on the milestone owner\'s agents', t => {

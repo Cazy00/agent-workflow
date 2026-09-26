@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0 # the tag goes on the commit that last changed package.json
       - name: Tag the version if it has no tag yet
         run: |
           set -euo pipefail
@@ -28,6 +28,9 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "$tag already exists"; exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$tag" "$GITHUB_SHA" -m "$tag: $(git log -1 --format=%s "$GITHUB_SHA"). Tagged by .github/workflows/release-tag.yml when ${GITHUB_ACTOR} merged it."
-          git push origin "refs/tags/$tag"
-          echo "tagged $tag at $GITHUB_SHA"
+          # The commit that set the version, not merely the newest push: a run that GitHub drops or delays while later
+          # merges land still tags the right commit.
+          target="$(git log -1 --format=%H "$GITHUB_SHA" -- package.json)"
+          git tag -a "$tag" "$target" -m "$tag: $(git log -1 --format=%s "$target"). Tagged by .github/workflows/release-tag.yml after ${GITHUB_ACTOR} merged to main."
+          git push origin "refs/tags/$tag" || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null
+          echo "tagged $tag at $target"

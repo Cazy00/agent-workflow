@@ -849,6 +849,8 @@ and: "how about you consult or check with a sub-agent using Fable, discuss about
 
 **Corpus size (per the S7 rule):** 20,867 before and 21,031 after (+164); `procedures/execute.md` 1,337 → 1,405, `procedures/operate.md` 669 → 723.
 
+**Independent review (2026-09-26, separate-context Claude Code subagent, on the pull request):** *approve with notes*. Adopted: a task Ready only for a bounded subset cannot be marked Done in its own pull request (fixture `11c`), since Done means its completion conditions are met; the release tag goes on the commit that last changed `package.json`, so a run GitHub drops while later merges queue still tags the right commit; the pin mask looks only inside the profile's front matter. Noted and kept: a whitespace-only `config.json` change no longer stales readiness; the whole `workflow` object (repository and revision) is exempt, and it stays enforcement-class and code-owner reviewed; the tag workflow does not wait for CI on main, relying on branch protection.
+
 ---
 
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)

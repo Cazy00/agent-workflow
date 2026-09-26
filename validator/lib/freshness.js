@@ -86,7 +86,9 @@ function withoutPin(source, rel) {
   if (PINNED.has(rel)) {
     try { const c = JSON.parse(raw); delete c.workflow; return JSON.stringify(c); } catch { return raw; }
   }
-  return raw.replace(/^(---\r?\n[\s\S]*?)^workflow_version:[^\n]*\n/m, '$1');
+  const front = raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  if (!front) return raw;
+  return front[0].replace(/^workflow_version:[^\n]*\n/m, '') + raw.slice(front[0].length);
 }
 
 export function governingChanged({ baseline, revision, recordsDir, task, previous }) {

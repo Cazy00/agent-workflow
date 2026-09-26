@@ -1,6 +1,6 @@
 {
   "name": "agent-workflow",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "description": "Assisted workflow procedures, templates, approval and readiness gates, traceability, lifecycle validation, and regression fixtures",

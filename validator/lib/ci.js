@@ -45,6 +45,34 @@ function recordIds({ baseline, candidate, rd, changed }) {
   return result;
 }
 
+// Readiness reads a task named in another task's prerequisites or governing from the baseline, so that record
+// stays, Done, until the last record naming it is removed (procedures/execute.md). A change fails when it removes a record
+// that a remaining task names, or when a task record newly names one that is not in the candidate. The candidate
+// contains the current baseline, so a removal and a planning branch meet in whichever merges second.
+const NAMED = ['prerequisites', 'governing'];
+const namesIn = data => NAMED.flatMap(field => list(data?.[field]).filter(v => /^T-\d{4}$/.test(v)).map(id => ({ field, id })));
+function recordReferences({ baseline, candidate, rd, changed }) {
+  const errors = [];
+  const dir = `${rd}/${DIRS.task}/`;
+  if (!changed.some(p => p.startsWith(dir))) return errors;
+  const tasks = [...loadAll(candidate, rd).tasks.values()].filter(r => r.data).map(r => ({ ...r.data, id: r.data.id ?? r.path }));
+  for (const p of changed) {
+    const id = p.startsWith(dir) ? p.slice(dir.length).match(/^(T-\d{4})\.md$/)?.[1] : null;
+    if (!id) continue;
+    if (!candidate.exists(p)) {
+      if (!baseline.exists(p)) continue;
+      const by = tasks.map(t => [t.id, namesIn(t).filter(n => n.id === id).map(n => n.field)]).filter(([, fields]) => fields.length);
+      if (by.length) errors.push(`${p} is removed, but ${by.map(([t, fields]) => `${t} (${fields.join(', ')})`).join(', ')} ${by.length > 1 ? 'name' : 'names'} ${id}; keep the record, set it Done when its work merges, and remove it with the last record that names it`);
+      continue;
+    }
+    const before = new Set(namesIn(parseFrontMatter(baseline.read(p) ?? '').data).map(n => n.id));
+    for (const n of namesIn(parseFrontMatter(candidate.read(p) ?? '').data)) {
+      if (!before.has(n.id) && !candidate.exists(`${dir}${n.id}.md`)) errors.push(`${id} names ${n.id} in ${n.field}, but ${dir}${n.id}.md is not in the candidate; add that record first, or, if its work is merged and its record removed, leave the reference out`);
+    }
+  }
+  return errors;
+}
+
 export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -56,6 +84,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const ids = recordIds({ baseline, candidate, rd, changed });
   for (const e of ids.errors) { findings.push(e); fail = true; }
   findings.push(...ids.notes);
+  for (const e of recordReferences({ baseline, candidate, rd, changed })) { findings.push(e); fail = true; }
 
   const classes = classifyPaths(config, changed);
   for (const c of classes) findings.push(`${c.category}: ${c.path}`);

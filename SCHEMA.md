@@ -58,7 +58,7 @@ No blockers gives **Ready**. Decision/deferred blockers whose explicit path scop
 
 ## Acceptance and evidence
 
-Definitions are `{examples:[{id,requirement,method}]}`. Methods: automated, human, operational, inspection. Requirements must resolve on baseline. Mappings are `[{acceptance,file,name}]`; files must exist in candidate and IDs must be approved. Existing baseline mappings cannot disappear; a baseline without the map, as when a project moves its pin from a release that had none, requires none, while the candidate must still carry it. Current task acceptance IDs require their applicable automated coverage; unrelated future definitions do not require premature implementation.
+Definitions are `{examples:[{id,requirement,method}]}`. Methods: automated, human, operational, inspection. Requirements must resolve on baseline. Mappings are `[{acceptance,file,name}]`; files must exist in candidate and IDs must be approved. Existing baseline mappings cannot disappear; a baseline whose history never held the map, as when a project moves its pin from a release that had none, requires none, while the candidate must still carry it; a map removed from the baseline, or one that cannot be read, still fails. Current task acceptance IDs require their applicable automated coverage; unrelated future definitions do not require premature implementation.
 
 Signed verification receipts contain execution `{revision,tests:[{file,name,status}]}`. Each mapped test must occur exactly once and pass. Missing, skipped, failed, duplicate or stale execution fails. Unknown IDs, removed mappings and missing test files fail. Existing baseline required mappings remain enforced globally. Different parameterized cases must have distinct full test names.
 

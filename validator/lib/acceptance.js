@@ -1,5 +1,6 @@
 import { safePath } from './sources.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
+const MAP = 'tests/acceptance-map.json';
 export function evaluateAcceptance({ baseline, candidate, execution, requiredIds = [], enforced = false }) {
   const errors = [];
   const unverified = [];
@@ -8,8 +9,12 @@ export function evaluateAcceptance({ baseline, candidate, execution, requiredIds
     catch (e) { errors.push(`${path}: ${e.message}`); return fallback; }
   };
   const definitions = read(baseline, 'docs/workflow/acceptance.json', {}).examples;
-  // A baseline without the map (a project moving its pin from a release that had none) requires no mappings.
-  const old = baseline.read('tests/acceptance-map.json') === null ? [] : read(baseline, 'tests/acceptance-map.json', []);
+  // A baseline whose history never held the map (a project moving its pin from a release that had none) requires no
+  // mappings. A map that existed and was later removed, or a read that fails, still fails closed.
+  const neverMapped = (() => {
+    try { return !baseline.exists(MAP) && (baseline.kind !== 'git' || baseline.versions(MAP).length === 0); } catch { return false; }
+  })();
+  const old = neverMapped ? [] : read(baseline, MAP, []);
   const maps = read(candidate, 'tests/acceptance-map.json', []);
   const ids = new Map();
   if (!Array.isArray(definitions)) errors.push('acceptance examples must be an array');

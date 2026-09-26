@@ -769,6 +769,34 @@ Implemented for A the same evening: `createEnforcedTrust` in `validator/lib/trus
 
 **Corpus size (per the S7 rule):** IDEA-10's formula: 20,471 before (at `9cb4283`) and 20,663 after the review fixes, a growth of 192 words (0.9%), all headings, pointers, the new file's opening and the bound on item 3a. Per procedure: `procedures/execute.md` 1,611 to 1,336, `procedures/setup.md` 1,756 to 1,463, `procedures/shared.md` new at 701, `procedures/maintenance.md` 557 to 571.
 
+
+---
+
+## IDEA-17 — A status issue that is easy to read
+
+**Status:** Implemented for `v1.5.0` (2026-09-26), pending independent review, owner approval and tag. Only `renderStatus` in `validator/lib/status.js` changes; `evaluateStatus`, its JSON and the status workflow do not.
+
+**Owner's words (verbatim, 2026-09-26, after PrintFlow's *Project status* issue first appeared):**
+> regarding  Project status: I can see that you have added the workflow status in GitHub issues. Okay, it's clever, but I do have one observation. It's very hard to read and follow on its very cluttered piece of document. I would like that we do some more organization to it, making it clearer, more organized, easier to follow with the visuals.
+>
+> If it's possible, this will make it much more clearer and easier to actually interpret and understand, from my opinion.
+
+and, after a rendered mockup with PrintFlow's data: "go ahead, keep the diagram, build it as v1.5.0".
+
+**Restated:** The same facts, laid out for someone who scans: what needs the owner, what each milestone's tasks are doing, and what blocks them, with the long tail out of the way.
+
+**Evidence:** PrintFlow's issue at `9c011e8` was 80 lines of flat bullets. Each task line carried its full title, status, readiness verdict and every reason; the owner's decisions came in record order, not by what they held up; 29 Done tasks outside any milestone filled half the page.
+
+**Implemented:**
+- A count strip: waiting on the owner, Ready, in progress, in review, blocked, needs attention, drafts.
+- *Waiting on you* (or on each owner) grouped by kind: pull requests to review as a table; decisions as a table ranked by what they hold up (a task now, a task at a later stage, nothing open), with who decides; other items as a list.
+- Each milestone: outcome quoted, a progress bar of Done tasks, a task table with a status icon, a shortened title and a plain next step, and a Mermaid diagram of the decisions blocking its tasks now, when there are any; every readiness reason in a folded section.
+- Open pull requests as a table; titles stay in code spans, with `|` escaped so a title cannot split a cell.
+- Folded: Done tasks outside a milestone record, open questions for the agent, the view's limitation. Record errors, blocked tasks and non-Done tasks outside a milestone stay visible.
+- The terminal (`wf status`) prints the same Markdown; there the folded sections show their `<details>` tags and the diagram its source. The owner chose one format (2026-09-26).
+
+**Limits:** unchanged from IDEA-12: a convenience view that approves nothing. The diagram needs GitHub's Mermaid rendering; elsewhere it reads as a short list of `D-xxxx --> T-xxxx` lines.
+
 ---
 
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)

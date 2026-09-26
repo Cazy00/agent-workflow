@@ -9,8 +9,8 @@ import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 
-// A record ID names one piece of work for good: once a task record is removed at merge, its pull requests
-// are the permanent record. Two planners on two branches, or one planner reading the directory after a
+// A record ID names one piece of work for good: once a task record is removed after its milestone's acceptance,
+// its pull requests are the permanent record. Two planners on two branches, or one planner reading the directory after a
 // removal, can pick the same number, and a branch that adds a removed path merges without a conflict. So an
 // added record whose path already existed in the trusted branch's history must be that same record in every
 // version the history holds, as when a removal is reverted; otherwise it needs a new ID. A changed identity on an existing record (for example an

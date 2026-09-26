@@ -149,7 +149,7 @@ test('status marks a Ready task with no claim, and flags an Active one, only whe
   assert.doesNotMatch(without, /no pull request|## Open pull requests/);
   const none = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(20, 'T-0002', 'T-0003: mixed up', 'bob-worker', { isDraft: true })] }));
   assert.match(none, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · no pull request$/m);
-  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: inspect its last handoff, then resume or release the claim$/m);
+  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim$/m);
   assert.match(none, /^- #20: its branch names T-0002 and its title T-0003; rename one so the claim is clear$/m);
   assert.match(none, /^## Open pull requests\n- #20 · `T-0003: mixed up` · bob-worker \(draft\)$/m);
 });
@@ -208,4 +208,90 @@ test('pull request text is kept to plain single-line fields', () => {
   assert.throws(() => readPullRequests({}), /JSON array/);
   const [q] = readPullRequests([{ number: 5, title: 'T-0003: other work', headRefName: 'T-0002' }]);
   assert.deepEqual([q.task, q.mismatch], [null, ['T-0002', 'T-0003']], 'a pull request naming two tasks claims neither');
+});
+
+// The milestone plan (IDEA-14): `tasks` is the plan as authorised; task records stay until acceptance.
+function planned(t) {
+  const dir = copy(t, '02-unrelated-task-ready');
+  const edit = (p, fn) => fs.writeFileSync(path.join(dir, p), fn(fs.readFileSync(path.join(dir, p), 'utf8')));
+  edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]\ntasks: [T-0001, T-0009]'));
+  return { dir, edit };
+}
+
+test('status shows the milestone plan: an unserved acceptance ID, a planned task with no record, a discovered task', t => {
+  const { dir } = planned(t);
+  const s = evaluateStatus({ baseline: dirSource(dir) });
+  const m = s.milestones.find(x => x.id === 'M-0001');
+  assert.deepEqual(m.plan, { planned: ['T-0001', 'T-0009'], discovered: ['T-0002'], uncovered: ['AC-001-2'], missing: ['T-0009'] });
+  assert.deepEqual(m.tasks.map(x => [x.id, x.discovered]), [['T-0001', false], ['T-0002', true]]);
+  const items = s.waiting.filter(w => w.kind === 'plan').map(w => [w.item, w.owner, w.detail]);
+  assert.equal(items.length, 2, JSON.stringify(items));
+  assert.ok(items.every(([item, owner]) => item === 'M-0001' && owner === 'agent'));
+  const text = renderStatus(s);
+  assert.match(text, /^### M-0001 — Authorised — .* · planned 2 · discovered 1$/m);
+  assert.match(text, /^- T-0002 Ready · Task T-0002 · discovered · readiness preview/m);
+  assert.doesNotMatch(text, /^- T-0001 .*discovered/m);
+  assert.match(text, /^- M-0001: acceptance AC-001-2 is served by no task/m);
+  assert.match(text, /^- M-0001: planned T-0009 is not among this milestone's task records/m);
+});
+
+test('an accepted or released milestone raises no plan items, and a milestone without a plan marks nothing discovered', t => {
+  const { dir, edit } = planned(t);
+  for (const [from, to] of [['Authorised', 'Accepted'], ['Accepted', 'Released']]) {
+    edit('docs/workflow/milestones/M-0001.md', x => x.replace(`status: ${from}`, `status: ${to}`));
+    const s = evaluateStatus({ baseline: dirSource(dir) });
+    assert.deepEqual(s.waiting.filter(w => w.kind === 'plan'), [], to);
+  }
+  const plain = evaluateStatus({ baseline: dirSource(fx('02-unrelated-task-ready')) });
+  assert.deepEqual(plain.milestones[0].plan.discovered, []);
+  assert.deepEqual(plain.waiting.filter(w => w.kind === 'plan'), []);
+  assert.doesNotMatch(renderStatus(plain), /discovered/);
+});
+
+test('a Draft task folds its unrecorded start facts into one line and keeps them in missing_fields', t => {
+  const { dir, edit } = planned(t);
+  edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Ready', 'status: Draft').replace(/^(branch|start_revision|baseline_result): .*\n/gm, ''));
+  edit('docs/workflow/tasks/T-0001.md', x => x.replace(/^branch: .*\n/m, ''));
+  const s = evaluateStatus({ baseline: dirSource(dir) });
+  const task = s.milestones[0].tasks.find(x => x.id === 'T-0002');
+  assert.deepEqual(task.missing_fields, ['branch', 'start_revision', 'baseline_result']);
+  assert.equal(task.reasons.filter(r => /is not recorded/.test(r)).length, 0, task.reasons.join(' | '));
+  assert.equal(task.reasons[0], 'not yet recorded: branch, start_revision, baseline_result');
+  const ready = s.milestones[0].tasks.find(x => x.id === 'T-0001');
+  assert.equal(ready.missing_fields, undefined, 'only Draft tasks are folded');
+  assert.ok(ready.reasons.includes('branch is not recorded'), ready.reasons.join(' | '));
+});
+
+test('a Draft task parked for a milestone not yet recorded, or with no milestone, is listed without a milestone record', t => {
+  const { dir } = planned(t);
+  const body = fs.readFileSync(path.join(dir, 'docs/workflow/tasks/T-0002.md'), 'utf8').replace('id: T-0002', 'id: T-0010').replace('status: Ready', 'status: Draft');
+  fs.writeFileSync(path.join(dir, 'docs/workflow/tasks/T-0010.md'), body.replace('milestone: M-0001', 'milestone: M-0002'));
+  fs.writeFileSync(path.join(dir, 'docs/workflow/tasks/T-0011.md'), body.replace('id: T-0010', 'id: T-0011').replace(/^milestone: .*\n/m, ''));
+  const text = renderStatus(evaluateStatus({ baseline: dirSource(dir) }));
+  assert.match(text, /^## Tasks without a milestone record\n- T-0010 Draft \(milestone M-0002\)\n- T-0011 Draft \(no milestone\)$/m);
+});
+
+test('a Done task still serves its acceptance IDs and counts as planned, a Draft milestone raises plan items, and duplicates count once', t => {
+  const { dir, edit } = planned(t);
+  edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Draft').replace('acceptance: [AC-001-1, AC-001-2]', 'acceptance: [AC-001-1, AC-001-2, AC-001-3]').replace('tasks: [T-0001, T-0009]', 'tasks: [T-0001, T-0001, T-0009]'));
+  edit('docs/workflow/tasks/T-0001.md', x => x.replace('status: Ready', 'status: Done'));
+  edit('docs/workflow/tasks/T-0002.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-2]'));
+  const s = evaluateStatus({ baseline: dirSource(dir) });
+  assert.deepEqual(s.milestones[0].plan, { planned: ['T-0001', 'T-0009'], discovered: ['T-0002'], uncovered: ['AC-001-3'], missing: ['T-0009'] });
+  assert.equal(s.waiting.filter(w => w.kind === 'plan').length, 2);
+  assert.match(renderStatus(s), /^### M-0001 — Draft — .* · planned 2 · discovered 1$/m);
+  for (const [from, to] of [['Draft', 'Blocked'], ['Blocked', 'Verified']]) {
+    edit('docs/workflow/milestones/M-0001.md', x => x.replace(`status: ${from}`, `status: ${to}`));
+    assert.equal(evaluateStatus({ baseline: dirSource(dir) }).waiting.filter(w => w.kind === 'plan').length, 2, to);
+  }
+});
+
+test('with two owners, plan items wait on the milestone owner\'s agents', t => {
+  const { dir, edit } = twoOwners(t);
+  edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]\ntasks: [T-0001]'));
+  const s = evaluateStatus({ baseline: dirSource(dir) });
+  assert.deepEqual(s.waiting.filter(w => w.kind === 'plan').map(w => [w.item, w.owner, w.person]), [['M-0001', 'agent', 'alice']]);
+  const text = renderStatus(s);
+  assert.match(text, /^- M-0001 \(alice's agents\): acceptance AC-001-2 is served by no task/m);
+  assert.match(text, /^- T-0002 Ready · bob · Task T-0002 · discovered/m);
 });

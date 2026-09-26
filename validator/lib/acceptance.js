@@ -8,7 +8,8 @@ export function evaluateAcceptance({ baseline, candidate, execution, requiredIds
     catch (e) { errors.push(`${path}: ${e.message}`); return fallback; }
   };
   const definitions = read(baseline, 'docs/workflow/acceptance.json', {}).examples;
-  const old = read(baseline, 'tests/acceptance-map.json', []);
+  // A baseline without the map (a project moving its pin from a release that had none) requires no mappings.
+  const old = baseline.read('tests/acceptance-map.json') === null ? [] : read(baseline, 'tests/acceptance-map.json', []);
   const maps = read(candidate, 'tests/acceptance-map.json', []);
   const ids = new Map();
   if (!Array.isArray(definitions)) errors.push('acceptance examples must be an array');

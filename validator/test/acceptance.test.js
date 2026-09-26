@@ -28,3 +28,20 @@ test('unrelated future acceptance definitions do not block the current task', ()
   const defs = { examples: [...definition.examples, { ...definition.examples[0], id: 'AC-002-1' }] };
   assert.equal(scenario({ defs }).ok, true);
 });
+// A project moving its pin from a release without acceptance traceability has no map on its baseline; the change
+// adding one is a production change, so a baseline without the map must require nothing rather than fail.
+test('a baseline without a map requires no mappings, so the change adding the map can pass', () => {
+  const baseline = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'docs/specs/payment.md': 'spec' }, 'baseline');
+  const empty = evaluateAcceptance({ baseline, candidate: source({ 'tests/acceptance-map.json': '[]' }), execution: { revision: 'candidate', tests: [] } });
+  assert.deepEqual(empty.errors, []);
+  const added = evaluateAcceptance({ baseline, candidate: source({ 'tests/acceptance-map.json': JSON.stringify(mapping), 'test/payment.js': 'test' }), execution: { revision: 'candidate', tests: mapping.map(m => ({ ...m, status: 'passed' })) }, requiredIds: ['AC-001-1'] });
+  assert.equal(added.ok, true, added.errors.join(' | '));
+});
+test('the candidate must still carry the map, with or without one on the baseline', () => {
+  const withMap = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'tests/acceptance-map.json': '[]', 'docs/specs/payment.md': 'spec' }, 'baseline');
+  const withoutMap = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'docs/specs/payment.md': 'spec' }, 'baseline');
+  for (const baseline of [withMap, withoutMap]) {
+    const r = evaluateAcceptance({ baseline, candidate: source({}), execution: { revision: 'candidate', tests: [] } });
+    assert.match(r.errors.join(' '), /tests\/acceptance-map\.json: missing/);
+  }
+});

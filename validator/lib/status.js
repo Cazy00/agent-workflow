@@ -177,25 +177,33 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   };
 }
 
-// Markdown for the pinned GitHub issue and the terminal (IDEA-17): a count strip, what waits on the owner grouped by
-// kind, each milestone as a task table with a progress bar and a diagram of the decisions blocking its tasks, and
-// the long tail (reasons, earlier Done work, footnotes) folded into <details>. Pull request titles stay in code spans.
-const cell = text => String(text ?? '').replace(/\s+/g, ' ').trim().replaceAll('|', '\\|');
+// Markdown for the pinned GitHub issue and the terminal (IDEA-17): a count strip; what waits on the owner grouped by
+// kind; what must stay visible (agent queue, blocked tasks, open work outside a milestone, record errors); open pull
+// requests; each milestone as a progress bar, a task table and a diagram of the decisions blocking its tasks; and the
+// long tail (readiness reasons, earlier Done work, footnotes) folded into <details>. Pull request titles stay in code
+// spans; record text is escaped so it cannot split a table or open or close HTML.
+const pipes = text => String(text ?? '').replace(/\s+/g, ' ').trim().replaceAll('|', '\\|');
+const cell = text => pipes(text).replaceAll('<', '&lt;');
 const short = (text, n) => {
-  const t = cell(text);
-  if (t.length <= n) return t;
-  const cut = t.lastIndexOf(' ', n - 1);
-  return `${t.slice(0, cut > n * 0.6 ? cut : n - 1)}…`;
+  const chars = Array.from(cell(text));
+  if (chars.length <= n) return chars.join('');
+  const cut = chars.lastIndexOf(' ', n - 1);
+  return `${chars.slice(0, cut > n * 0.6 ? cut : n - 1).join('')}…`;
 };
-const blockingDecision = reason => reason.match(/^decision (D-\d{4}) is (?:Open|Proposed)/)?.[1] ?? null;
+const blockingDecision = reason => reason.match(/^(?:decision|deferred input) (D-\d{4}) is (?:Open|Proposed|required before)/)?.[1] ?? null;
 const pendingDecision = reason => reason.match(/^decision (D-\d{4}) is/)?.[1] ?? null;
+const node = id => String(id).replace(/[^A-Za-z0-9]/g, '');
+const MAX_REASONS = 5;
+const BAR = 10;
 
-// One state per task, from its status, its readiness preview and its claim.
-function taskState(t) {
+// One state per task, from its status, its readiness preview and its pull requests (a draft one is work in progress).
+function taskState(t, byNumber) {
   const reasons = t.reasons ?? [];
   if (t.status === 'Done') return { icon: '✅', key: 'done', next: 'Done' };
   if (t.status === 'Blocked') return { icon: '⛔', key: 'blocked', next: 'Blocked: see its resume condition' };
-  if (t.pull_requests?.length) return { icon: '🔵', key: 'review', next: `In review: #${t.pull_requests.join(', #')}` };
+  const prs = t.pull_requests ?? [];
+  if (prs.some(n => !byNumber.get(n)?.draft)) return { icon: '🔵', key: 'review', next: `In review: #${prs.join(', #')}` };
+  if (prs.length) return { icon: '🟠', key: 'progress', next: `In progress: draft #${prs.join(', #')}` };
   if (t.status === 'Draft') return { icon: '📝', key: 'draft', next: reasons.some(r => UNRECORDED.test(r) || r.startsWith('not yet recorded')) ? 'Draft: to be planned (branch, start revision)' : 'Draft' };
   if (t.readiness === 'Ready') return t.status === 'Active' ? { icon: '🟠', key: 'progress', next: 'In progress' } : { icon: '🟢', key: 'ready', next: 'Ready to start' };
   const ds = [...new Set(reasons.map(blockingDecision).filter(Boolean))];
@@ -210,24 +218,28 @@ export function renderStatus(s) {
   const people = s.owners?.length >= 2 ? s.owners : [];
   const owner = s.waiting.filter(w => w.owner !== 'agent');
   const agent = s.waiting.filter(w => w.owner === 'agent');
-  const open = [...s.milestones.flatMap(m => m.tasks), ...s.unassigned_tasks].filter(t => t.status !== 'Done');
-  const count = key => open.filter(t => taskState(t).key === key).length;
   const byNumber = new Map((s.pull_requests?.open ?? []).map(p => [p.number, p]));
+  const state = t => taskState(t, byNumber);
+  const open = [...s.milestones.flatMap(m => m.tasks), ...s.unassigned_tasks].filter(t => t.status !== 'Done');
+  const count = key => open.filter(t => state(t).key === key).length;
+  const decisionRecord = new Map([...(s.decisions?.open ?? []), ...(s.decisions?.proposed ?? [])].map(d => [d.id, d]));
 
   // What each open decision holds up: a task it blocks now (a reason) or at a later stage (pending).
   const holds = new Map();
-  const hold = (d, kind, id) => { if (!holds.has(d)) holds.set(d, { now: [], later: [] }); holds.get(d)[kind].push(id); };
+  const hold = (d, kind, id) => { if (!holds.has(d)) holds.set(d, { now: [], later: [] }); if (!holds.get(d)[kind].includes(id)) holds.get(d)[kind].push(id); };
   for (const t of open) {
     for (const r of t.reasons ?? []) { const d = blockingDecision(r); if (d) hold(d, 'now', t.id); }
     for (const r of t.pending ?? []) { const d = pendingDecision(r); if (d) hold(d, 'later', t.id); }
   }
 
-  lines.push(`# 📋 ${s.project ?? '(no profile)'}: project status`, '');
-  lines.push(`<sub>At \`${rev}\` · project readiness: ${s.profile_readiness ?? 'not recorded'} · a derived, read-only view that approves nothing</sub>`, '');
-  lines.push(`**Measure:** ${s.measure ?? 'not recorded'}`, '');
-  lines.push(`| 👤 Waiting on ${people.length ? 'owners' : 'you'} | 🟢 Ready | 🟠 In progress | 🔵 In review | 🔴 Blocked | 🟡 Needs attention | 📝 Drafts |`);
-  lines.push('|:-:|:-:|:-:|:-:|:-:|:-:|:-:|');
-  lines.push(`| **${owner.length}** | ${count('ready')} | ${count('progress')} | ${count('review')} | ${count('blocked')} | ${count('attention')} | ${count('draft')} |`, '');
+  lines.push(`# 📋 ${cell(s.project ?? '(no profile)')}: project status`, '');
+  lines.push(`<sub>At \`${rev}\` · project readiness: ${cell(s.profile_readiness ?? 'not recorded')} · a derived, read-only view that approves nothing</sub>`, '');
+  lines.push(`**Measure:** ${cell(s.measure ?? 'not recorded')}`, '');
+  // Only the states some open task is in, so the strip fits a phone.
+  const strip = [[`👤 Waiting on ${people.length ? 'owners' : 'you'}`, `**${owner.length}**`],
+    ...[['ready', '🟢 Ready'], ['progress', '🟠 In progress'], ['review', '🔵 In review'], ['blocked', '🔴 Blocked'], ['attention', '🟡 Needs attention'], ['draft', '📝 Drafts']]
+      .map(([key, label]) => [label, count(key)]).filter(([, n]) => n)];
+  lines.push(`| ${strip.map(c => c[0]).join(' | ')} |`, `|${strip.map(() => ':-:').join('|')}|`, `| ${strip.map(c => c[1]).join(' | ')} |`, '');
 
   const ownerSection = (title, items, named) => {
     lines.push(`## 👤 ${title}`, '');
@@ -235,29 +247,34 @@ export function renderStatus(s) {
     const reviews = items.filter(w => w.kind === 'review');
     const decisions = items.filter(w => w.kind === 'decision');
     const others = items.filter(w => !['review', 'decision'].includes(w.kind));
-    const who = w => named && w.owner && w.owner !== 'owner' ? ` (${w.owner})` : '';
+    const who = w => named && w.owner && w.owner !== 'owner' ? ` (${cell(w.owner)})` : '';
     if (reviews.length) {
       lines.push('**Pull requests**', '', '| Pull request | Task | Title | Author | Action |', '|---|---|---|---|---|');
       for (const w of reviews) {
         const p = byNumber.get(Number(w.item.slice(1).split(' ')[0]));
-        lines.push(`| #${p?.number ?? w.item.slice(1)} | ${p?.task ?? '—'} | ${p ? cell(span(p.title)) : '—'} | ${p?.author ?? '—'} | ${w.detail.startsWith('approved') ? '✅ approved: merge once the required checks pass' : '👀 ready for review'} |`);
+        lines.push(`| #${p?.number ?? cell(w.item.slice(1))} | ${p?.task ?? '—'} | ${p ? pipes(span(p.title)) : '—'} | ${p?.author ?? '—'} | ${w.detail.startsWith('approved') ? '✅ approved: merge once the required checks pass' : '👀 ready for review'}${who(w)} |`);
       }
       lines.push('');
     }
     if (decisions.length) {
       const rank = w => holds.get(w.item)?.now.length ? 0 : holds.get(w.item)?.later.length ? 1 : 2;
       lines.push('**Decisions**', '', `| | Decision | Question${named ? ' | Decides' : ''} | Holds up |`, `|:-:|---|---${named ? '|---' : ''}|---|`);
-      for (const w of [...decisions].sort((a, b) => rank(a) - rank(b) || a.item.localeCompare(b.item))) {
+      const sorted = [...decisions].sort((a, b) => rank(a) - rank(b) || a.item.localeCompare(b.item));
+      for (const w of sorted) {
+        const d = decisionRecord.get(w.item);
         const h = holds.get(w.item);
-        const up = h?.now.length ? `**${h.now.join(', ')} now**${h.later.length ? `; ${h.later.join(', ')} later` : ''}` : h?.later.length ? `${h.later.join(', ')} later` : 'nothing open';
-        const question = w.detail.replace(/^(Open|Proposed): /, '').replace(/ \(required before [^)]*\)$/, '');
-        lines.push(`| ${['🔴', '🟠', '⚪'][rank(w)]} | **${w.item}** | ${short(question, 110)}${named ? ` | ${cell(w.owner ?? 'not recorded')}` : ''} | ${up} |`);
+        const up = h?.now.length ? `**${h.now.join(', ')} now**${h.later.length ? `; ${h.later.join(', ')} later` : ''}` : h?.later.length ? `${h.later.join(', ')} later` : 'no open task';
+        const what = d ? `${d.status === 'Proposed' ? 'Proposed: approve or amend its answer' : 'Open: decide'} · before ${d.required_before ?? '?'}` : cell(w.detail);
+        lines.push(`| ${['🔴', '🟠', '⚪'][rank(w)]} | **${w.item}**<br><sub>${what}</sub> | ${cell(d?.question ?? w.detail)}${named ? ` | ${cell(w.owner ?? 'not recorded')}` : ''} | ${up} |`);
       }
       lines.push('', '<sub>🔴 blocks a task now · 🟠 blocks a task at a later stage · ⚪ blocks no open task</sub>', '');
+      lines.push('<details><summary>What each decision affects</summary>', '');
+      for (const w of sorted) lines.push(`- **${w.item}**: ${cell(decisionRecord.get(w.item)?.affects?.join(', ') || 'not recorded')}`);
+      lines.push('', '</details>', '');
     }
     if (others.length) {
       lines.push('**Also**', '');
-      for (const w of others) lines.push(`- **${w.item}**${who(w)}: ${w.detail}`);
+      for (const w of others) lines.push(`- **${cell(w.item)}**${who(w)}: ${cell(w.detail)}`);
       lines.push('');
     }
   };
@@ -272,6 +289,17 @@ export function renderStatus(s) {
   lines.push(`## 🤖 Next for the ${people.length ? 'agents' : 'agent'}`, '');
   lines.push(...(agent.length ? agent.map(w => `- **${w.item}**${people.length && w.person ? ` (${w.person}'s agents)` : ''}: ${w.detail}`) : ['Nothing queued outside the milestones below.']), '');
 
+  // What must stay visible comes before the milestones, so a long issue cut at its size limit keeps it.
+  if (s.record_errors.length) { lines.push('## ⚠️ Record errors', ''); for (const e of s.record_errors) lines.push(`- ${cell(e)}`); lines.push(''); }
+  if (s.blocked.length) { lines.push('## ⛔ Blocked', ''); for (const b of s.blocked) lines.push(`- **${b.task}**: resume when ${cell(b.resume_condition ?? 'not recorded')}`); lines.push(''); }
+  const where = t => t.milestone === '(none)' ? 'no milestone' : `milestone ${t.milestone}, which has no record`;
+  const loose = s.unassigned_tasks.filter(t => t.status !== 'Done');
+  if (loose.length) {
+    lines.push('## 📂 Tasks outside a milestone record', '', '| | Task | Where | What |', '|:-:|---|---|---|');
+    for (const t of loose) lines.push(`| ${state(t).icon} | **${t.id}** ${t.status ?? '?'} | ${where(t)} | ${short(t.title, 70)} |`);
+    lines.push('');
+  }
+
   if (s.pull_requests) {
     lines.push('## 🔀 Open pull requests', '');
     if (!s.pull_requests.open.length) lines.push('None.', '');
@@ -279,7 +307,7 @@ export function renderStatus(s) {
       lines.push('| Pull request | Task | Title | Author | Note |', '|---|---|---|---|---|');
       for (const p of s.pull_requests.open) {
         const note = [p.draft && 'draft', p.fork && 'fork: an outside contribution', !p.draft && !p.fork && p.review === 'APPROVED' && 'approved', !p.draft && !p.fork && p.review === 'CHANGES_REQUESTED' && 'changes requested'].filter(Boolean).join(' · ');
-        lines.push(`| #${p.number} | ${p.task ?? '—'} | ${cell(span(p.title))} | ${p.author ?? '—'} | ${note || '—'} |`);
+        lines.push(`| #${p.number} | ${p.task ?? '—'} | ${pipes(span(p.title))} | ${p.author ?? '—'} | ${note || '—'} |`);
       }
       lines.push('');
     }
@@ -287,49 +315,42 @@ export function renderStatus(s) {
 
   if (!s.milestones.length) lines.push('## 🎯 Milestones', '', 'None.', '');
   for (const m of s.milestones) {
-    const states = m.tasks.map(taskState);
+    const states = m.tasks.map(state);
     const done = states.filter(x => x.key === 'done').length;
-    lines.push(`## 🎯 ${m.id} · ${m.status ?? '?'}${people.length && m.owner ? ` · owner ${m.owner}` : ''}`, '');
+    const filled = m.tasks.length ? Math.round(done / m.tasks.length * BAR) : 0;
+    lines.push(`## 🎯 ${m.id} · ${cell(m.status ?? '?')}${people.length && m.owner ? ` · owner ${m.owner}` : ''}`, '');
     if (m.outcome) lines.push(`> ${cell(m.outcome)}`, '');
-    if (m.measure) lines.push(`**Measure:** ${m.measure}`, '');
+    if (m.measure) lines.push(`**Measure:** ${cell(m.measure)}`, '');
     const plan = m.plan?.planned.length ? ` · planned ${m.plan.planned.length} · discovered ${m.plan.discovered.length}` : '';
-    lines.push(`**Progress** ${'🟩'.repeat(done)}${'⬜'.repeat(m.tasks.length - done)} **${done} of ${m.tasks.length} done**${plan}`, '');
+    lines.push(`**Progress** ${'🟩'.repeat(filled)}${'⬜'.repeat(BAR - filled)} **${done} of ${m.tasks.length} done**${plan}`, '');
     if (!m.tasks.length) { lines.push('No tasks yet.', ''); continue; }
     lines.push(`| | Task${people.length ? ' | Owner' : ''} | What | Next step | Pull request |`, `|:-:|---${people.length ? '|---' : ''}|---|---|---|`);
     m.tasks.forEach((t, i) => {
       const claim = !t.pull_requests ? '—' : t.pull_requests.length ? `#${t.pull_requests.join(', #')}` : t.claim_branch ? 'claim branch, no pull request' : ['Ready', 'Active'].includes(t.status) ? 'none yet' : '—';
-      lines.push(`| ${states[i].icon} | **${t.id}**${t.discovered ? ' <sub>discovered</sub>' : ''}${people.length ? ` | ${t.owner ?? '—'}` : ''} | ${short(t.title, 70)} | ${states[i].next} | ${claim} |`);
+      lines.push(`| ${states[i].icon} | **${t.id}**${t.discovered ? ' <sub>discovered</sub>' : ''}${people.length ? ` | ${cell(t.owner ?? '—')}` : ''} | ${short(t.title, 70)} | ${states[i].next} | ${claim} |`);
     });
     lines.push('');
     const edges = m.tasks.flatMap(t => [...new Set((t.reasons ?? []).map(blockingDecision).filter(Boolean))].map(d => [d, t.id]));
     if (edges.length) {
       lines.push('```mermaid', 'flowchart LR');
-      for (const [d, id] of edges) lines.push(`  ${d}["👤 ${d}"] -->|blocks| ${id}["${id}"]`);
-      lines.push('  classDef decision fill:#ffe3e3,stroke:#cf222e,color:#1f2328;', `  class ${[...new Set(edges.map(e => e[0]))].join(',')} decision;`, '```', '');
+      for (const [d, id] of edges) lines.push(`  ${node(d)}["👤 ${node(d).replace(/^D/, 'D-')}"] -->|blocks| ${node(id)}["${node(id).replace(/^T/, 'T-')}"]`);
+      lines.push('  classDef decision fill:#ffe3e3,stroke:#cf222e,color:#1f2328;', `  class ${[...new Set(edges.map(e => node(e[0])))].join(',')} decision;`, '```', '');
     }
-    const detailed = m.tasks.filter(t => (t.reasons ?? []).length || (t.pending ?? []).length || t.readiness);
+    const detailed = m.tasks.filter(t => t.status !== 'Done' && ((t.reasons ?? []).length || (t.pending ?? []).length));
     if (detailed.length) {
       lines.push('<details><summary>Readiness, task by task</summary>', '');
       for (const t of detailed) {
-        lines.push(`**${t.id}** ${t.status ?? '?'}: ${cell(t.title)}. Readiness preview: ${t.readiness ?? 'not assessed'}.`, '');
-        for (const r of t.reasons ?? []) lines.push(`- ${r}`);
-        for (const r of t.pending ?? []) lines.push(`- later: ${r}`);
-        if ((t.reasons ?? []).length || (t.pending ?? []).length) lines.push('');
+        const all = [...(t.reasons ?? []), ...(t.pending ?? []).map(r => `later: ${r}`)];
+        lines.push(`**${t.id}** ${cell(t.status ?? '?')}: ${cell(t.title)}. Readiness preview: ${cell(t.readiness ?? 'not assessed')}.`, '');
+        for (const r of all.slice(0, MAX_REASONS)) lines.push(`- ${cell(r)}`);
+        if (all.length > MAX_REASONS) lines.push(`- … ${all.length - MAX_REASONS} more: \`wf readiness --task ${t.id}\``);
+        lines.push('');
       }
       lines.push('</details>', '');
     }
   }
 
-  if (s.blocked.length) { lines.push('## ⛔ Blocked', ''); for (const b of s.blocked) lines.push(`- **${b.task}**: resume when ${b.resume_condition ?? 'not recorded'}`); lines.push(''); }
-  const where = t => t.milestone === '(none)' ? 'no milestone' : `milestone ${t.milestone}, which has no record`;
-  const loose = s.unassigned_tasks.filter(t => t.status !== 'Done');
   const earlier = s.unassigned_tasks.filter(t => t.status === 'Done');
-  if (loose.length) {
-    lines.push('## 📂 Tasks outside a milestone record', '', '| | Task | Where | What |', '|:-:|---|---|---|');
-    for (const t of loose) lines.push(`| ${taskState(t).icon} | **${t.id}** ${t.status ?? '?'} | ${where(t)} | ${short(t.title, 70)} |`);
-    lines.push('');
-  }
-  if (s.record_errors.length) { lines.push('## ⚠️ Record errors', ''); for (const e of s.record_errors) lines.push(`- ${e}`); lines.push(''); }
   if (earlier.length) {
     lines.push(`<details><summary>📦 Earlier work outside a milestone record: ${earlier.length} Done</summary>`, '', '| Task | Where | What |', '|---|---|---|');
     for (const t of earlier) lines.push(`| ${t.id} | ${where(t)} | ${short(t.title, 90)} |`);
@@ -337,11 +358,10 @@ export function renderStatus(s) {
   }
   if (s.open_for_agent.length) {
     lines.push(`<details><summary>❓ Open questions for the agent: ${s.open_for_agent.length}</summary>`, '');
-    for (const d of s.open_for_agent) lines.push(`- **${d.id}** (${d.type}): ${d.question ?? ''}`);
+    for (const d of s.open_for_agent) lines.push(`- **${d.id}** (${cell(d.type)}): ${cell(d.question ?? '')}`);
     lines.push('', '</details>', '');
   }
-  lines.push('<details><summary>ℹ️ About this view</summary>', '');
-  if (s.feedback_open.length) lines.push(`Open workflow feedback: ${s.feedback_open.join(', ')}.`, '');
-  lines.push(`_${s.limitation}_`, '', '</details>');
+  if (s.feedback_open.length) lines.push(`**Open workflow feedback:** ${s.feedback_open.join(', ')}`, '');
+  lines.push('<details><summary>ℹ️ About this view</summary>', '', `_${s.limitation}_`, '', '</details>');
   return lines.join('\n') + '\n';
 }

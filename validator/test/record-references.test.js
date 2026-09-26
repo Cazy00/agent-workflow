@@ -11,14 +11,20 @@ import { fileURLToPath } from 'node:url';
 // a dangling name, whichever of a removal and a planning branch merges second.
 const fixture = fileURLToPath(new URL('../../fixtures/06d-removed-prerequisite-record/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
-const tasks = 'docs/workflow/tasks';
 const task = (id, field, names) => `---\nrecord: task\nid: ${id}\ntitle: Task ${id}\nstatus: Draft\nowner: agent\nobjective: Do ${id}\ngoverning: [PROFILE${field === 'governing' ? `, ${names}` : ''}]\nprerequisites: [${field === 'prerequisites' ? names : ''}]\n---\n# ${id}\n`;
 
-function setup(t) {
+function setup(t, { rd = 'docs/workflow' } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-refs-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project');
   fs.cpSync(fixture, repo, { recursive: true });
+  const tasks = `${rd}/tasks`;
+  if (rd !== 'docs/workflow') {
+    fs.mkdirSync(path.join(repo, rd), { recursive: true });
+    for (const f of ['profile.md', 'milestones', 'tasks']) fs.renameSync(path.join(repo, 'docs/workflow', f), path.join(repo, rd, f));
+    const config = path.join(repo, 'docs/workflow/config.json');
+    fs.writeFileSync(config, JSON.stringify({ ...JSON.parse(fs.readFileSync(config, 'utf8')), records_dir: rd }));
+  }
   const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
   git('add', '.'); git('commit', '-qm', 'initial: T-0003 names T-0001, which is Done');
@@ -36,7 +42,7 @@ function setup(t) {
     const r = spawnSync(process.execPath, [cli, 'ci', '--repo', repo, '--baseline', base, '--candidate', rev, '--json'], { encoding: 'utf8' });
     return { status: r.status, text: r.stdout + r.stderr };
   };
-  return { repo, git, branch, upToDate, merge, ci, main: git('rev-parse', 'HEAD') };
+  return { repo, tasks, git, branch, upToDate, merge, ci, main: git('rev-parse', 'HEAD') };
 }
 
 test('ci keeps a named record until the last record naming it goes, in prerequisites or governing', t => {
@@ -84,9 +90,9 @@ test('ci does not fail an edit of a record whose older name already dangles', t 
   const p = setup(t);
   // T-0001 was removed before this check existed; T-0003 still names it. Readiness blocks T-0003 as before, but an
   // unrelated edit of T-0003 does not fail on a name it did not add.
-  p.git('rm', '-q', `${tasks}/T-0001.md`); p.git('commit', '-qm', 'T-0001 removed while named');
+  p.git('rm', '-q', `${p.tasks}/T-0001.md`); p.git('commit', '-qm', 'T-0001 removed while named');
   const base = p.git('rev-parse', 'HEAD');
-  const file = path.join(p.repo, tasks, 'T-0003.md');
+  const file = path.join(p.repo, p.tasks, 'T-0003.md');
   const edit = p.branch('edit-T-0003', base, { add: { 'T-0003': fs.readFileSync(file, 'utf8').replace('objective: Do the work of T-0003', 'objective: Do the work of T-0003, clarified') } });
   const r = p.ci(base, edit);
   assert.equal(r.status, 0, r.text);
@@ -102,4 +108,11 @@ test('ci names a naming record without an id by its path', t => {
   const r = p.ci(base, p.branch('remove-named', base, { remove: ['T-0001'] }));
   assert.equal(r.status, 1, r.text);
   assert.match(r.text, /T-0001\.md is removed, but T-0003 \(prerequisites\), docs\/workflow\/tasks\/T-0005\.md \(prerequisites\) name T-0001;/);
+});
+
+test('ci reads the records from the configured records_dir', t => {
+  const p = setup(t, { rd: 'wf' });
+  const r = p.ci(p.main, p.branch('remove-prerequisite', p.main, { remove: ['T-0001'] }));
+  assert.equal(r.status, 1, r.text);
+  assert.match(r.text, /wf\/tasks\/T-0001\.md is removed, but T-0003 \(prerequisites\) names T-0001;/);
 });

@@ -1,6 +1,6 @@
 # Present, accept and release
 
-Before requesting owner acceptance, complete implementer verification, independent review and assembled-candidate verification. Prepare `templates/acceptance.md`: candidate revision/build/environment; delivered behaviour and exclusions; access or reproducible demo; scenarios with actions/expected results; persistence/calculations/state-transition evidence; checks/review/resolved findings; issues/unavailable checks; consequential changes; next milestone/prerequisites/proposed limits.
+Before requesting owner acceptance, complete implementer verification, independent review and assembled-candidate verification. Prepare `templates/acceptance.md`: candidate revision/build/environment; delivered behaviour and exclusions, with the planned and discovered tasks and work moved to later milestones; access or reproducible demo; scenarios with actions/expected results; persistence/calculations/state-transition evidence; checks/review/resolved findings; issues/unavailable checks; consequential changes; next milestone/prerequisites/proposed limits.
 
 Derive data, access, external services, configuration and operations changes from the actual candidate. Use none only when verified absent, and not verified when evidence is unavailable. Do not include secret values. This summary cannot retroactively authorise reserved choices. Unavailable required technical checks block acceptance presentation.
 

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { evaluateAcceptance } from '../lib/acceptance.js';
+import { gitSource } from '../lib/sources.js';
 const definition = { examples: [{ id: 'AC-001-1', requirement: 'docs/specs/payment.md', method: 'automated' }] };
 const mapping = [{ acceptance: 'AC-001-1', file: 'test/payment.js', name: 'reject invalid payment' }];
 function source(entries, name = 'candidate') { return { name, read: p => entries[p] ?? null, exists: p => p in entries }; }
@@ -27,4 +32,38 @@ test('stale execution reports cannot prove tests ran for a candidate', () => {
 test('unrelated future acceptance definitions do not block the current task', () => {
   const defs = { examples: [...definition.examples, { ...definition.examples[0], id: 'AC-002-1' }] };
   assert.equal(scenario({ defs }).ok, true);
+});
+// A project moving its pin from a release without acceptance traceability has no map on its baseline; the change
+// adding one is a production change, so a baseline without the map must require nothing rather than fail.
+test('a baseline without a map requires no mappings, so the change adding the map can pass', () => {
+  const baseline = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'docs/specs/payment.md': 'spec' }, 'baseline');
+  const empty = evaluateAcceptance({ baseline, candidate: source({ 'tests/acceptance-map.json': '[]' }), execution: { revision: 'candidate', tests: [] } });
+  assert.deepEqual(empty.errors, []);
+  const added = evaluateAcceptance({ baseline, candidate: source({ 'tests/acceptance-map.json': JSON.stringify(mapping), 'test/payment.js': 'test' }), execution: { revision: 'candidate', tests: mapping.map(m => ({ ...m, status: 'passed' })) }, requiredIds: ['AC-001-1'] });
+  assert.equal(added.ok, true, added.errors.join(' | '));
+});
+test('the candidate must still carry the map, with or without one on the baseline', () => {
+  const withMap = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'tests/acceptance-map.json': '[]', 'docs/specs/payment.md': 'spec' }, 'baseline');
+  const withoutMap = source({ 'docs/workflow/acceptance.json': JSON.stringify(definition), 'docs/specs/payment.md': 'spec' }, 'baseline');
+  for (const baseline of [withMap, withoutMap]) {
+    const r = evaluateAcceptance({ baseline, candidate: source({}), execution: { revision: 'candidate', tests: [] } });
+    assert.match(r.errors.join(' '), /tests\/acceptance-map\.json: missing/);
+  }
+});
+test('a map that existed on the baseline and was removed still fails closed; one never there does not', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-map-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), text); };
+  git('init', '-q'); git('config', 'user.email', 'fixture@example.invalid'); git('config', 'user.name', 'fixture');
+  write('docs/workflow/acceptance.json', JSON.stringify(definition)); write('docs/specs/payment.md', 'spec'); write('test/payment.js', 'test');
+  git('add', '-A'); git('commit', '-qm', 'no map yet');
+  const never = git('rev-parse', 'HEAD');
+  write('tests/acceptance-map.json', JSON.stringify(mapping)); git('add', '-A'); git('commit', '-qm', 'map');
+  git('rm', '-q', 'tests/acceptance-map.json'); git('commit', '-qm', 'map removed');
+  const removed = git('rev-parse', 'HEAD');
+  const candidate = source({ 'tests/acceptance-map.json': '[]' });
+  const run = rev => evaluateAcceptance({ baseline: gitSource(repo, rev), candidate, execution: { revision: 'candidate', tests: [] } });
+  assert.deepEqual(run(never).errors, []);
+  assert.match(run(removed).errors.join(' '), /tests\/acceptance-map\.json: missing/);
 });

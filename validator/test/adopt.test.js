@@ -47,6 +47,8 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
   assert.match(setup, /required status checks \(`wf ci` now; each entry of the profile's `required_checks` when approving the profile change that defines it\), branches up to date before merging/);
   assert.match(setup, /7\. The profile's `required_checks` \(readiness fails while it is empty\)/);
+  assert.match(setup, /0 required approvals and approval of the most recent push off, `CODEOWNERS` `\* @OWNER` then `\/docs\/workflow\/tasks\/` and `\/docs\/workflow\/feedback\/` unowned, and \*Allow auto-merge\* on/, 'a single owner gets the records carve-out');
+  assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /turn it on as you open the pull request/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /session \| status`/);
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-status.yml']).status === 0) {
     const workflow = fs.readFileSync(path.join(dir, '.github/workflows/wf-status.yml'), 'utf8');
@@ -142,6 +144,8 @@ test('wf-adopt sets up a shared project with --owner and refuses one owner, a ba
   assert.deepEqual(JSON.parse(r.stdout).owners, ['alice', 'bob']);
   assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8'), /^owners: \[alice, bob\]$/m);
   assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project .*`CODEOWNERS` assigns every path \(`\*`\) to alice, bob and no worker, and the ruleset requires code-owner review and approval of the most recent push;.* step 9 also shows that a worker's approval cannot merge/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /unowned/, 'a shared project keeps every path owned');
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /auto-merge/, 'no auto-merge instruction without the single-owner settings');
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /work only on tasks whose `owner` is the person you work for, and claim each one before starting/);
   assert.deepEqual(validateRecords(dirSource(dir), 'docs/workflow').errors, []);
   const solo = project(t);

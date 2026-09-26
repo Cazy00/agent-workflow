@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
+import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -70,9 +70,11 @@ async function main() {
   // The derived view runs before any trust is established: it checks no approval and grants nothing.
   if (cmd === 'status') {
     let pullRequests = null;
-    if (o['pull-requests']) { try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); } }
-    let view;
-    try { view = evaluateStatus({ baseline, candidate, pullRequests }); } catch (e) { if (pullRequests && /pull requests must be/.test(e.message)) throw new WfError(`--pull-requests: ${e.message}`); throw e; }
+    if (o['pull-requests']) {
+      try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
+      if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
+    }
+    const view = evaluateStatus({ baseline, candidate, pullRequests });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
     return 0;
   }
@@ -117,7 +119,7 @@ async function main() {
     if (o.task) { if (!/^T-\d{4}$/.test(o.task)) throw new WfError('invalid task id'); return o.task; }
     let branch = o.branch;
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
-    return branch.match(/^(?:codex\/)?(T-\d{4})(?:-|$)/)?.[1] ?? null;
+    return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;

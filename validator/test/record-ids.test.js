@@ -25,35 +25,36 @@ function setup(t) {
   write(repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Login form'));
   git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'plan T-0007');
   git(repo, 'rm', '-q', 'docs/workflow/tasks/T-0007.md'); git(repo, 'commit', '-qm', 'T-0007 merged: remove its record');
-  // A record added and removed inside a branch never reached the trusted branch, even through a merge commit.
+  // A record added and removed inside a branch that was then merged: the ID was still used.
   git(repo, 'checkout', '-q', '-b', 'side');
   write(repo, 'docs/workflow/tasks/T-0011.md', task('T-0011', 'Scratch idea')); git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'side: T-0011');
   git(repo, 'rm', '-q', 'docs/workflow/tasks/T-0011.md'); git(repo, 'commit', '-qm', 'side: drop T-0011');
   git(repo, 'checkout', '-q', 'main'); git(repo, 'merge', '-q', '--no-ff', '--no-edit', 'side');
   const baseline = git(repo, 'rev-parse', 'HEAD');
-  // Each candidate branches from the baseline and adds one record.
-  const candidate = (dir, p, text) => {
-    git(dir, 'checkout', '-q', '-B', `candidate-${path.basename(p)}`, baseline);
+  // Each candidate branches from a baseline and adds or edits one record.
+  const candidate = (dir, p, text, base = baseline) => {
+    git(dir, 'checkout', '-q', '-B', `candidate-${path.basename(p)}`, base);
     write(dir, p, text); git(dir, 'add', '.'); git(dir, 'commit', '-qm', `plan ${path.basename(p)}`);
     return git(dir, 'rev-parse', 'HEAD');
   };
-  const ci = (dir, rev) => spawnSync(process.execPath, [cli, 'ci', '--repo', dir, '--baseline', baseline, '--candidate', rev, '--json'], { encoding: 'utf8' });
+  const ci = (dir, rev, base = baseline) => spawnSync(process.execPath, [cli, 'ci', '--repo', dir, '--baseline', base, '--candidate', rev, '--json'], { encoding: 'utf8' });
   return { temp, repo, git, write, baseline, candidate, ci };
 }
 
-test('ci rejects a record that reuses the ID of a removed record for different work', t => {
+test('ci rejects a record that reuses the ID of a removed record for different work, including one used only inside a merged branch', t => {
   const p = setup(t);
   const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Invoice export')));
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0007\.md reuses an ID already used on the trusted branch \(title "Login form" at [0-9a-f]{12}\); give it a new ID, or restore that record with its exact title/);
+  const branchOnly = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0011.md', task('T-0011', 'Invoice export')));
+  assert.equal(branchOnly.status, 1, branchOnly.stdout + branchOnly.stderr);
+  assert.match(JSON.parse(branchOnly.stdout).findings.join('\n'), /T-0011\.md reuses an ID already used on the trusted branch \(title "Scratch idea"/);
 });
 
-test('ci accepts a never-used ID, an ID used only inside a merged branch, and the restoration of the same record', t => {
+test('ci accepts a never-used ID and the restoration of the same record', t => {
   const p = setup(t);
   const fresh = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0008.md', task('T-0008', 'Invoice export')));
   assert.equal(fresh.status, 0, fresh.stdout + fresh.stderr);
-  const branchOnly = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0011.md', task('T-0011', 'Invoice export')));
-  assert.equal(branchOnly.status, 0, branchOnly.stdout + branchOnly.stderr);
   const restored = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Login form').replace('status: Draft', 'status: Blocked\nresume_condition: the revert is reviewed')));
   assert.equal(restored.status, 0, restored.stdout + restored.stderr);
   assert.doesNotMatch(restored.stdout, /reuses an ID/);
@@ -68,4 +69,28 @@ test('ci refuses to run the check on a shallow clone instead of passing it', t =
   const r = p.ci(shallow, p.candidate(shallow, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Invoice export')));
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /the clone is shallow; fetch the full history/);
+});
+
+test('ci finds an ID whose use reached the trusted branch through a fast-forward over a merge', t => {
+  const p = setup(t);
+  // The trusted branch's first parents then run through the feature branch and skip where T-0012 was used.
+  p.git(p.repo, 'checkout', '-q', '-b', 'feature', p.baseline);
+  p.write(p.repo, 'docs/notes.md', 'feature work\n'); p.git(p.repo, 'add', '.'); p.git(p.repo, 'commit', '-qm', 'feature work');
+  p.git(p.repo, 'checkout', '-q', 'main');
+  p.write(p.repo, 'docs/workflow/tasks/T-0012.md', task('T-0012', 'Report page')); p.git(p.repo, 'add', '.'); p.git(p.repo, 'commit', '-qm', 'plan T-0012');
+  p.git(p.repo, 'rm', '-q', 'docs/workflow/tasks/T-0012.md'); p.git(p.repo, 'commit', '-qm', 'T-0012 merged: remove its record');
+  p.git(p.repo, 'checkout', '-q', 'feature'); p.git(p.repo, 'merge', '-q', '--no-edit', 'main');
+  p.git(p.repo, 'checkout', '-q', 'main'); p.git(p.repo, 'merge', '-q', '--ff-only', 'feature');
+  const base = p.git(p.repo, 'rev-parse', 'HEAD');
+  const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0012.md', task('T-0012', 'Invoice export'), base), base);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0012\.md reuses an ID already used on the trusted branch \(title "Report page"/);
+});
+
+test('ci notes a changed title on an existing record, such as an add/add conflict resolved the wrong way', t => {
+  const p = setup(t);
+  const text = fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replace(/^title: .*$/m, 'title: Invoice export');
+  const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0001.md', text));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0001\.md changes its title \(was title "Task T-0001"\); if it now describes different work, give that work a new ID/);
 });

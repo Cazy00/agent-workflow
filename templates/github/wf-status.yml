@@ -37,7 +37,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh pr list --state open --limit 100 --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "$RUNNER_TEMP/pull-requests.json"
+        run: gh pr list --state open --limit 500 --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "$RUNNER_TEMP/pull-requests.json"
       - name: Render the status view
         run: scripts/wf status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA" --pull-requests "$RUNNER_TEMP/pull-requests.json" > "$RUNNER_TEMP/view.md"
       - name: Publish the status issue

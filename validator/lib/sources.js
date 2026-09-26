@@ -35,6 +35,7 @@ export function dirSource(root) {
     },
     isAncestor() { return null; },
     changedSince() { return null; },
+    claimBranches() { return null; },
   };
 }
 export function gitSource(repo, revision) {
@@ -65,13 +66,20 @@ export function gitSource(repo, revision) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;
       return git('diff', '--quiet', commit, rev, '--', ...paths).status !== 0;
     },
-    // The latest commit on this revision's first-parent line (the trusted branch's own history, so not a
-    // record added and removed inside a merged branch) that added or modified rel, or null.
+    // The latest commit anywhere in this revision's history that added or modified rel, or null. --full-history
+    // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path
+    // used and removed on a merged or fast-forwarded branch still counts.
     lastVersion(rel) {
       safePath(rel);
-      const r = git('log', '--first-parent', '-1', '--format=%H', '--diff-filter=AM', rev, '--', rel);
+      const r = git('log', '-1', '--full-history', '--format=%H', '--diff-filter=AM', rev, '--', rel);
       if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
       return r.stdout.trim() || null;
+    },
+    // Claim branches (procedures/execute.md) as this clone last fetched them: branches of `origin` named exactly a task ID.
+    claimBranches() {
+      const r = git('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin/');
+      if (r.status !== 0) throw new Error('cannot list the remote-tracking branches');
+      return r.stdout.split('\n').filter(b => /^T-\d{4}$/.test(b));
     },
     isShallow() { const r = git('rev-parse', '--is-shallow-repository'); return r.status !== 0 || r.stdout.trim() !== 'false'; },
   };

@@ -1,5 +1,5 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
+import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths } from './paths.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
@@ -12,25 +12,35 @@ const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/
 // A record ID names one piece of work for good: once a task record is removed at merge, its pull requests
 // are the permanent record. Two planners on two branches, or one planner reading the directory after a
 // removal, can pick the same number, and a branch that adds a removed path merges without a conflict. So an
-// added record whose path already existed on the trusted branch must be that same record (same title,
-// question, outcome or rule), as when a removal is reverted; otherwise it needs a new ID. The check needs
-// the full history: a shallow clone is an execution error, not a pass.
-const IDENTITY = { tasks: 'title', decisions: 'question', milestones: 'outcome', 'feedback/inbox': 'rule' };
+// added record whose path already existed in the trusted branch's history must be that same record, as when a
+// removal is reverted; otherwise it needs a new ID. A changed identity on an existing record (for example an
+// add/add conflict resolved by keeping the other side) is noted for the reviewer. The check needs the full
+// history: a shallow clone is an execution error, not a pass.
+const IDENTITY = { [DIRS.task]: ['title'], [DIRS.decision]: ['question'], [DIRS.milestone]: ['outcome'], [DIRS.feedback]: ['task', 'rule'] };
+function identity(source, p, fields) {
+  const data = parseFrontMatter(source.read(p) ?? '').data;
+  return data && fields.every(f => data[f] != null) ? fields.map(f => `${f} "${data[f]}"`).join(', ') : null;
+}
 function recordIds({ baseline, candidate, rd, changed }) {
   const result = { errors: [], notes: [] };
   if (baseline.kind !== 'git') return result;
   for (const p of changed) {
     const dir = Object.keys(IDENTITY).find(d => p.startsWith(`${rd}/${d}/`) && /^[^/]+\.md$/.test(p.slice(rd.length + d.length + 2)));
-    if (!dir || baseline.exists(p) || !candidate.exists(p)) continue;
+    if (!dir || !candidate.exists(p)) continue;
+    const fields = IDENTITY[dir];
+    const now = identity(candidate, p, fields);
+    if (baseline.exists(p)) {
+      const before = identity(baseline, p, fields);
+      if (before !== now) result.notes.push(`record ${p} changes its ${fields.join(' and ')} (was ${before ?? 'unset'}); if it now describes different work, give that work a new ID`);
+      continue;
+    }
     if (baseline.isShallow()) throw new WfError(`cannot check whether ${p} reuses an ID: the clone is shallow; fetch the full history (fetch-depth: 0)`);
     const last = baseline.lastVersion(p);
     if (!last) continue;
-    const field = IDENTITY[dir];
-    const before = parseFrontMatter(baseline.atRevision(last).read(p) ?? '').data?.[field] ?? null;
-    const now = parseFrontMatter(candidate.read(p) ?? '').data?.[field] ?? null;
+    const before = identity(baseline.atRevision(last), p, fields);
     const at = last.slice(0, 12);
-    if (before !== null && before === now) result.notes.push(`record ${p} restores the record last present at ${at} (same ${field})`);
-    else result.errors.push(`record ${p} reuses an ID already used on the trusted branch (${field} "${before ?? '?'}" at ${at}); give it a new ID, or restore that record with its exact ${field}`);
+    if (before !== null && before === now) result.notes.push(`record ${p} restores the record last present at ${at} (same ${fields.join(' and ')})`);
+    else result.errors.push(`record ${p} reuses an ID already used on the trusted branch (${before ?? 'unreadable'} at ${at}); give it a new ID, or restore that record with its exact ${fields.join(' and ')}`);
   }
   return result;
 }

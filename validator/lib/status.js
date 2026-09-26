@@ -3,19 +3,20 @@
 // previewed as if the baseline were approved, so the view shows what would still stand in the way.
 // With two or more `owners` in the profile it shows what waits on each person, and given the open pull
 // requests it shows each task's claim and flags a task claimed twice (IDEA-13).
-import { list, loadAll, loadConfig, ownerErrors } from './records.js';
+import { TASK_BRANCH, list, listedOwners, loadAll, loadConfig, ownerErrors } from './records.js';
 import { evaluateReadiness } from './readiness.js';
 
 const preview = Object.freeze({ mode: 'preview', claim: () => null, allows: purpose => purpose === 'baseline' });
 const OWNER_DECISION_TYPES = ['decision', 'deferred'];
-const BRANCH_TASK = /^(?:codex\/)?(T-\d{4})(?:-|$)/; // the rule the CLI uses to infer a task from a branch
 const TITLE_TASK = /^(T-\d{4})\b/;
+// A pull request title is untrusted text: in a code span GitHub renders no link, mention, image or HTML.
+const span = text => `\`${text.replaceAll('`', "'")}\``;
 
 // Open pull requests as `gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision`
-// prints them. Their text is untrusted: only plain fields are kept, each on one line. A pull request whose
-// branch the CLI maps to a task, or whose title begins with a task ID, is that task's claim, unless it comes
-// from a fork; when branch and title name different tasks it claims neither. The claim itself is the branch
-// named exactly after the task (procedures/execute.md).
+// prints them. Their text is untrusted: only plain fields are kept, each on one line. A pull request names
+// the task that the CLI's branch rule or the start of its title gives, unless it comes from a fork; when the
+// two name different tasks it names neither. The claim is the branch named exactly after the task
+// (procedures/execute.md); only without one does the lowest-numbered pull request naming the task hold it.
 export function readPullRequests(input) {
   if (!Array.isArray(input)) throw new Error('pull requests must be a JSON array');
   const line = (v, n) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -23,7 +24,7 @@ export function readPullRequests(input) {
     const title = line(p.title, 120);
     const branch = line(p.headRefName, 120);
     const author = line(p.author?.login, 60);
-    const named = [branch.match(BRANCH_TASK)?.[1], title.match(TITLE_TASK)?.[1]].filter(Boolean);
+    const named = [branch.match(TASK_BRANCH)?.[1], title.match(TITLE_TASK)?.[1]].filter(Boolean);
     const mismatch = named.length === 2 && named[0] !== named[1] ? named : null;
     return {
       number: p.number, title, branch,
@@ -42,7 +43,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   const all = loadAll(candidate, rd);
   all.errors.push(...ownerErrors(all));
   const profile = all.profile?.data ?? {};
-  const owners = list(profile.owners);
+  const owners = listedOwners(profile);
   const labels = [config.approval?.label ?? null, profile.approval_label ?? null];
   if (labels[0] && labels[1] && labels[0] !== labels[1]) all.errors.push(`approval label differs between docs/workflow/config.json (${labels[0]}) and the profile (${labels[1]})`);
   const waiting = [];
@@ -50,8 +51,11 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   const openForAgent = [];
   const decisions = { open: [], proposed: [] };
   const prs = pullRequests == null ? null : readPullRequests(pullRequests);
-  const claims = new Map();
+  const claims = new Map(); // task ID -> the open same-repository pull requests naming it, lowest number first
   for (const p of prs ?? []) if (p.task && !p.fork) claims.set(p.task, [...(claims.get(p.task) ?? []), p]);
+  const claimBranches = new Set(prs ? candidate.claimBranches?.() ?? [] : []);
+  // The claim branch holds a task, with or without its pull request; without one, the lowest-numbered pull request.
+  const holderOf = id => (claims.get(id) ?? []).find(p => p.branch === id) ?? (claimBranches.has(id) ? null : claims.get(id)?.[0] ?? null);
 
   const byMilestone = new Map();
   for (const rec of all.tasks.values()) {
@@ -67,7 +71,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
       try { r = evaluateReadiness({ baseline, candidate, task: t.id, trust: preview }); } catch (e) { r = { outcome: 'not assessable', reasons: [e.message], pending: [] }; }
       view.readiness = r.outcome; view.reasons = r.reasons; view.pending = r.pending;
     }
-    if (prs) view.pull_requests = (claims.get(view.id) ?? []).map(p => p.number);
+    if (prs) { view.pull_requests = (claims.get(view.id) ?? []).map(p => p.number); view.claim_branch = claimBranches.has(view.id); }
     if (t.status === 'Blocked') { view.resume_condition = t.resume_condition ?? null; blocked.push({ task: view.id, resume_condition: view.resume_condition, reasons: view.reasons ?? [] }); }
     return view;
   };
@@ -96,18 +100,27 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   if (prs) {
     const tasks = new Map([...all.tasks.values()].filter(r => r.data?.id).map(r => [r.data.id, r.data]));
     const ownerOf = id => all.milestones.get(tasks.get(id)?.milestone)?.data?.owner ?? 'owner';
-    const duplicates = [...claims.entries()].filter(([, ps]) => ps.length > 1).map(([task, ps]) => ({ task, holder: ps[0].number, others: ps.slice(1).map(p => p.number) }));
-    for (const d of duplicates) waiting.push({ kind: 'claim', item: d.task, owner: 'agent', person: tasks.get(d.task)?.owner ?? null, detail: `claimed by open pull requests #${[d.holder, ...d.others].join(', #')}: #${d.holder} holds the claim; close the others` });
+    const duplicates = [];
+    for (const [task, ps] of claims) {
+      const holder = holderOf(task);
+      const others = ps.filter(p => p !== holder).map(p => p.number);
+      if (!others.length) continue;
+      duplicates.push({ task, holder: holder?.number ?? null, claim_branch: claimBranches.has(task), others });
+      const held = holder ? `#${holder.number}${holder.branch === task ? ', on the claim branch,' : ''} holds the claim` : `the claim branch ${task} holds the claim`;
+      waiting.push({ kind: 'claim', item: task, owner: 'agent', person: tasks.get(task)?.owner ?? null, detail: `${held}; close #${others.join(', #')} or move its work there` });
+    }
+    for (const b of claimBranches) if (!(claims.get(b) ?? []).some(p => p.branch === b)) waiting.push({ kind: 'claim', item: b, owner: 'agent', person: tasks.get(b)?.owner ?? null, detail: `claim branch ${b} has no open pull request from it: its holder opens one, or releases the claim by deleting the branch` });
     for (const p of prs.filter(p => p.mismatch && !p.fork)) waiting.push({ kind: 'claim', item: `#${p.number}`, owner: 'agent', person: null, detail: `its branch names ${p.mismatch[0]} and its title ${p.mismatch[1]}; rename one so the claim is clear` });
-    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no open pull request: inspect its branch and last handoff, then resume or release the claim' });
-    for (const p of prs.filter(p => !p.draft)) {
+    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: inspect its last handoff, then resume or release the claim' });
+    // Fork pull requests stay in the list below: outside contributions never enter anyone's list of actions.
+    for (const p of prs.filter(p => !p.draft && !p.fork)) {
       const label = `#${p.number}${p.task ? ` ${p.task}` : ''}`;
-      const about = `${p.title}${p.author ? ` (by ${p.author})` : ''}${p.fork ? ', from a fork' : ''}`;
-      const ours = p.task && !p.fork && tasks.has(p.task);
+      const about = `${span(p.title)}${p.author ? ` by ${p.author}` : ''}`;
+      const ours = p.task && tasks.has(p.task);
       if (p.review === 'CHANGES_REQUESTED') waiting.push({ kind: 'changes', item: label, owner: 'agent', person: ours ? tasks.get(p.task).owner ?? null : null, detail: `changes requested · ${about}` });
       else waiting.push({ kind: 'review', item: label, owner: ours ? ownerOf(p.task) : 'owner', detail: `${p.review === 'APPROVED' ? 'approved; merge once the required checks pass' : 'ready for review'} · ${about}` });
     }
-    pullRequestView = { open: prs, duplicates };
+    pullRequestView = { open: prs, duplicates, claim_branches: [...claimBranches].sort() };
   }
 
   const inboxItems = (candidate.listAll ?? candidate.list).call(candidate, `${rd}/inbox`).filter(p => !p.endsWith('/README.md') && !p.endsWith('/.gitkeep'));
@@ -169,7 +182,7 @@ export function renderStatus(s) {
   lines.push(...(agent.length ? agent.map(w => `- ${w.item}${people.length && w.person ? ` (${w.person}'s agents)` : ''}: ${w.detail}`) : ['- nothing queued outside the milestones below']), '');
   if (s.pull_requests) {
     lines.push('## Open pull requests');
-    lines.push(...(s.pull_requests.open.length ? s.pull_requests.open.map(p => `- #${p.number}${p.task ? ` ${p.task}` : ''} · ${p.title}${p.author ? ` · ${p.author}` : ''}${p.draft ? ' (draft)' : ''}${p.fork ? ' (fork)' : ''}`) : ['- none']), '');
+    lines.push(...(s.pull_requests.open.length ? s.pull_requests.open.map(p => `- #${p.number}${p.task ? ` ${p.task}` : ''} · ${span(p.title)}${p.author ? ` · ${p.author}` : ''}${p.draft ? ' (draft)' : ''}${p.fork ? ' (fork: an outside contribution)' : ''}`) : ['- none']), '');
   }
   lines.push('## Milestones');
   if (!s.milestones.length) lines.push('- none', '');
@@ -178,7 +191,7 @@ export function renderStatus(s) {
     if (m.measure) lines.push(`Measure: ${m.measure}`);
     if (!m.tasks.length) lines.push('- no tasks');
     for (const t of m.tasks) {
-      const claim = t.pull_requests?.length ? ` · #${t.pull_requests.join(', #')}` : t.pull_requests && ['Ready', 'Active'].includes(t.status) ? ' · no pull request' : '';
+      const claim = !t.pull_requests ? '' : t.pull_requests.length ? ` · #${t.pull_requests.join(', #')}` : t.claim_branch ? ' · claim branch, no pull request' : ['Ready', 'Active'].includes(t.status) ? ' · no pull request' : '';
       lines.push(`- ${t.id} ${t.status ?? '?'}${people.length && t.owner ? ` · ${t.owner}` : ''} · ${t.title ?? ''}${t.readiness ? ` · readiness preview: ${t.readiness}` : ''}${claim}`);
       const reasons = t.reasons ?? [];
       for (const r of reasons.slice(0, 5)) lines.push(`    - ${r}`);

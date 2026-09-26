@@ -5,7 +5,11 @@ export class WfError extends Error {}
 
 export const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
 
-const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
+export const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
+// A task's branch: exactly its ID (the claim branch, procedures/execute.md), or the ID after an optional `codex/`
+// followed by `-` and a description.
+export const TASK_BRANCH = /^(?:codex\/)?(T-\d{4})(?:-|$)/;
+const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const REQUIRED = {
   milestone: ['id', 'outcome', 'status', 'coordinator', 'scope', 'governing', 'acceptance', 'authority', 'limits', 'demonstration', 'stop_conditions', 'release_authority'],
   profile: ['project', 'workflow_version', 'approval_mechanism', 'approval_label', 'coordinator', 'setup_budget_days'],
@@ -78,9 +82,16 @@ export function loadAll(source, recordsDir) {
 // With two or more people in the profile's `owners`, every task names the person whose agents implement it
 // and every milestone the person who authorises and accepts it, so work cannot sit unassigned or with a
 // misspelt owner that no one's agents pick up (procedures/execute.md, "More than one person").
+// The profile's `owners` when it lists two or more distinct GitHub usernames, otherwise none.
+export function listedOwners(profile) {
+  const raw = profile?.owners;
+  return Array.isArray(raw) && raw.length >= 2 && new Set(raw).size === raw.length && raw.every(n => USERNAME.test(n)) ? raw : [];
+}
 export function ownerErrors(all) {
-  const owners = list(all.profile?.data?.owners);
-  if (owners.length < 2) return [];
+  const raw = all.profile?.data?.owners;
+  if (raw == null || (Array.isArray(raw) && !raw.length)) return [];
+  const owners = listedOwners(all.profile.data);
+  if (!owners.length) return [`${all.profile.path}: owners must list two or more distinct GitHub usernames, like [alice, bob]`];
   const errors = [];
   const check = (r, owner) => { if (!owners.includes(owner)) errors.push(`${r.path}: owner ${owner} is not one of the profile's owners (${owners.join(', ')})`); };
   for (const r of all.tasks.values()) if (r.data?.owner != null) check(r, r.data.owner); // a missing task owner is a schema error

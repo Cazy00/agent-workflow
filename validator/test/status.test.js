@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirSource } from '../lib/index.js';
+import { dirSource, gitSource } from '../lib/index.js';
 import { evaluateStatus, readPullRequests, renderStatus } from '../lib/status.js';
 
 // `wf status` is a derived, read-only owner view (IDEA-08). It never checks approval and grants nothing.
@@ -98,18 +98,42 @@ test('with two owners, status shows what waits on each person and each task\'s c
   const s = evaluateStatus({ baseline: dirSource(dir), pullRequests: openPullRequests });
   assert.deepEqual(s.owners, ['alice', 'bob']);
   assert.deepEqual(s.record_errors, []);
-  assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0002', holder: 14, others: [15] }]);
+  assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0002', holder: 14, claim_branch: false, others: [15] }]);
   const tasks = Object.fromEntries(s.milestones[0].tasks.map(x => [x.id, x.pull_requests]));
   assert.deepEqual(tasks, { 'T-0001': [18], 'T-0002': [14, 15] }, 'a fork pull request is never a claim');
   const text = renderStatus(s);
-  assert.match(text, /^## Waiting on alice\n- #14 T-0002: ready for review · T-0002: do the work \(by bob-worker\)\n\n/m);
+  assert.match(text, /^## Waiting on alice\n- #14 T-0002: ready for review · `T-0002: do the work` by bob-worker\n\n/m);
   assert.match(text, /^## Waiting on bob\n- D-0001: Open: /m);
-  assert.match(text, /^## Waiting on either owner\n- #16 T-0001: ready for review · T-0001: from a fork \(by stranger\), from a fork\n- #17: ready for review · Plan M-0002 with a second line \(by alice-worker\)\n/m);
-  assert.match(text, /^- T-0002 \(bob's agents\): claimed by open pull requests #14, #15: #14 holds the claim; close the others$/m);
-  assert.match(text, /^- #18 T-0001 \(alice's agents\): changes requested · T-0001: the work \(by alice-worker\)$/m);
+  assert.match(text, /^## Waiting on either owner\n- #17: ready for review · `Plan M-0002 with a second line` by alice-worker\n\n/m, 'a fork pull request is in nobody\'s list of actions');
+  assert.match(text, /^- T-0002 \(bob's agents\): #14, on the claim branch, holds the claim; close #15 or move its work there$/m);
+  assert.match(text, /^- #18 T-0001 \(alice's agents\): changes requested · `T-0001: the work` by alice-worker$/m);
   assert.match(text, /^### M-0001 — Authorised — .* \(owner alice\)$/m);
   assert.match(text, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · #14, #15$/m);
-  assert.match(text, /^## Open pull requests\n- #14 T-0002 · T-0002: do the work · bob-worker\n- #15 T-0002 · Second attempt · alice-worker \(draft\)\n- #16 T-0001 · T-0001: from a fork · stranger \(fork\)\n/m);
+  assert.match(text, /^## Open pull requests\n- #14 T-0002 · `T-0002: do the work` · bob-worker\n- #15 T-0002 · `Second attempt` · alice-worker \(draft\)\n- #16 T-0001 · `T-0001: from a fork` · stranger \(fork: an outside contribution\)\n/m);
+});
+
+test('the claim branch holds a task even when another pull request naming it has a lower number', t => {
+  const { dir } = twoOwners(t);
+  const s = evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(13, 'codex/T-0002-login', 'T-0002: login', 'alice-worker'), pr(14, 'T-0002', 'T-0002: the claim', 'bob-worker')] });
+  assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0002', holder: 14, claim_branch: false, others: [13] }]);
+  assert.match(renderStatus(s), /^- T-0002 \(bob's agents\): #14, on the claim branch, holds the claim; close #13 or move its work there$/m);
+});
+
+test('status shows claim branches it can see, with or without their pull request', t => {
+  const { dir } = twoOwners(t);
+  const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  git('init', '-q'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'add', '.');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'records');
+  git('update-ref', 'refs/remotes/origin/T-0001', 'HEAD'); git('update-ref', 'refs/remotes/origin/T-0002', 'HEAD'); git('update-ref', 'refs/remotes/origin/T-0002-notes', 'HEAD');
+  const s = evaluateStatus({ baseline: gitSource(dir, 'HEAD'), pullRequests: [pr(13, 'codex/T-0001-x', 'Other work on T-0001', 'bob-worker', { isDraft: true }), pr(14, 'T-0002', 'T-0002: the work', 'bob-worker', { isDraft: true })] });
+  assert.deepEqual(s.pull_requests.claim_branches, ['T-0001', 'T-0002'], 'only branches named exactly a task ID are claims');
+  assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0001', holder: null, claim_branch: true, others: [13] }]);
+  const text = renderStatus(s);
+  assert.match(text, /^- T-0001 \(alice's agents\): the claim branch T-0001 holds the claim; close #13 or move its work there$/m);
+  assert.match(text, /^- T-0001 \(alice's agents\): claim branch T-0001 has no open pull request from it: its holder opens one, or releases the claim by deleting the branch$/m);
+  assert.doesNotMatch(text, /claim branch T-0002 has no open pull request/);
+  const none = renderStatus(evaluateStatus({ baseline: gitSource(dir, 'HEAD'), pullRequests: [] }));
+  assert.match(none, /^- T-0001 Ready · alice · Task T-0001 · readiness preview: .* · claim branch, no pull request$/m);
 });
 
 test('status marks a Ready task with no claim, and flags an Active one, only when the pull requests are supplied', t => {
@@ -119,9 +143,20 @@ test('status marks a Ready task with no claim, and flags an Active one, only whe
   assert.doesNotMatch(without, /no pull request|## Open pull requests/);
   const none = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(20, 'T-0002', 'T-0003: mixed up', 'bob-worker', { isDraft: true })] }));
   assert.match(none, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · no pull request$/m);
-  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no open pull request: inspect its branch and last handoff, then resume or release the claim$/m);
+  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: inspect its last handoff, then resume or release the claim$/m);
   assert.match(none, /^- #20: its branch names T-0002 and its title T-0003; rename one so the claim is clear$/m);
-  assert.match(none, /^## Open pull requests\n- #20 · T-0003: mixed up · bob-worker \(draft\)$/m);
+  assert.match(none, /^## Open pull requests\n- #20 · `T-0003: mixed up` · bob-worker \(draft\)$/m);
+});
+
+test('pull request titles reach the view as plain text, never as links, mentions or HTML', t => {
+  const { dir } = twoOwners(t);
+  const text = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [
+    pr(21, 'plan-x', 'T-0009: [approve here](https://evil.example/login) @bob <img src=x> `tick`', 'alice-worker'),
+    pr(22, 'fork-x', '[click](https://evil.example) @alice', 'stranger', { isCrossRepository: true }),
+  ] }));
+  assert.match(text, /^- #21 T-0009: ready for review · `T-0009: \[approve here\]\(https:\/\/evil\.example\/login\) @bob <img src=x> 'tick'` by alice-worker$/m);
+  assert.match(text, /^- #22 · `\[click\]\(https:\/\/evil\.example\) @alice` · stranger \(fork: an outside contribution\)$/m);
+  assert.doesNotMatch(text.replace(/`[^`\n]*`/g, ''), /evil\.example|@bob|@alice|<img/, 'outside code spans no title text remains');
 });
 
 test('with two owners, a task or milestone owner outside the list is a record error', t => {
@@ -134,6 +169,17 @@ test('with two owners, a task or milestone owner outside the list is a record er
   const records = spawnSync(process.execPath, [cli, 'records', '--repo', dir], { encoding: 'utf8' });
   assert.equal(records.status, 1, records.stdout + records.stderr);
   assert.match(records.stdout, /owner bobb is not one of/);
+});
+
+test('an owners field that is not a list of two or more distinct usernames is a record error, not a silent one-owner view', t => {
+  for (const bad of ['owners: alice, bob', 'owners: [alice]', 'owners: [alice, alice]', 'owners: [alice, not a name]']) {
+    const { dir, edit } = twoOwners(t);
+    edit('docs/workflow/profile.md', x => x.replace('owners: [alice, bob]', bad));
+    const s = evaluateStatus({ baseline: dirSource(dir) });
+    assert.match(s.record_errors.join('\n'), /profile\.md: owners must list two or more distinct GitHub usernames/, bad);
+    assert.deepEqual(s.owners, [], bad);
+    assert.match(renderStatus(s), /^## Waiting on the owner$/m, bad);
+  }
 });
 
 test('status reads a pull request file from the CLI and refuses one that is not a JSON array', t => {

@@ -122,23 +122,28 @@ test('wf-adopt sets up a shared project with --owner and refuses one owner, a ba
   assert.match(refused('--owner', 'alice').stderr, /two or more/);
   assert.match(refused('--owner', 'alice', '--owner', 'not a name').stderr, /not a GitHub username/);
   assert.match(refused('--owner', 'alice', '--owner', 'alice').stderr, /twice/);
-  if (spawnSync('git', ['-C', root, 'rev-parse', '--verify', 'v1.2.0^{commit}']).status === 0) {
-    const old = project(t);
-    const r = spawnSync(process.execPath, [script, '--project', old, '--workflow-repo', root, '--rev', 'v1.2.0', '--repository', 'fixture/project', '--coordinator', 'alice', '--owner', 'alice', '--owner', 'bob'], { encoding: 'utf8' });
-    assert.equal(r.status, 2, r.stdout + r.stderr);
-    assert.match(r.stderr, /no shared-project support/);
-    assert.ok(!fs.existsSync(path.join(old, 'docs/workflow')), 'nothing is written');
+  // A workflow revision whose profile template has no `owners` line: built here, so the check never depends on tags.
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-old-'));
+  t.after(() => fs.rmSync(old, { recursive: true, force: true }));
+  for (const rel of ['config.default.json', 'templates/profile.md', 'templates/setup.md']) {
+    fs.mkdirSync(path.dirname(path.join(old, rel)), { recursive: true });
+    fs.writeFileSync(path.join(old, rel), fs.readFileSync(path.join(root, rel), 'utf8').replace(/^owners:.*\n/m, ''));
   }
-  if (/^owners:/m.test(spawnSync('git', ['-C', root, 'show', 'HEAD:templates/profile.md'], { encoding: 'utf8' }).stdout)) {
-    const dir = project(t);
-    const r = adopt(dir, '--owner', 'alice', '--owner', 'bob', '--json');
-    assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(JSON.parse(r.stdout).owners, ['alice', 'bob']);
-    assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8'), /^owners: \[alice, bob\]$/m);
-    assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project .*`CODEOWNERS` names alice, bob and no worker/m);
-    assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /work only on tasks whose `owner` is the person you work for, and claim each one before starting/);
-    assert.deepEqual(validateRecords(dirSource(dir), 'docs/workflow').errors, []);
-  }
+  const g = (...args) => assert.equal(spawnSync('git', ['-C', old, ...args]).status, 0);
+  g('init', '-q'); g('add', '.'); g('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'old workflow');
+  const target = project(t);
+  const unsupported = spawnSync(process.execPath, [script, '--project', target, '--workflow-repo', old, '--rev', 'HEAD', '--repository', 'fixture/project', '--coordinator', 'alice', '--owner', 'alice', '--owner', 'bob'], { encoding: 'utf8' });
+  assert.equal(unsupported.status, 2, unsupported.stdout + unsupported.stderr);
+  assert.match(unsupported.stderr, /no shared-project support/);
+  assert.ok(!fs.existsSync(path.join(target, 'docs/workflow')), 'nothing is written');
+  const dir = project(t);
+  const r = adopt(dir, '--owner', 'alice', '--owner', 'bob', '--json');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).owners, ['alice', 'bob']);
+  assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8'), /^owners: \[alice, bob\]$/m);
+  assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project .*`CODEOWNERS` assigns every path \(`\*`\) to alice, bob and no worker, and the ruleset requires code-owner review and approval of the most recent push;.* step 9 also shows that a worker's approval cannot merge/m);
+  assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /work only on tasks whose `owner` is the person you work for, and claim each one before starting/);
+  assert.deepEqual(validateRecords(dirSource(dir), 'docs/workflow').errors, []);
   const solo = project(t);
   assert.equal(adopt(solo).status, 0, 'a one-owner adoption needs no --owner');
   assert.doesNotMatch(fs.readFileSync(path.join(solo, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project/m);

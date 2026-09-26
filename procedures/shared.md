@@ -1,10 +1,12 @@
 # Share a project between people
 
-Read this with the procedure for your next action only when the profile lists two or more `owners`; a project with one owner never needs it. Setup reads *Setting it up*; other sessions start at *Who selects work*.
+Read this with the procedure for your next action only when the profile lists two or more `owners`; a project with one owner never needs it. Setup reads *Setting it up*; every session reads *Who approves what* and what follows it.
 
 ## Setting it up
 
 Two or more people may share the owner role, each with their own agents. List their GitHub usernames in the profile's `owners`; `wf-adopt --owner NAME`, once for each, adds these steps to the checklist. To convert an adopted project, add `owners` and set every milestone's and task's `owner` in one code-owner-reviewed pull request, then reassess readiness. The repository stays under one person's personal account, recorded in the profile's *Workflow configuration* as an approved deviation from POLICY § 7's single owner; that person alone can change its settings, turns on deleting head branches after merge, and gives the others and every worker account write access. `CODEOWNERS` assigns every path (`*`) to the people and names no worker, with code-owner review required: workers have write access, so otherwise one person's agent could approve the other's pull request. The ruleset also requires approval of the most recent reviewable push, and setup step 9 shows that a worker's approval cannot merge. Each person verifies their own usernames, keeps their own agent clone and worker token, and runs the `identity.md` check and setup step 8's discovery test with their own worker and tools.
+
+## Who approves what
 
 The profile's *Authority* records who approves what. Default: whoever is asked to do work approves the plan that assigns it, the milestone's owner approves the result, and a change to the profile, config, `CODEOWNERS`, required checks or workflow files is approved by the person whose agent did not write it. GitHub checks only that a code owner approved who neither opened the pull request nor, with that setting, pushed to it last, so the people keep this rule; naming one person in `CODEOWNERS` for a milestone or decision file enforces it for that file. Record who approves when one person is away; waiting is never approval. Manual mode has one owner key: one person signs, or the project uses enforced mode.
 

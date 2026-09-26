@@ -66,14 +66,14 @@ export function gitSource(repo, revision) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;
       return git('diff', '--quiet', commit, rev, '--', ...paths).status !== 0;
     },
-    // The latest commit anywhere in this revision's history that added or modified rel, or null. --full-history
+    // Every commit anywhere in this revision's history that added or modified rel, newest first. --full-history
     // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path
     // used and removed on a merged or fast-forwarded branch still counts.
-    lastVersion(rel) {
+    versions(rel) {
       safePath(rel);
-      const r = git('log', '-1', '--full-history', '--format=%H', '--diff-filter=AM', rev, '--', rel);
+      const r = git('log', '--full-history', '--format=%H', '--diff-filter=AM', rev, '--', rel);
       if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
-      return r.stdout.trim() || null;
+      return r.stdout.split('\n').filter(Boolean);
     },
     // Claim branches (procedures/execute.md) as this clone last fetched them: branches of `origin` named exactly a task ID.
     claimBranches() {

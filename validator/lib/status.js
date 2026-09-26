@@ -53,7 +53,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   const prs = pullRequests == null ? null : readPullRequests(pullRequests);
   const claims = new Map(); // task ID -> the open same-repository pull requests naming it, lowest number first
   for (const p of prs ?? []) if (p.task && !p.fork) claims.set(p.task, [...(claims.get(p.task) ?? []), p]);
-  const claimBranches = new Set(prs ? candidate.claimBranches?.() ?? [] : []);
+  const claimBranches = new Set(prs && owners.length ? candidate.claimBranches?.() ?? [] : []); // shared projects claim by branch
   // The claim branch holds a task, with or without its pull request; without one, the lowest-numbered pull request.
   const holderOf = id => (claims.get(id) ?? []).find(p => p.branch === id) ?? (claimBranches.has(id) ? null : claims.get(id)?.[0] ?? null);
 

@@ -45,7 +45,7 @@ test('ci rejects a record that reuses the ID of a removed record for different w
   const p = setup(t);
   const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Invoice export')));
   assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0007\.md reuses an ID already used on the trusted branch \(title "Login form" at [0-9a-f]{12}\); give it a new ID, or restore that record with its exact title/);
+  assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0007\.md reuses an ID already used on the trusted branch \(title "Login form", latest at [0-9a-f]{12}\); give it a new ID, or restore a record that only ever had one title with that exact value/);
   const branchOnly = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0011.md', task('T-0011', 'Invoice export')));
   assert.equal(branchOnly.status, 1, branchOnly.stdout + branchOnly.stderr);
   assert.match(JSON.parse(branchOnly.stdout).findings.join('\n'), /T-0011\.md reuses an ID already used on the trusted branch \(title "Scratch idea"/);
@@ -93,4 +93,19 @@ test('ci notes a changed title on an existing record, such as an add/add conflic
   const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0001.md', text));
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0001\.md changes its title \(was title "Task T-0001"\); if it now describes different work, give that work a new ID/);
+});
+
+test('ci compares an added record with every version the history holds, not only the latest', t => {
+  const p = setup(t);
+  // T-0007 was "Login form" on main; a branch merged later used it again as "Scratch" and removed it.
+  p.git(p.repo, 'checkout', '-q', '-b', 'later', p.baseline);
+  p.write(p.repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', 'Scratch')); p.git(p.repo, 'add', '.'); p.git(p.repo, 'commit', '-qm', 'later: T-0007 again');
+  p.git(p.repo, 'rm', '-q', 'docs/workflow/tasks/T-0007.md'); p.git(p.repo, 'commit', '-qm', 'later: drop it');
+  p.git(p.repo, 'checkout', '-q', 'main'); p.git(p.repo, 'merge', '-q', '--no-ff', '--no-edit', 'later');
+  const base = p.git(p.repo, 'rev-parse', 'HEAD');
+  for (const title of ['Scratch', 'Login form']) {
+    const r = p.ci(p.repo, p.candidate(p.repo, 'docs/workflow/tasks/T-0007.md', task('T-0007', title), base), base);
+    assert.equal(r.status, 1, `${title}: ${r.stdout}${r.stderr}`);
+    assert.match(JSON.parse(r.stdout).findings.join('\n'), /T-0007\.md reuses an ID already used on the trusted branch \(title "(Scratch|Login form)"; title "(Scratch|Login form)", latest at/);
+  }
 });

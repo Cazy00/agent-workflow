@@ -134,6 +134,12 @@ test('status shows claim branches it can see, with or without their pull request
   assert.doesNotMatch(text, /claim branch T-0002 has no open pull request/);
   const none = renderStatus(evaluateStatus({ baseline: gitSource(dir, 'HEAD'), pullRequests: [] }));
   assert.match(none, /^- T-0001 Ready · alice · Task T-0001 · readiness preview: .* · claim branch, no pull request$/m);
+  // A one-owner project claims through its private run record, so a leftover branch named T-NNNN is no claim.
+  fs.writeFileSync(path.join(dir, 'docs/workflow/profile.md'), fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8').replace('owners: [alice, bob]\n', ''));
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qam', 'one owner');
+  const solo = evaluateStatus({ baseline: gitSource(dir, 'HEAD'), pullRequests: [] });
+  assert.deepEqual(solo.pull_requests.claim_branches, []);
+  assert.doesNotMatch(renderStatus(solo), /claim branch/);
 });
 
 test('status marks a Ready task with no claim, and flags an Active one, only when the pull requests are supplied', t => {

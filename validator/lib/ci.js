@@ -12,8 +12,8 @@ const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/
 // A record ID names one piece of work for good: once a task record is removed at merge, its pull requests
 // are the permanent record. Two planners on two branches, or one planner reading the directory after a
 // removal, can pick the same number, and a branch that adds a removed path merges without a conflict. So an
-// added record whose path already existed in the trusted branch's history must be that same record, as when a
-// removal is reverted; otherwise it needs a new ID. A changed identity on an existing record (for example an
+// added record whose path already existed in the trusted branch's history must be that same record in every
+// version the history holds, as when a removal is reverted; otherwise it needs a new ID. A changed identity on an existing record (for example an
 // add/add conflict resolved by keeping the other side) is noted for the reviewer. The check needs the full
 // history: a shallow clone is an execution error, not a pass.
 const IDENTITY = { [DIRS.task]: ['title'], [DIRS.decision]: ['question'], [DIRS.milestone]: ['outcome'], [DIRS.feedback]: ['task', 'rule'] };
@@ -35,12 +35,12 @@ function recordIds({ baseline, candidate, rd, changed }) {
       continue;
     }
     if (baseline.isShallow()) throw new WfError(`cannot check whether ${p} reuses an ID: the clone is shallow; fetch the full history (fetch-depth: 0)`);
-    const last = baseline.lastVersion(p);
-    if (!last) continue;
-    const before = identity(baseline.atRevision(last), p, fields);
-    const at = last.slice(0, 12);
-    if (before !== null && before === now) result.notes.push(`record ${p} restores the record last present at ${at} (same ${fields.join(' and ')})`);
-    else result.errors.push(`record ${p} reuses an ID already used on the trusted branch (${before ?? 'unreadable'} at ${at}); give it a new ID, or restore that record with its exact ${fields.join(' and ')}`);
+    const commits = baseline.versions(p);
+    if (!commits.length) continue;
+    const held = [...new Set(commits.map(c => identity(baseline.atRevision(c), p, fields)))];
+    const at = commits[0].slice(0, 12);
+    if (held.length === 1 && held[0] !== null && held[0] === now) result.notes.push(`record ${p} restores the record last present at ${at} (same ${fields.join(' and ')})`);
+    else result.errors.push(`record ${p} reuses an ID already used on the trusted branch (${held.map(h => h ?? 'unreadable').join('; ')}, latest at ${at}); give it a new ID, or restore a record that only ever had one ${fields.join(' and ')} with that exact value`);
   }
   return result;
 }

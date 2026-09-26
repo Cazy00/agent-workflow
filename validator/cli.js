@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
+import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -11,13 +11,14 @@ import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
-  status [--baseline REV] [--candidate REV]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
+  status [--baseline REV] [--candidate REV] [--pull-requests FILE]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
+    FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
@@ -67,7 +68,16 @@ async function main() {
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
   // The derived view runs before any trust is established: it checks no approval and grants nothing.
-  if (cmd === 'status') { const view = evaluateStatus({ baseline, candidate }); console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view)); return 0; }
+  if (cmd === 'status') {
+    let pullRequests = null;
+    if (o['pull-requests']) {
+      try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
+      if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
+    }
+    const view = evaluateStatus({ baseline, candidate, pullRequests });
+    console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
+    return 0;
+  }
   let trust = null;
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
@@ -109,7 +119,7 @@ async function main() {
     if (o.task) { if (!/^T-\d{4}$/.test(o.task)) throw new WfError('invalid task id'); return o.task; }
     let branch = o.branch;
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
-    return branch.match(/^(?:codex\/)?(T-\d{4})(?:-|$)/)?.[1] ?? null;
+    return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;

@@ -30,7 +30,14 @@ test('the status workflow keeps expressions out of its scripts and the token awa
   const render = steps.filter(s => s.includes('scripts/wf status --baseline'));
   assert.equal(render.length, 1);
   assert.doesNotMatch(render[0], /GH_TOKEN|env:/);
-  assert.equal(text.match(/GH_TOKEN/g).length, 1);
+  // The token reaches only the step that lists pull requests and the step that publishes, never the renderer.
+  const names = steps.map(s => s.match(/^name: (.*)$/m)?.[1] ?? null);
+  assert.deepEqual(steps.filter(s => s.includes('GH_TOKEN')).map(s => s.match(/^name: (.*)$/m)?.[1]), ['List the open pull requests', 'Publish the status issue']);
+  assert.equal(text.match(/GH_TOKEN/g).length, 2);
+  assert.ok(names.indexOf('List the open pull requests') < names.indexOf('Render the status view'), 'the list is written before rendering');
+  const listStep = steps.find(s => s.startsWith('name: List the open pull requests'));
+  assert.match(listStep, /^ {8}run: gh pr list --state open --limit \d+ --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "\$RUNNER_TEMP\/pull-requests\.json"$/m, 'the list step only reads');
+  assert.match(render[0], /--pull-requests "\$RUNNER_TEMP\/pull-requests\.json"/);
 });
 
 test('the status workflow fetches the full history that readiness previews check revisions against', () => {

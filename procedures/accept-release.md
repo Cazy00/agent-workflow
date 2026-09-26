@@ -4,7 +4,7 @@ Before requesting owner acceptance, complete implementer verification, independe
 
 Derive data, access, external services, configuration and operations changes from the actual candidate. Use none only when verified absent, and not verified when evidence is unavailable. Do not include secret values. This summary cannot retroactively authorise reserved choices. Unavailable required technical checks block acceptance presentation.
 
-The owner tests the product experience and outcomes. Record accepted scenarios, exact candidate, issues and owner decision. Include: **Acceptance is not a declaration that you audited its code or security.** Capture the decision through the owner approval receipt, not an agent-written accepted field.
+The owner (with two or more `owners`, the milestone's `owner`) tests the product experience and outcomes. Record accepted scenarios, exact candidate, issues and owner decision. Include: **Acceptance is not a declaration that you audited its code or security.** Capture the decision through the owner approval receipt, not an agent-written accepted field.
 
 Use `wf lifecycle --stage accept` to validate recorded technical/integration evidence and acceptance. For a complete milestone, its acceptance record and receipt must contain every milestone scenario; checking only a task does not accept the milestone. Changed experience/outcomes after acceptance require acceptance of the new candidate, and affected technical verification always repeats.
 

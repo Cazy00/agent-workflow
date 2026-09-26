@@ -853,6 +853,8 @@ and: "how about you consult or check with a sub-agent using Fable, discuss about
 
 **After release:** the tag workflow's first run failed. It tagged the commit that last changed `package.json` (`177ede6`, the branch commit before the review fix), whose `release-tag.yml` differed from main's, and GitHub refuses the Actions token such a tag. The owner had the agent account push `v1.6.0` on the merge commit `77e8bdb`; the workflow now tags the pushed commit itself, with one concurrency group per commit so no run is dropped (no version change: the workflow is this repository's CI, not part of what projects pin).
 
+**In use (2026-09-26, PrintFlow #97):** the first records-only pull request stayed *blocked* with approvals at 0 until the owner also turned off *approval of the most recent reviewable push*, and auto-merge then waited for the next check event (a rerun) before merging. The owner asked for these settings to be part of setup for every new project: `procedures/setup.md` steps 5 and 9, the `bin/wf-adopt` owner checklist and the generated `AGENTS.md` carry them for a single owner (`v1.6.1`). An independent review found the first draft extended the records carve-out to shared projects, where `approval-evidence.md` requires `CODEOWNERS` to cover every path because workers have write access; a shared project keeps every path owned and approval of the most recent push on. PrintFlow also un-owns `docs/workflow/checkpoints/`, which it uses; the scaffold does not create that folder, so setup names only tasks and feedback.
+
 ---
 
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)

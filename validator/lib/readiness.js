@@ -100,9 +100,13 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   if (!STAGES.includes(stage)) fail(`unknown stage ${stage}`);
   const stageIdx = STAGES.indexOf(stage);
   const inScope = new Set([...list(t.decisions), ...list(t.prerequisites).filter(p => /^D-\d{4}$/.test(p))]);
+  // Decisions the task names (here or on the baseline), or that name the task. A superseded decision reached only through
+  // a feature, milestone or path effect is skipped when its superseder is on the baseline and in scope, so assessed itself.
+  const named = new Set([...inScope, ...list(previous.decisions), ...list(previous.prerequisites).filter(p => /^D-\d{4}$/.test(p))]);
   const taskScope = [...list(t.scope), ...changed];
   for (const [id, d] of base.decisions) {
     const affects = list(d.data?.affects);
+    if (affects.includes(taskId)) named.add(id);
     if (affects.some(a => a === taskId || a === t.feature || a === previous.feature || a === t.milestone || (a.startsWith('paths:') && taskScope.some(p => overlaps(a.slice(6), p))))) inScope.add(id);
   }
   const cand = candidate === baseline ? null : loadAll(candidate, rd).decisions;
@@ -116,6 +120,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     }
     const superseder = [...base.decisions.values()].find((d) => d.data?.status === 'Resolved' && d.data?.supersedes === id);
     const by = b.data?.superseded_by ?? superseder?.data?.id;
+    if (by && by !== id && !named.has(id) && base.decisions.has(by) && inScope.has(by)) continue;
     if (by) { block(id, `decision ${id} is superseded by ${by}; reference ${by} instead`, scopesOf(b)); blockedIds.add(id); continue; }
     if (b.data?.status === 'Resolved') continue;
     const req = b.data?.required_before ?? 'implement';

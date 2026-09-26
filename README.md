@@ -1,6 +1,6 @@
 # Agent-assisted software development workflow
 
-Release **v1.4.0** of the supplied consolidated policy: assisted execution procedures, record templates, a one-command adoption scaffold, required project checks, an owner status view that adopting projects also get as a pinned GitHub issue, support for two or more people who share a project with their own agents, milestone planning with work found along the way kept as records, and a zero-dependency Node.js 22 validator. Reviewed in an independent context and approved by the owner before tagging.
+Release **v1.4.1** of the supplied consolidated policy: assisted execution procedures, record templates, a one-command adoption scaffold, required project checks, an owner status view that adopting projects also get as a pinned GitHub issue, support for two or more people who share a project with their own agents, milestone planning with work found along the way kept as records, and a zero-dependency Node.js 22 validator. Reviewed in an independent context and approved by the owner before tagging.
 
 Start with [QUICKSTART.md](QUICKSTART.md): run `bin/wf-adopt` against the project, then follow `procedures/setup.md`, whose steps say which are the owner's and which the agent's. A project starts in `manual` approval mode and switches to `enforced` once its GitHub protections and approval-path test are verified. Live operational evidence (a pilot on a real project) is still owed for this release.
 
@@ -25,4 +25,4 @@ Supported execution is **assisted**. An unattended runner is not adopted; runner
 
 Assisted operations include fixed-catalog central GitHub reporting, a private runtime ledger and optional feedback cadence, plus unsigned Node-test evidence preparation ([operations](procedures/operations.md)); what happens after release is in [operate](procedures/operate.md). Their per-project configuration is part of setup.
 
-Releases are tags: `v1.0.0` (the version PrintFlow runs), `v1.1.0`, `v1.2.0`, `v1.3.0` and `v1.4.0`. Review and owner approval precede every tag, and a project adopts a release only by changing its own pin; a new tag never upgrades a project by itself.
+Releases are tags: `v1.0.0` (the version PrintFlow runs), `v1.1.0`, `v1.2.0`, `v1.3.0`, `v1.4.0` and `v1.4.1` (readiness no longer blocks a task on a superseded decision reached only through a feature, milestone or path effect). Review and owner approval precede every tag, and a project adopts a release only by changing its own pin; a new tag never upgrades a project by itself.

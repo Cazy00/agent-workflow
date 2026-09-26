@@ -1,0 +1,3 @@
+{ "runs": [
+  { "command": "ci", "task": "T-0001", "changed": ["src/pricing/calc.ts"], "expect": { "verdict": "fail", "findings": ["a task Ready only for a subset cannot be marked Done"] } }
+] }

@@ -43,3 +43,14 @@ test('the status workflow keeps expressions out of its scripts and the token awa
 test('the status workflow fetches the full history that readiness previews check revisions against', () => {
   assert.equal(text.match(/^ {10}fetch-depth: 0\b/gm)?.length, text.match(/actions\/checkout@/g).length);
 });
+
+// The release tag workflow (IDEA-18): main only, one permission, pinned actions, and it never moves an existing tag.
+test('the release tag workflow tags only an untagged release version, on main, and moves no tag', () => {
+  const text = fs.readFileSync(new URL('../../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
+  assert.match(text, /^on:\n  push:\n    branches: \[main\]\n/m);
+  assert.doesNotMatch(text, /pull_request/);
+  assert.match(text, /^permissions:\n  contents: write\n(?!  )/m);
+  for (const use of text.match(/uses: .*/g)) assert.match(use, /@[0-9a-f]{40} /, use);
+  assert.match(text, /ls-remote --exit-code --tags origin "refs\/tags\/\$tag"[^\n]*exit 0/);
+  assert.doesNotMatch(text, /--force|-f /);
+});

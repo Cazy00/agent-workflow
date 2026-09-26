@@ -6,9 +6,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-// A record ID names one piece of work for good. Task records are removed after their work merges, so a planner
-// who reads the directory, or a second person planning on another branch, can pick an ID the history already
-// used; a branch that adds the removed path merges cleanly. `wf ci` checks the baseline's history instead.
+// A record ID names one piece of work for good. Task records are removed after acceptance, so a planner who reads the
+// directory, or a second person planning on another branch, can pick an ID the history already used; a branch
+// that adds the removed path merges cleanly. `wf ci` checks the baseline's history instead.
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 const task = (id, title) => `---\nrecord: task\nid: ${id}\ntitle: ${title}\nstatus: Draft\nowner: agent\nobjective: ${title}\n---\n# ${id}\n`;

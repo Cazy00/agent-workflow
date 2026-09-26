@@ -2,13 +2,15 @@
 // no authority and no gate reads it: approval is never checked here, and each open task's readiness is
 // previewed as if the baseline were approved, so the view shows what would still stand in the way.
 // With two or more `owners` in the profile it shows what waits on each person, and given the open pull
-// requests it shows each task's claim and flags a task claimed twice (IDEA-13).
+// requests it shows each task's claim and flags a task claimed twice (IDEA-13). Per milestone it shows the plan
+// as authorised (`tasks`), the tasks discovered since, and until acceptance what the plan leaves unserved (IDEA-14).
 import { TASK_BRANCH, list, listedOwners, loadAll, loadConfig, ownerErrors } from './records.js';
 import { evaluateReadiness } from './readiness.js';
 
 const preview = Object.freeze({ mode: 'preview', claim: () => null, allows: purpose => purpose === 'baseline' });
 const OWNER_DECISION_TYPES = ['decision', 'deferred'];
 const TITLE_TASK = /^(T-\d{4})\b/;
+const UNRECORDED = /^(\w+) is not recorded\b/;
 // A pull request title is untrusted text: in a code span GitHub renders no link, mention, image or HTML.
 const span = text => `\`${text.replaceAll('`', "'")}\``;
 
@@ -70,6 +72,9 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
       let r;
       try { r = evaluateReadiness({ baseline, candidate, task: t.id, trust: preview }); } catch (e) { r = { outcome: 'not assessable', reasons: [e.message], pending: [] }; }
       view.readiness = r.outcome; view.reasons = r.reasons; view.pending = r.pending;
+      // A Draft is still being planned: its missing start facts are one line, not one blocker each.
+      const missing = t.status === 'Draft' ? r.reasons.map(x => x.match(UNRECORDED)?.[1]).filter(Boolean) : [];
+      if (missing.length) { view.missing_fields = missing; view.reasons = [`not yet recorded: ${missing.join(', ')}`, ...r.reasons.filter(x => !UNRECORDED.test(x))]; }
     }
     if (prs) { view.pull_requests = (claims.get(view.id) ?? []).map(p => p.number); view.claim_branch = claimBranches.has(view.id); }
     if (t.status === 'Blocked') { view.resume_condition = t.resume_condition ?? null; blocked.push({ task: view.id, resume_condition: view.resume_condition, reasons: view.reasons ?? [] }); }
@@ -81,7 +86,21 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     const owner = m.owner ?? 'owner';
     if (m.status === 'Verified') waiting.push({ kind: 'acceptance', item: id, owner, detail: 'milestone verified; owner product acceptance is next' });
     if (m.status === 'Accepted') waiting.push({ kind: 'release', item: id, owner, detail: 'milestone accepted; release authority is next' });
-    return { id, status: m.status ?? null, outcome: m.outcome ?? null, measure: m.measure ?? null, owner: m.owner ?? null, tasks: (byMilestone.get(id) ?? []).map(taskView), errors: rec.errors };
+    // Task records stay until the milestone is accepted (procedures/execute.md), so until then the plan is
+    // checked against them: every acceptance ID served by some task, every planned task still recorded.
+    const recs = byMilestone.get(id) ?? [];
+    const ids = recs.map(r => r.data?.id).filter(Boolean);
+    const planned = [...new Set(list(m.tasks))];
+    const plan = { planned, discovered: planned.length ? ids.filter(t => !planned.includes(t)) : [], uncovered: [], missing: [] };
+    if (!['Accepted', 'Released'].includes(m.status)) {
+      plan.uncovered = list(m.acceptance).filter(a => !recs.some(r => list(r.data?.acceptance).includes(a)));
+      plan.missing = planned.filter(t => !ids.includes(t));
+      const person = m.owner ?? null;
+      if (plan.uncovered.length) waiting.push({ kind: 'plan', item: id, owner: 'agent', person, detail: `acceptance ${plan.uncovered.join(', ')} is served by no task: plan one (procedures/readiness.md)` });
+      if (plan.missing.length) waiting.push({ kind: 'plan', item: id, owner: 'agent', person, detail: `planned ${plan.missing.join(', ')} is not among this milestone's task records: write it, or re-cut the plan` });
+    }
+    const tasks = recs.map(r => ({ ...taskView(r), discovered: plan.discovered.includes(r.data?.id) }));
+    return { id, status: m.status ?? null, outcome: m.outcome ?? null, measure: m.measure ?? null, owner: m.owner ?? null, plan, tasks, errors: rec.errors };
   });
   const known = new Set(milestones.map(m => m.id));
   const unassigned = [...byMilestone.entries()].filter(([k]) => !known.has(k)).flatMap(([k, recs]) => recs.map(r => ({ ...taskView(r), milestone: k })));
@@ -111,7 +130,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     }
     for (const b of claimBranches) if (!(claims.get(b) ?? []).some(p => p.branch === b)) waiting.push({ kind: 'claim', item: b, owner: 'agent', person: tasks.get(b)?.owner ?? null, detail: `claim branch ${b} has no open pull request from it: its holder opens one, or releases the claim by deleting the branch` });
     for (const p of prs.filter(p => p.mismatch && !p.fork)) waiting.push({ kind: 'claim', item: `#${p.number}`, owner: 'agent', person: null, detail: `its branch names ${p.mismatch[0]} and its title ${p.mismatch[1]}; rename one so the claim is clear` });
-    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: inspect its last handoff, then resume or release the claim' });
+    for (const t of tasks.values()) if (t.status === 'Active' && !claims.has(t.id) && !claimBranches.has(t.id)) waiting.push({ kind: 'claim', item: t.id, owner: 'agent', person: t.owner ?? null, detail: 'Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim' });
     // Fork pull requests stay in the list below: outside contributions never enter anyone's list of actions.
     for (const p of prs.filter(p => !p.draft && !p.fork)) {
       const label = `#${p.number}${p.task ? ` ${p.task}` : ''}`;
@@ -187,19 +206,20 @@ export function renderStatus(s) {
   lines.push('## Milestones');
   if (!s.milestones.length) lines.push('- none', '');
   for (const m of s.milestones) {
-    lines.push(`### ${m.id} — ${m.status ?? '?'} — ${m.outcome ?? ''}${people.length && m.owner ? ` (owner ${m.owner})` : ''}`);
+    const plan = m.plan?.planned.length ? ` · planned ${m.plan.planned.length} · discovered ${m.plan.discovered.length}` : '';
+    lines.push(`### ${m.id} — ${m.status ?? '?'} — ${m.outcome ?? ''}${people.length && m.owner ? ` (owner ${m.owner})` : ''}${plan}`);
     if (m.measure) lines.push(`Measure: ${m.measure}`);
     if (!m.tasks.length) lines.push('- no tasks');
     for (const t of m.tasks) {
       const claim = !t.pull_requests ? '' : t.pull_requests.length ? ` · #${t.pull_requests.join(', #')}` : t.claim_branch ? ' · claim branch, no pull request' : ['Ready', 'Active'].includes(t.status) ? ' · no pull request' : '';
-      lines.push(`- ${t.id} ${t.status ?? '?'}${people.length && t.owner ? ` · ${t.owner}` : ''} · ${t.title ?? ''}${t.readiness ? ` · readiness preview: ${t.readiness}` : ''}${claim}`);
+      lines.push(`- ${t.id} ${t.status ?? '?'}${people.length && t.owner ? ` · ${t.owner}` : ''} · ${t.title ?? ''}${t.discovered ? ' · discovered' : ''}${t.readiness ? ` · readiness preview: ${t.readiness}` : ''}${claim}`);
       const reasons = t.reasons ?? [];
       for (const r of reasons.slice(0, 5)) lines.push(`    - ${r}`);
       if (reasons.length > 5) lines.push(`    - … ${reasons.length - 5} more`);
     }
     lines.push('');
   }
-  if (s.unassigned_tasks.length) { lines.push('## Tasks without a known milestone'); for (const t of s.unassigned_tasks) lines.push(`- ${t.id} ${t.status ?? '?'} (milestone ${t.milestone})`); lines.push(''); }
+  if (s.unassigned_tasks.length) { lines.push('## Tasks without a milestone record'); for (const t of s.unassigned_tasks) lines.push(`- ${t.id} ${t.status ?? '?'} (${t.milestone === '(none)' ? 'no milestone' : `milestone ${t.milestone}`})`); lines.push(''); }
   if (s.blocked.length) { lines.push('## Blocked'); for (const b of s.blocked) lines.push(`- ${b.task}: resume when ${b.resume_condition ?? 'not recorded'}`); lines.push(''); }
   if (s.open_for_agent.length) { lines.push('## Open questions for the agent'); for (const d of s.open_for_agent) lines.push(`- ${d.id} (${d.type}): ${d.question ?? ''}`); lines.push(''); }
   if (s.feedback_open.length) lines.push(`Open workflow feedback: ${s.feedback_open.join(', ')}`, '');

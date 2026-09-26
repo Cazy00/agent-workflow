@@ -9,8 +9,8 @@ import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 
-// A record ID names one piece of work for good: once a task record is removed after its work merges, its pull
-// requests are the permanent record. Two planners on two branches, or one planner reading the directory after a
+// A record ID names one piece of work for good: once a task record is removed after its milestone's acceptance,
+// its pull requests are the permanent record. Two planners on two branches, or one planner reading the directory after a
 // removal, can pick the same number, and a branch that adds a removed path merges without a conflict. So an
 // added record whose path already existed in the trusted branch's history must be that same record in every
 // version the history holds, as when a removal is reverted; otherwise it needs a new ID. A changed identity on an existing record (for example an
@@ -46,7 +46,7 @@ function recordIds({ baseline, candidate, rd, changed }) {
 }
 
 // Readiness reads a task named in another task's prerequisites or governing from the baseline, so that record
-// stays, Done, until the last record naming it is removed (AGENTS.md). A change fails when it removes a record
+// stays, Done, until the last record naming it is removed (procedures/execute.md). A change fails when it removes a record
 // that a remaining task names, or when a task record newly names one that is not in the candidate. The candidate
 // contains the current baseline, so a removal and a planning branch meet in whichever merges second.
 const NAMED = ['prerequisites', 'governing'];

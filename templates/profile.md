@@ -38,6 +38,8 @@ Governing sources · decision owners · delegated choices · reserved decisions 
 ## Delivery
 Verification commands · review and approval arrangement · deployment ownership · operational responsibilities.
 
+Milestones in order, one line each: ID, the journey or outcome it delivers (`procedures/readiness.md`), what it needs first. A forecast, revised as work teaches; only an authorised milestone record grants authority. Batch edits into the change that plans the next milestone (`procedures/execute.md`).
+
 ## Quality expectations
 | Expectation | Acceptance condition | Evidence method | Responsible role | Required stage |
 |---|---|---|---|---|

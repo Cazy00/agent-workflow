@@ -800,6 +800,46 @@ and, after a rendered mockup with PrintFlow's data: "go ahead, keep the diagram,
 
 **Limits:** unchanged from IDEA-12: a convenience view that approves nothing. The diagram needs GitHub's Mermaid rendering; elsewhere it reads as a short list of `D-xxxx --> T-xxxx` lines.
 
+
+---
+
+## IDEA-18 — Fewer round trips: one pull request per task, and none for bookkeeping
+
+**Status:** Evaluated 2026-09-26 with Fable; four of five changes adopted by the owner the same day, being implemented for `v1.6.0` together with PrintFlow's own settings and decision (D-0064 there). Milestone-branch delivery (IDEA-11) stays parked, with a stated precondition.
+
+**Owner's words (verbatim, 2026-09-26, after moving PrintFlow from v1.0.0 to v1.5.0):**
+> Now, I would like you to carefully look at this conversation history. See how many times there was interaction from my side. I needed to actually go and approve the merge and then it's going to merge it. Then it's going to do some little thing.
+>
+> Then it's going to merge it. And I do this loop again and again for small things that I shouldn't be bothered with. And by the way, while merging or reviewing the actual thing, the tab did, I don't even read it. So it's taking a lot of time.
+>
+> This back and forth, me reviewing the pull request, blah, blah, blah, for every little thing. And every little thing is having its own pull request or in its own branch. That branch will be having a pull request. Pull request. I need to wait for the checks and the test to finish.
+>
+> It takes about 10 minutes. I need to wait and wait and wait for the check. I need to wait and wait and wait this back and forth between me and the pull request. It's annoying. It's really annoying. And it's holding the productivity.
+>
+> So am I using agent workflow wrongly or it's something wrong with the agent workflow itself? Because I don't like this going back and forth for little things and for every little thing that there is a separate branch. Okay, it's a good practice. But every little thing has its own separate branch.
+>
+> And every time it's doing a pull request that I am involved in. Even though I am doing those pull requests, I am not even looking at them. So is it like those things that I was doing? Is it like things that are really important and mandatory to actually IC and review and those kind of things?
+>
+> Couldn't it be happening in, for example, for example, one branch doing the fixes and when it's done, it can be merged instead of this going back and forth? Do you know what I mean? If you need any further explanation, just ask me.
+
+and: "how about you consult or check with a sub-agent using Fable, discuss about this with him and communicate you two and try to figure out the best solution. I am okay with going with all five" · "go ahead in that order".
+
+**Restated:** The owner's approval should be spent where it protects something. Routine bookkeeping, re-pins and waiting on checks should not each cost him a turn, and a unit of work should reach him once.
+
+**Evidence (PrintFlow, 2026-09-26):** about 27 owner turns; 11 pull requests merged (PrintFlow #85, #87–#93, #94; agent-workflow #22–#24), none changing application behaviour in the upgrade itself: five records-only, three config or pin moves, one test fix; three release tags typed by hand (`v1.4.2` in five attempts); about 7–8 minutes of `verify` per pull request. Causes found:
+- *Configuration, not policy:* `CODEOWNERS` `* @Cazy00` with one required approval made every records-only change need the owner, though POLICY § 7's protected material does not include task records and § 9 calls them planning records; auto-merge was off, so each approval meant returning after the checks to press merge.
+- *Workflow design:* `freshness.js` watches all of `config.json` and the profile for every task, so a pin move staled every task and needed a pull request that only rewrote `governing_baseline_revision` (#89, #92, #94); marking a task Done was a separate pull request after its merge (`execute.md`); `ci.js` refused a production change on a Done task, so Done could not travel with the work; releases were tagged by hand.
+- *The coordinator's sequencing (about half):* three workflow releases and three pin moves in one day where one of each would have done; #91 and #92 merged 35 seconds apart as separate pull requests.
+
+**Consultation (2026-09-26):** Fable, in a separate read-only context, checked the facts in both repositories and the ruleset. Agreed diagnosis as above, adding the sequencing half and the auto-merge setting. Verdicts: milestone branches *park* (PrintFlow has no staging; D-0063 rejects a test copy on the server and workhorse is production, so a milestone branch bundles untested change into one larger deploy and diff; the owner's "one branch, merged when done" is met by one pull request per task); un-own records rather than moving them out of the repository (POLICY § 3 durable records); mask only the pin in freshness, keep milestone, decision and profile staleness; tag from CI; gate `verify`'s heavy steps on `wf paths` rather than `paths-ignore`, which would leave a required check pending. One correction from the coordinator: workhorse is production, not spare capacity, so staging would need a decision superseding D-0063's test-copy line. Replaying the day under the plan: about 5–6 owner approvals instead of 11–12, and no return-to-merge turns.
+
+**Adopted:**
+1. *Owner, per project:* allow auto-merge; required approvals 0 with code-owner review kept; task, feedback and checkpoint records un-owned in `CODEOWNERS`, so a records-only pull request merges after `readiness` without him, while every production, governing and enforcement path still needs his review. Recorded as a decision in the project, with `AGENTS.md`'s merge rule amended to match. A records-only pull request cannot ship code: readiness re-checks every claim a task record makes against owner-approved records.
+2. *Workflow:* a task may be marked Done in its own pull request (`ci.js`); a change to the workflow pin alone no longer stales readiness (`freshness.js`); releases tag themselves when a version bump merges; the procedures say one pull request per task, never per step, batch record changes, and never move the pin more than once per upgrade.
+3. *Project CI:* `verify` runs its heavy steps only when `wf paths` finds a production, enforcement or generated path.
+
+**Parked:** milestone-branch delivery (IDEA-11). Precondition: a project decision allowing a test environment the milestone branch deploys to; the milestone-level `wf ci` mode follows it, not before.
+
 ---
 
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)

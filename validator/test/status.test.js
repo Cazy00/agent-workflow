@@ -28,7 +28,12 @@ test('status lists an open reserved decision as waiting on the owner and preview
   assert.match(task.reasons.join(' '), /D-0001/);
   assert.doesNotMatch(task.reasons.join(' '), /approval evidence/, 'the preview does not report approval');
   const text = renderStatus(s);
-  assert.match(text, /^## Waiting on the owner\n- D-0001 \(owner\)/m);
+  assert.match(text, /^## 👤 Waiting on you\n\n\*\*Decisions\*\*\n/m);
+  assert.match(text, /^\| 🔴 \| \*\*D-0001\*\*<br><sub>Open: decide · before implement<\/sub> \| .* \| owner \| \*\*T-0001 now\*\* \|$/m, 'the decision says what is asked, by when, who decides and which task it blocks now');
+  assert.match(text, /<summary>What each decision affects<\/summary>\n\n- \*\*D-0001\*\*: /);
+  assert.match(text, /^\| 🔴 \| \*\*T-0001\*\* \| .* \| Waiting on decision D-0001 \| /m, 'the task row names the decision it waits on');
+  assert.match(text, /^\| 👤 Waiting on you \| 🔴 Blocked \|\n\|:-:\|:-:\|\n\| \*\*1\*\* \| 1 \|$/m, 'the count strip shows only the states some task is in');
+  assert.match(text, /^```mermaid\nflowchart LR\n  D0001\["👤 D-0001"\] -->\|blocks\| T0001\["T-0001"\]$/m, 'the diagram draws the block');
   assert.match(text, /grants no authority/);
 });
 
@@ -60,14 +65,17 @@ test('status reports blocked tasks, inbox items, setup steps and agent questions
   assert.ok(s.waiting.some(w => w.kind === 'inbox' && w.owner === 'agent'));
   assert.deepEqual(s.open_for_agent.map(d => d.id), ['D-0002']);
   const text = renderStatus(s);
-  assert.match(text, /## Blocked\n- T-0001: resume when owner answers D-0001/);
-  assert.match(text, /## Next for the agent\n- docs\/workflow\/inbox/);
+  assert.match(text, /## ⛔ Blocked\n\n- \*\*T-0001\*\*: resume when owner answers D-0001/);
+  assert.match(text, /## 🤖 Next for the agent\n\n- \*\*docs\/workflow\/inbox\*\*: 3 item/);
+  assert.match(text, /^\*\*Also\*\*\n\n- \*\*docs\/workflow\/setup\.md\*\*: 1 owner setup step/m, 'an owner setup step waits on the owner');
+  assert.match(text, /^## ⚠️ Record errors\n\n- .*approval label differs/m, 'record errors stay visible');
+  assert.match(text, /<summary>❓ Open questions for the agent: 1<\/summary>\n\n- \*\*D-0002\*\* \(fact\): Which library version is current\?/);
 });
 
 test('status via the CLI needs no baseline, prints Markdown by default and JSON on request, and exits 0', () => {
   const md = spawnSync(process.execPath, [cli, 'status', '--repo', fx('01-unresolved-decision-blocks')], { encoding: 'utf8' });
   assert.equal(md.status, 0, md.stdout + md.stderr);
-  assert.match(md.stdout, /^# Status: .* @ working tree/);
+  assert.match(md.stdout, /^# 📋 .*: project status\n\n<sub>At `working tree`/);
   const json = spawnSync(process.execPath, [cli, 'status', '--repo', fx('01-unresolved-decision-blocks'), '--json'], { encoding: 'utf8' });
   assert.equal(json.status, 0, json.stdout + json.stderr);
   assert.equal(JSON.parse(json.stdout).ok, true);
@@ -102,21 +110,22 @@ test('with two owners, status shows what waits on each person and each task\'s c
   const tasks = Object.fromEntries(s.milestones[0].tasks.map(x => [x.id, x.pull_requests]));
   assert.deepEqual(tasks, { 'T-0001': [18], 'T-0002': [14, 15] }, 'a fork pull request is never a claim');
   const text = renderStatus(s);
-  assert.match(text, /^## Waiting on alice\n- #14 T-0002: ready for review · `T-0002: do the work` by bob-worker\n\n/m);
-  assert.match(text, /^## Waiting on bob\n- D-0001: Open: /m);
-  assert.match(text, /^## Waiting on either owner\n- #17: ready for review · `Plan M-0002 with a second line` by alice-worker\n\n/m, 'a fork pull request is in nobody\'s list of actions');
-  assert.match(text, /^- T-0002 \(bob's agents\): #14, on the claim branch, holds the claim; close #15 or move its work there$/m);
-  assert.match(text, /^- #18 T-0001 \(alice's agents\): changes requested · `T-0001: the work` by alice-worker$/m);
-  assert.match(text, /^### M-0001 — Authorised — .* \(owner alice\)$/m);
-  assert.match(text, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · #14, #15$/m);
-  assert.match(text, /^## Open pull requests\n- #14 T-0002 · `T-0002: do the work` · bob-worker\n- #15 T-0002 · `Second attempt` · alice-worker \(draft\)\n- #16 T-0001 · `T-0001: from a fork` · stranger \(fork: an outside contribution\)\n/m);
+  const reviewHead = '\\*\\*Pull requests\\*\\*\\n\\n\\| Pull request \\| Task \\| Title \\| Author \\| Action \\|\\n\\|---\\|---\\|---\\|---\\|---\\|\\n';
+  assert.match(text, new RegExp(`^## 👤 Waiting on alice\\n\\n${reviewHead}\\| #14 \\| T-0002 \\| \`T-0002: do the work\` \\| bob-worker \\| 👀 ready for review \\|\\n\\n## `, 'm'));
+  assert.match(text, /^## 👤 Waiting on bob\n\n\*\*Decisions\*\*\n\n.*\n.*\n\| .* \| \*\*D-0001\*\*<br><sub>Open: decide · before \w+<\/sub> \| /m);
+  assert.match(text, new RegExp(`^## 👤 Waiting on either owner\\n\\n${reviewHead}\\| #17 \\| — \\| \`Plan M-0002 with a second line\` \\| alice-worker \\| 👀 ready for review \\|\\n\\n## `, 'm'), 'a fork pull request is in nobody\'s list of actions');
+  assert.match(text, /^- \*\*T-0002\*\* \(bob's agents\): #14, on the claim branch, holds the claim; close #15 or move its work there$/m);
+  assert.match(text, /^- \*\*#18 T-0001\*\* \(alice's agents\): changes requested · `T-0001: the work` by alice-worker$/m);
+  assert.match(text, /^## 🎯 M-0001 · Authorised · owner alice$/m);
+  assert.match(text, /^\| 🔵 \| \*\*T-0002\*\* \| bob \| Task T-0002 \| In review: #14, #15 \| #14, #15 \|$/m);
+  assert.match(text, /^## 🔀 Open pull requests\n\n\| Pull request \| Task \| Title \| Author \| Note \|\n\|---\|---\|---\|---\|---\|\n\| #14 \| T-0002 \| `T-0002: do the work` \| bob-worker \| — \|\n\| #15 \| T-0002 \| `Second attempt` \| alice-worker \| draft \|\n\| #16 \| T-0001 \| `T-0001: from a fork` \| stranger \| fork: an outside contribution \|\n/m);
 });
 
 test('the claim branch holds a task even when another pull request naming it has a lower number', t => {
   const { dir } = twoOwners(t);
   const s = evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(13, 'codex/T-0002-login', 'T-0002: login', 'alice-worker'), pr(14, 'T-0002', 'T-0002: the claim', 'bob-worker')] });
   assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0002', holder: 14, claim_branch: false, others: [13] }]);
-  assert.match(renderStatus(s), /^- T-0002 \(bob's agents\): #14, on the claim branch, holds the claim; close #13 or move its work there$/m);
+  assert.match(renderStatus(s), /^- \*\*T-0002\*\* \(bob's agents\): #14, on the claim branch, holds the claim; close #13 or move its work there$/m);
 });
 
 test('status shows claim branches it can see, with or without their pull request', t => {
@@ -129,11 +138,11 @@ test('status shows claim branches it can see, with or without their pull request
   assert.deepEqual(s.pull_requests.claim_branches, ['T-0001', 'T-0002'], 'only branches named exactly a task ID are claims');
   assert.deepEqual(s.pull_requests.duplicates, [{ task: 'T-0001', holder: null, claim_branch: true, others: [13] }]);
   const text = renderStatus(s);
-  assert.match(text, /^- T-0001 \(alice's agents\): the claim branch T-0001 holds the claim; close #13 or move its work there$/m);
-  assert.match(text, /^- T-0001 \(alice's agents\): claim branch T-0001 has no open pull request from it: its holder opens one, or releases the claim by deleting the branch$/m);
+  assert.match(text, /^- \*\*T-0001\*\* \(alice's agents\): the claim branch T-0001 holds the claim; close #13 or move its work there$/m);
+  assert.match(text, /^- \*\*T-0001\*\* \(alice's agents\): claim branch T-0001 has no open pull request from it: its holder opens one, or releases the claim by deleting the branch$/m);
   assert.doesNotMatch(text, /claim branch T-0002 has no open pull request/);
   const none = renderStatus(evaluateStatus({ baseline: gitSource(dir, 'HEAD'), pullRequests: [] }));
-  assert.match(none, /^- T-0001 Ready · alice · Task T-0001 · readiness preview: .* · claim branch, no pull request$/m);
+  assert.match(none, /^\| .+ \| \*\*T-0001\*\* \| alice \| Task T-0001 \| .* \| claim branch, no pull request \|$/m);
   // A one-owner project claims through its private run record, so a leftover branch named T-NNNN is no claim.
   fs.writeFileSync(path.join(dir, 'docs/workflow/profile.md'), fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8').replace('owners: [alice, bob]\n', ''));
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qam', 'one owner');
@@ -148,10 +157,10 @@ test('status marks a Ready task with no claim, and flags an Active one, only whe
   const without = renderStatus(evaluateStatus({ baseline: dirSource(dir) }));
   assert.doesNotMatch(without, /no pull request|## Open pull requests/);
   const none = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [pr(20, 'T-0002', 'T-0003: mixed up', 'bob-worker', { isDraft: true })] }));
-  assert.match(none, /^- T-0002 Ready · bob · Task T-0002 · readiness preview: Ready · no pull request$/m);
-  assert.match(none, /^- T-0001 \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim$/m);
-  assert.match(none, /^- #20: its branch names T-0002 and its title T-0003; rename one so the claim is clear$/m);
-  assert.match(none, /^## Open pull requests\n- #20 · `T-0003: mixed up` · bob-worker \(draft\)$/m);
+  assert.match(none, /^\| 🟢 \| \*\*T-0002\*\* \| bob \| Task T-0002 \| Ready to start \| none yet \|$/m);
+  assert.match(none, /^- \*\*T-0001\*\* \(alice's agents\): Active on the trusted branch with no claim branch or open pull request: if its pull request merged, the coordinator marks it Done; otherwise inspect its last handoff, then resume or release the claim$/m);
+  assert.match(none, /^- \*\*#20\*\*: its branch names T-0002 and its title T-0003; rename one so the claim is clear$/m);
+  assert.match(none, /^## 🔀 Open pull requests\n\n.*\n.*\n\| #20 \| — \| `T-0003: mixed up` \| bob-worker \| draft \|$/m);
 });
 
 test('pull request titles reach the view as plain text, never as links, mentions or HTML', t => {
@@ -159,9 +168,11 @@ test('pull request titles reach the view as plain text, never as links, mentions
   const text = renderStatus(evaluateStatus({ baseline: dirSource(dir), pullRequests: [
     pr(21, 'plan-x', 'T-0009: [approve here](https://evil.example/login) @bob <img src=x> `tick`', 'alice-worker'),
     pr(22, 'fork-x', '[click](https://evil.example) @alice', 'stranger', { isCrossRepository: true }),
+    pr(23, 'plan-y', 'a | b', 'alice-worker', { isCrossRepository: true }),
   ] }));
-  assert.match(text, /^- #21 T-0009: ready for review · `T-0009: \[approve here\]\(https:\/\/evil\.example\/login\) @bob <img src=x> 'tick'` by alice-worker$/m);
-  assert.match(text, /^- #22 · `\[click\]\(https:\/\/evil\.example\) @alice` · stranger \(fork: an outside contribution\)$/m);
+  assert.match(text, /^\| #23 \| — \| `a \\\| b` \| alice-worker \| fork: an outside contribution \|$/m, 'a pipe in a title cannot split the table');
+  assert.match(text, /^\| #21 \| T-0009 \| `T-0009: \[approve here\]\(https:\/\/evil\.example\/login\) @bob <img src=x> 'tick'` \| alice-worker \| 👀 ready for review \|$/m);
+  assert.match(text, /^\| #22 \| — \| `\[click\]\(https:\/\/evil\.example\) @alice` \| stranger \| fork: an outside contribution \|$/m);
   assert.doesNotMatch(text.replace(/`[^`\n]*`/g, ''), /evil\.example|@bob|@alice|<img/, 'outside code spans no title text remains');
 });
 
@@ -184,7 +195,7 @@ test('an owners field that is not a list of two or more distinct usernames is a 
     const s = evaluateStatus({ baseline: dirSource(dir) });
     assert.match(s.record_errors.join('\n'), /profile\.md: owners must list two or more distinct GitHub usernames/, bad);
     assert.deepEqual(s.owners, [], bad);
-    assert.match(renderStatus(s), /^## Waiting on the owner$/m, bad);
+    assert.match(renderStatus(s), /^## 👤 Waiting on you$/m, bad);
   }
 });
 
@@ -195,7 +206,7 @@ test('status reads a pull request file from the CLI and refuses one that is not 
   fs.writeFileSync(file, JSON.stringify(openPullRequests));
   const ok = spawnSync(process.execPath, [cli, 'status', '--repo', dir, '--pull-requests', file], { encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
-  assert.match(ok.stdout, /^## Waiting on alice$/m);
+  assert.match(ok.stdout, /^## 👤 Waiting on alice$/m);
   fs.writeFileSync(file, '{"number": 1}');
   const bad = spawnSync(process.execPath, [cli, 'status', '--repo', dir, '--pull-requests', file], { encoding: 'utf8' });
   assert.equal(bad.status, 2, bad.stdout + bad.stderr);
@@ -228,11 +239,11 @@ test('status shows the milestone plan: an unserved acceptance ID, a planned task
   assert.equal(items.length, 2, JSON.stringify(items));
   assert.ok(items.every(([item, owner]) => item === 'M-0001' && owner === 'agent'));
   const text = renderStatus(s);
-  assert.match(text, /^### M-0001 — Authorised — .* · planned 2 · discovered 1$/m);
-  assert.match(text, /^- T-0002 Ready · Task T-0002 · discovered · readiness preview/m);
-  assert.doesNotMatch(text, /^- T-0001 .*discovered/m);
-  assert.match(text, /^- M-0001: acceptance AC-001-2 is served by no task/m);
-  assert.match(text, /^- M-0001: planned T-0009 is not among this milestone's task records/m);
+  assert.match(text, /^## 🎯 M-0001 · Authorised\n\n> .*\n\n\*\*Progress\*\* ⬜{10} \*\*0 of 2 done\*\* · planned 2 · discovered 1$/m);
+  assert.match(text, /^\| 🟢 \| \*\*T-0002\*\* <sub>discovered<\/sub> \| Task T-0002 \| Ready to start \| /m);
+  assert.doesNotMatch(text, /\*\*T-0001\*\* <sub>discovered/);
+  assert.match(text, /^- \*\*M-0001\*\*: acceptance AC-001-2 is served by no task/m);
+  assert.match(text, /^- \*\*M-0001\*\*: planned T-0009 is not among this milestone's task records/m);
 });
 
 test('an accepted or released milestone raises no plan items, and a milestone without a plan marks nothing discovered', t => {
@@ -268,7 +279,7 @@ test('a Draft task parked for a milestone not yet recorded, or with no milestone
   fs.writeFileSync(path.join(dir, 'docs/workflow/tasks/T-0010.md'), body.replace('milestone: M-0001', 'milestone: M-0002'));
   fs.writeFileSync(path.join(dir, 'docs/workflow/tasks/T-0011.md'), body.replace('id: T-0010', 'id: T-0011').replace(/^milestone: .*\n/m, ''));
   const text = renderStatus(evaluateStatus({ baseline: dirSource(dir) }));
-  assert.match(text, /^## Tasks without a milestone record\n- T-0010 Draft \(milestone M-0002\)\n- T-0011 Draft \(no milestone\)$/m);
+  assert.match(text, /^## 📂 Tasks outside a milestone record\n\n\| \| Task \| Where \| What \|\n\|:-:\|---\|---\|---\|\n\| 📝 \| \*\*T-0010\*\* Draft \| milestone M-0002, which has no record \| .* \|\n\| 📝 \| \*\*T-0011\*\* Draft \| no milestone \| .* \|$/m);
 });
 
 test('a Done task still serves its acceptance IDs and counts as planned, a Draft milestone raises plan items, and duplicates count once', t => {
@@ -279,7 +290,7 @@ test('a Done task still serves its acceptance IDs and counts as planned, a Draft
   const s = evaluateStatus({ baseline: dirSource(dir) });
   assert.deepEqual(s.milestones[0].plan, { planned: ['T-0001', 'T-0009'], discovered: ['T-0002'], uncovered: ['AC-001-3'], missing: ['T-0009'] });
   assert.equal(s.waiting.filter(w => w.kind === 'plan').length, 2);
-  assert.match(renderStatus(s), /^### M-0001 — Draft — .* · planned 2 · discovered 1$/m);
+  assert.match(renderStatus(s), /^## 🎯 M-0001 · Draft\n\n> .*\n\n\*\*Progress\*\* 🟩{5}⬜{5} \*\*1 of 2 done\*\* · planned 2 · discovered 1$/mu);
   for (const [from, to] of [['Draft', 'Blocked'], ['Blocked', 'Verified']]) {
     edit('docs/workflow/milestones/M-0001.md', x => x.replace(`status: ${from}`, `status: ${to}`));
     assert.equal(evaluateStatus({ baseline: dirSource(dir) }).waiting.filter(w => w.kind === 'plan').length, 2, to);
@@ -292,6 +303,43 @@ test('with two owners, plan items wait on the milestone owner\'s agents', t => {
   const s = evaluateStatus({ baseline: dirSource(dir) });
   assert.deepEqual(s.waiting.filter(w => w.kind === 'plan').map(w => [w.item, w.owner, w.person]), [['M-0001', 'agent', 'alice']]);
   const text = renderStatus(s);
-  assert.match(text, /^- M-0001 \(alice's agents\): acceptance AC-001-2 is served by no task/m);
-  assert.match(text, /^- T-0002 Ready · bob · Task T-0002 · discovered/m);
+  assert.match(text, /^- \*\*M-0001\*\* \(alice's agents\): acceptance AC-001-2 is served by no task/m);
+  assert.match(text, /^\| .+ \| \*\*T-0002\*\* <sub>discovered<\/sub> \| bob \| Task T-0002 \| /m);
+});
+
+// The layout's own rules (IDEA-17), on a hand-made view: every field below is what evaluateStatus produces.
+const view = (over = {}) => ({ revision: null, project: 'P', measure: null, profile_readiness: 'Ready', owners: [], waiting: [], milestones: [], unassigned_tasks: [], blocked: [], decisions: { open: [], proposed: [] }, open_for_agent: [], pull_requests: null, feedback_open: [], record_errors: [], limitation: 'L', ...over });
+const task = (id, over = {}) => ({ id, title: `Task ${id}`, status: 'Ready', readiness: 'Ready', reasons: [], pending: [], pull_requests: [], claim_branch: false, discovered: false, ...over });
+test('a task whose only pull requests are drafts is in progress, not in review', () => {
+  const text = renderStatus(view({
+    milestones: [{ id: 'M-0001', status: 'Active', outcome: 'o', tasks: [task('T-0001', { status: 'Active', pull_requests: [5] }), task('T-0002', { status: 'Active', pull_requests: [6, 7] })], plan: { planned: [], discovered: [] } }],
+    pull_requests: { open: [{ number: 5, title: 'T-0001: wip', task: 'T-0001', author: 'a', draft: true, fork: false, review: null }, { number: 6, title: 'T-0002', task: 'T-0002', author: 'a', draft: true, fork: false, review: null }, { number: 7, title: 'T-0002 b', task: 'T-0002', author: 'a', draft: false, fork: false, review: 'REVIEW_REQUIRED' }], duplicates: [], claim_branches: [] },
+  }));
+  assert.match(text, /^\| 🟠 \| \*\*T-0001\*\* \| Task T-0001 \| In progress: draft #5 \| #5 \|$/m);
+  assert.match(text, /^\| 🔵 \| \*\*T-0002\*\* \| Task T-0002 \| In review: #6, #7 \| #6, #7 \|$/m);
+  assert.match(text, /^\| 👤 Waiting on you \| 🟠 In progress \| 🔵 In review \|\n\|:-:\|:-:\|:-:\|\n\| \*\*0\*\* \| 1 \| 1 \|$/m);
+});
+test('a deferred input blocks like a decision, a later-stage decision ranks amber, and reasons stay capped', () => {
+  const reasons = ['deferred input D-0003 is required before implement; task stage is implement and it is Open on the trusted baseline'];
+  const many = Array.from({ length: 8 }, (_, i) => `reason ${i}`);
+  const text = renderStatus(view({
+    waiting: ['D-0003', 'D-0004', 'D-0005'].map(item => ({ kind: 'decision', item, owner: 'owner', detail: 'Open: q?' })),
+    decisions: { open: ['D-0003', 'D-0004', 'D-0005'].map(id => ({ id, question: `Question ${id} <b>|</b>?`, type: 'decision', owner: 'owner', required_before: 'accept', affects: ['paths:src/(x)'], status: 'Open' })), proposed: [] },
+    milestones: [{ id: 'M-0001', status: 'Active', outcome: 'o', plan: { planned: [], discovered: [] }, tasks: [
+      task('T-0001', { readiness: 'Needs discovery or resolution', reasons }),
+      task('T-0002', { pending: ['decision D-0004 is Open; required before accept (task stage: implement)'] }),
+      task('T-0003', { readiness: 'Needs discovery or resolution', reasons: many }),
+    ] }],
+  }));
+  assert.match(text, /^\| 🔴 \| \*\*T-0001\*\* \| Task T-0001 \| Waiting on decision D-0003 \| /m);
+  assert.match(text, /^\| 🔴 \| \*\*D-0003\*\*.*\| \*\*T-0001 now\*\* \|\n\| 🟠 \| \*\*D-0004\*\*.*\| T-0002 later \|\n\| ⚪ \| \*\*D-0005\*\*.*\| no open task \|$/m);
+  assert.match(text, /Question D-0003 &lt;b>\\\|&lt;\/b>\?/, 'record text cannot split a cell or open HTML');
+  assert.match(text, /- reason 4\n- … 3 more: `wf readiness --task T-0003`/);
+  assert.doesNotMatch(text, /reason 5/);
+});
+test('the progress bar has a fixed width and visible sections come before the milestones', () => {
+  const tasks = Array.from({ length: 40 }, (_, i) => task(`T-${String(i + 1).padStart(4, '0')}`, { status: i < 10 ? 'Done' : 'Ready' }));
+  const text = renderStatus(view({ milestones: [{ id: 'M-0001', status: 'Active', outcome: 'o', tasks, plan: { planned: [], discovered: [] } }], record_errors: ['x.md: bad'], blocked: [{ task: 'T-0011', resume_condition: 'later' }] }));
+  assert.match(text, /^\*\*Progress\*\* 🟩{3}⬜{7} \*\*10 of 40 done\*\*$/mu);
+  assert.ok(text.indexOf('## ⚠️ Record errors') < text.indexOf('## 🎯 M-0001') && text.indexOf('## ⛔ Blocked') < text.indexOf('## 🎯 M-0001'));
 });

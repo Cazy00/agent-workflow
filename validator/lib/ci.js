@@ -101,9 +101,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       readiness = evaluateReadiness({ baseline, candidate, task, trust, changed: production, stage: 'verify' });
       findings.push(`readiness ${task}: ${readiness.outcome}`);
       for (const r of readiness.reasons) findings.push(`  ${r}`);
-      const statusOk = ['Ready', 'Active'].includes(readiness.status);
+      // A task may be marked Done in its own pull request: the candidate says Done while the baseline still has it Ready
+      // or Active (IDEA-18). A task already Done on the baseline takes no further production change.
+      const baselineStatus = loadAll(baseline, rd).tasks.get(task)?.data?.status;
+      const statusOk = ['Ready', 'Active'].includes(readiness.status) || (readiness.status === 'Done' && ['Ready', 'Active'].includes(baselineStatus));
       if (readiness.outcome === OUTCOMES.ready) {
-        if (!statusOk) { findings.push(`task status is ${readiness.status}; production changes need Ready or Active`); fail = true; }
+        if (!statusOk) { findings.push(`task status is ${readiness.status}; production changes need Ready or Active (or Done in this pull request)`); fail = true; }
       } else if (readiness.outcome === OUTCOMES.subset) {
         const outside = production.filter((p) => !readiness.subset.some((s) => within(p, s)));
         if (outside.length) { findings.push(`outside the ready subset [${readiness.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }

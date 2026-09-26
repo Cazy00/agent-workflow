@@ -805,7 +805,7 @@ and, after a rendered mockup with PrintFlow's data: "go ahead, keep the diagram,
 
 ## IDEA-18 — Fewer round trips: one pull request per task, and none for bookkeeping
 
-**Status:** Evaluated 2026-09-26 with Fable; four of five changes adopted by the owner the same day, being implemented for `v1.6.0` together with PrintFlow's own settings and decision (D-0064 there). Milestone-branch delivery (IDEA-11) stays parked, with a stated precondition.
+**Status:** Evaluated 2026-09-26 with Fable; four of five changes adopted by the owner the same day and implemented for `v1.6.0` together with PrintFlow's own settings and decision (D-0064 there). Milestone-branch delivery (IDEA-11) stays parked, with a stated precondition.
 
 **Owner's words (verbatim, 2026-09-26, after moving PrintFlow from v1.0.0 to v1.5.0):**
 > Now, I would like you to carefully look at this conversation history. See how many times there was interaction from my side. I needed to actually go and approve the merge and then it's going to merge it. Then it's going to do some little thing.
@@ -839,6 +839,15 @@ and: "how about you consult or check with a sub-agent using Fable, discuss about
 3. *Project CI:* `verify` runs its heavy steps only when `wf paths` finds a production, enforcement or generated path.
 
 **Parked:** milestone-branch delivery (IDEA-11). Precondition: a project decision allowing a test environment the milestone branch deploys to; the milestone-level `wf ci` mode follows it, not before.
+
+**Implemented for `v1.6.0`:**
+- `validator/lib/ci.js`: a production change may carry its task to Done when the trusted branch still has it Ready or Active. Failure prevented: a separate records pull request, and owner turn, per finished task. Recurrence check: `fixtures/11a-done-in-own-pull-request` (fails without the change) and `11b-done-task-takes-no-code` (a task already Done still takes no code).
+- `validator/lib/freshness.js`: `config.json` and the profile are compared without the workflow pin. Failure prevented: a pull request that only rewrites every task's `governing_baseline_revision` after each pin move. Recurrence check: `freshness.test.js` (a pin-only change stays fresh, and fails without the change; a path-class or `required_checks` change still stales).
+- `.github/workflows/release-tag.yml`: tags `v<package.json version>` on main when the tag is absent; never moves a tag. Failure prevented: hand-typed tags (five attempts for `v1.4.2`). Recurrence check: `status-workflow.test.js`.
+- `procedures/execute.md` (one pull request per task, Done as its last commit, bookkeeping batched) and `procedures/operate.md` (one pin move per upgrade, defects released before it; the pin alone does not stale readiness); `SCHEMA.md` states both validator rules.
+- PrintFlow's side, outside this repository: D-0064 (un-owned task, feedback and checkpoint records, auto-merge, the owner's two settings) and a `verify` that skips its heavy steps when `wf paths` finds no production, enforcement or generated path.
+
+**Corpus size (per the S7 rule):** 20,867 before and 21,031 after (+164); `procedures/execute.md` 1,337 → 1,405, `procedures/operate.md` 669 → 723.
 
 ---
 

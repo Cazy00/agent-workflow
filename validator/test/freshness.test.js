@@ -90,3 +90,15 @@ test('a realistic unrelated milestone with its own acceptance examples remains u
  p.edit('docs/workflow/acceptance.json',s=>{const a=JSON.parse(s);a.examples.push({id:'AC-002-1',requirement:'docs/specs/other.md',method:'inspection'});return JSON.stringify(a);});p.write('docs/specs/other.md','Unrelated requirement.');p.commit();assert.equal(p.run().outcome,'Ready');
  p.edit('docs/workflow/acceptance.json',s=>{const a=JSON.parse(s);a.examples[0].method='automated';return JSON.stringify(a);});p.commit();assert.ok(p.run().reasons.some(s=>s.includes('stale')));
 });
+test('moving the workflow pin alone leaves readiness fresh; any other config or profile change still stales it',t=>{
+ const p=setup(t);
+ p.edit('docs/workflow/config.json',s=>{const c=JSON.parse(s);c.workflow={...c.workflow,version:'1.6.0',revision:'a'.repeat(40)};return JSON.stringify(c,null,2);});
+ p.edit('docs/workflow/profile.md',s=>s.replace(/^workflow_version: .*$/m,'workflow_version: 1.6.0'));
+ p.commit();assert.equal(p.run().outcome,'Ready',p.run().reasons.join(' | '));
+ p.edit('docs/workflow/config.json',s=>{const c=JSON.parse(s);c.paths.production.push('lib/**');return JSON.stringify(c,null,2);});p.commit();
+ assert.ok(p.run().reasons.some(s=>s.includes('stale')),'a path class change is governing');
+});
+test('a profile change other than the pin stales readiness',t=>{
+ const p=setup(t);p.edit('docs/workflow/profile.md',s=>s.replace('required_checks: [unit]','required_checks: [unit, lint]'));p.commit();
+ assert.ok(p.run().reasons.some(s=>s.includes('stale')));
+});

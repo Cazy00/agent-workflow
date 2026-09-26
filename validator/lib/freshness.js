@@ -77,6 +77,18 @@ function relevant(source, rd, seeds) {
   return { paths, acceptance, definitions };
 }
 
+// The workflow pin (config `workflow`, profile `workflow_version`) is not a governing requirement: moving it is reviewed
+// as its own change and the moved validator runs on every check (IDEA-18). Every other part of both files still counts.
+const PINNED = new Set(['docs/workflow/config.json']);
+function withoutPin(source, rel) {
+  const raw = source.read(rel);
+  if (raw === null || !PINNED.has(rel) && !rel.endsWith('/profile.md')) return raw;
+  if (PINNED.has(rel)) {
+    try { const c = JSON.parse(raw); delete c.workflow; return JSON.stringify(c); } catch { return raw; }
+  }
+  return raw.replace(/^(---\r?\n[\s\S]*?)^workflow_version:[^\n]*\n/m, '$1');
+}
+
 export function governingChanged({ baseline, revision, recordsDir, task, previous }) {
   const old = baseline.atRevision(revision);
   const oldTask = loadAll(old, recordsDir).tasks.get(task.id)?.data;
@@ -88,5 +100,8 @@ export function governingChanged({ baseline, revision, recordsDir, task, previou
   for (const id of ids) {
     if (JSON.stringify(before.definitions.get(id)) !== JSON.stringify(after.definitions.get(id))) return true;
   }
-  return baseline.changedSince(revision, [...paths]);
+  const pinned = [...paths].filter(p => PINNED.has(p) || p === `${recordsDir}/profile.md`);
+  for (const p of pinned) if (withoutPin(old, p) !== withoutPin(baseline, p)) return true;
+  const rest = [...paths].filter(p => !pinned.includes(p));
+  return rest.length ? baseline.changedSince(revision, rest) : false;
 }

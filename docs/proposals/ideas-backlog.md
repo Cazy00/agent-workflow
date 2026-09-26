@@ -1,6 +1,6 @@
 # Owner ideas backlog
 
-**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and released in `v1.1.0`. On 2026-09-25 the owner added three ideas, two from a real adoption attempt and one about oversight, recorded as IDEA-06 to IDEA-08; they are unevaluated. Later the same day the owner asked for a comparison with the "Super System" template, recorded as IDEA-09 with a source note; it is unevaluated. That evening the owner reviewed an A-to-Z walkthrough of the workflow and gave feedback on autonomy of the verification layers, tests, the signing key, budgets, an owner inbox, a scripted setup and mid-project changes, recorded as IDEA-10; the parts needing no owner decision were implemented the same day and released in `v1.1.0`, with the backlog pass that followed. Later that night the owner asked for the whole backlog to be studied and the worthwhile parts implemented; IDEA-06 to IDEA-09 now carry verdicts, implementation notes and reasons for what was not done. Afterwards the owner asked whether the workflow enforces good engineering across a codebase as large as ERPNext or Odoo while the owner oversees rather than implements, recorded as IDEA-11; the changes agreed after a consultation with Fable were implemented the same day and released in `v1.2.0`. The owner then asked to see the progress view in GitHub, recorded as IDEA-12, implemented the same day and released in `v1.2.0`. Later that night the owner asked whether two people, each with their own agents, can plan for each other in one repository, recorded as IDEA-13; the changes agreed after a consultation with Fable were implemented the same night and released in `v1.3.0`. On 2026-09-26 the owner asked how milestones are cut and planned and what happens to work found along the way, recorded as IDEA-14; the changes agreed after a consultation with Fable were implemented the same day, unreleased. The same day the owner asked for the defect IDEA-13 noticed, a removed task record that no longer satisfies another task's prerequisite, to be fixed, recorded as IDEA-15 and combined with IDEA-14's timing; the fix agreed with Fable was implemented the same day and is unreleased. Original ideas and first-read notes below are historical, not operating instructions.
+**Status of this file:** the owner's list of ideas, recorded 2026-09-19. On 2026-09-21 the owner authorised the four selected additions. They were implemented in task T-0003 and released in `v1.1.0`. On 2026-09-25 the owner added three ideas, two from a real adoption attempt and one about oversight, recorded as IDEA-06 to IDEA-08; they are unevaluated. Later the same day the owner asked for a comparison with the "Super System" template, recorded as IDEA-09 with a source note; it is unevaluated. That evening the owner reviewed an A-to-Z walkthrough of the workflow and gave feedback on autonomy of the verification layers, tests, the signing key, budgets, an owner inbox, a scripted setup and mid-project changes, recorded as IDEA-10; the parts needing no owner decision were implemented the same day and released in `v1.1.0`, with the backlog pass that followed. Later that night the owner asked for the whole backlog to be studied and the worthwhile parts implemented; IDEA-06 to IDEA-09 now carry verdicts, implementation notes and reasons for what was not done. Afterwards the owner asked whether the workflow enforces good engineering across a codebase as large as ERPNext or Odoo while the owner oversees rather than implements, recorded as IDEA-11; the changes agreed after a consultation with Fable were implemented the same day and released in `v1.2.0`. The owner then asked to see the progress view in GitHub, recorded as IDEA-12, implemented the same day and released in `v1.2.0`. Later that night the owner asked whether two people, each with their own agents, can plan for each other in one repository, recorded as IDEA-13; the changes agreed after a consultation with Fable were implemented the same night and released in `v1.3.0`. On 2026-09-26 the owner asked how milestones are cut and planned and what happens to work found along the way, recorded as IDEA-14; the changes agreed after a consultation with Fable were implemented the same day, unreleased. The same day the owner asked for the defect IDEA-13 noticed, a removed task record that no longer satisfies another task's prerequisite, to be fixed, recorded as IDEA-15 and combined with IDEA-14's timing; the fix agreed with Fable was implemented the same day and is unreleased. Afterwards the owner asked whether the growing corpus is a good thing and asked for it to be recorded for possible cost optimisation, recorded as IDEA-16; it is unevaluated. Original ideas and first-read notes below are historical, not operating instructions.
 **Audience:** the agent asked to evaluate these ideas. For each idea, decide whether it adds value, and if it does, write an implementation plan.
 **Authority:** none. `POLICY.md` still governs. An adopted idea goes through `procedures/maintenance.md`: classify it as an *improvement proposal*, then get independent review, owner approval, a new workflow version and explicit project adoption. A working agent must not weaken its own rules, and an idea written here does not count as permission to do so.
 
@@ -704,6 +704,46 @@ Implemented for A the same evening: `createEnforcedTrust` in `validator/lib/trus
 
 ---
 
+## IDEA-16 — The shared corpus keeps growing
+
+**Status:** Unevaluated (recorded 2026-09-26 for a possible cost-optimisation pass; nothing changed).
+
+**Owner's words (verbatim):**
+> growing corpus - is that a good thing ?
+> okay lets highlight this and add it to ideas backlogs we might do some cost optimisation if needed
+
+**Restated:** Every change records the shared corpus's word count (S7, `procedures/maintenance.md`: "so growth stays a visible cost"), but nothing limits the growth or pays it back. Decide whether the corpus should be trimmed, and whether growth needs a budget.
+
+**Evidence (measured 2026-09-26 with IDEA-10's formula, `cat POLICY.md SCHEMA.md QUICKSTART.md AGENTS.md procedures/*.md templates/*.md .agents/skills/workflow/SKILL.md | wc -w`, on `git archive` copies of each revision):**
+
+| Revision | Point | Words |
+|---|---|---|
+| `58ae362` | before IDEA-10 | 14,685 |
+| `7d05561` | before IDEA-11 | 18,060 |
+| `5584540` | before IDEA-12 | 18,520 |
+| `e7f5c79` | before IDEA-13 | 18,733 |
+| `3357e3c` | after IDEA-13 (`v1.3.0`) | 19,746 |
+| `f6f9a39` | after IDEA-14 | 20,370 |
+| `5b2d6f4` | after IDEA-15 and its follow-up | 20,471 |
+
+- Growth of 5,786 words (39%) in about two days of changes, the largest single step IDEA-10's (its entry records +3,378 from 14,724; the same formula now gives 14,685 at `58ae362`). No change so far has removed words to offset what it added.
+- `POLICY.md` (4,914 words) is the owner's and stays verbatim, so the rest, about 15,550 words, is where any trimming would come from.
+- `.agents/skills/workflow/SKILL.md` budgets a session at "about three thousand words" (the repository guide, one procedure and the current records). Three procedures now use more than half of that on their own: `procedures/setup.md` 1,756, `procedures/operations.md` 1,617, `procedures/execute.md` 1,611; `SCHEMA.md` is 2,453 and `QUICKSTART.md` 1,177.
+- Restatement has a price beyond words: IDEA-15's combination found IDEA-14's "a record an open task still names" in `procedures/execute.md` narrower than the `wf ci` check it describes, and that rule now appears in `AGENTS.md`, `procedures/execute.md` and `procedures/readiness.md`.
+- The Super System template that IDEA-09 compared caps its notes at twenty and retires one to add the twenty-first (S7); only the "name the failure prevented" half was adopted here, not the cap.
+
+**Why growth costs:** each session reads more before it acts, which is the adoption cost IDEA-06 recorded; every restatement is a place where two texts can drift apart; and the owner, reviewers and agents all read the same words. Growth is worth it when the added words prevent a recurring failure that no check can catch. A rule a check enforces needs only a pointer to the check (IDEA-11, "checks, not prompts").
+
+**Options for the evaluator (none decided):**
+1. **Measure what a session reads.** Report each procedure's size against the session budget, not only the total; a procedure over about 1,500 words is due for trimming.
+2. **A pruning pass** under `procedures/maintenance.md`: remove restatements, keep one home per rule with pointers elsewhere, and cut to one line each rule a check already enforces. Candidates: `procedures/setup.md`, `procedures/operations.md`, `procedures/execute.md`, `SCHEMA.md`. Needs a target, such as back under 19,000 words, and must weaken no gate (fixtures and tests unchanged).
+3. **A budget:** a change that adds words removes as many elsewhere unless the owner approves the growth explicitly, with the corpus figure already recorded per change as its evidence.
+4. **A mechanical check:** a test that fails when a procedure exceeds its budget, so growth is a decision rather than a drift.
+
+**Limits of the measure:** word count is a proxy. It ignores what a session actually opens (only the guide, one procedure and the records), counts templates that most sessions never read, and says nothing about clarity; a shorter text can be harder to follow. The formula leaves out files agents read, such as the reviewer prompt (`templates/claude/agents/independent-reviewer.md`) and the generated `AGENTS.md`.
+
+---
+
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)
 
 1. **Self-verification by running the app** (IDEA-02, A10, A11). This is the one change the owner explicitly asked for. It is probably the highest-value item, and the harness credential limit needs a practical workaround.
@@ -716,3 +756,4 @@ Implemented for A the same evening: `createEnforcedTrust` in `validator/lib/trus
 8. **A lighter shell around the same rules** (IDEA-09, added 2026-09-25). The Super System template restates much of `POLICY.md` in a quarter of the words, adds owner-facing surfaces (one measure, one-page state, dashboard, inbox, portfolio), product-code guards and a naive unattended loop, but has no approval evidence, budgets or recovery. Its value here is as a design for the lite lane that IDEA-06 and IDEA-08 keep asking for, and as a source of small, concrete gates (a failing run per acceptance, a runnable verification command, rollback exercised before release).
 9. **Checks, not prompts** (IDEA-11, added 2026-09-25). Quality across a growing codebase comes from the project's own required checks and from turning recurring review findings into new checks. The workflow can require those checks and record what each layer catches; it cannot supply stack-specific checkers, and the owner's approval stays an evidence check, not a code audit.
 10. **More than one owner** (IDEA-13, added 2026-09-25). Two people can share a project if the shared facts are on GitHub rather than on one machine: claims as branches, IDs checked against history, what waits on whom in the status issue. Who approves what between people stays a rule the people keep, since GitHub checks only that some code owner approved.
+11. **The cost of the instructions themselves** (IDEA-16, added 2026-09-26). Each change records its word count but nothing pays growth back; the corpus grew by more than a third in two days. The question is whether to trim, and whether growth needs a budget.

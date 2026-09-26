@@ -81,7 +81,7 @@ export function loadAll(source, recordsDir) {
 
 // With two or more people in the profile's `owners`, every task names the person whose agents implement it
 // and every milestone the person who authorises and accepts it, so work cannot sit unassigned or with a
-// misspelt owner that no one's agents pick up (procedures/execute.md, "More than one person").
+// misspelt owner that no one's agents pick up (procedures/shared.md).
 // The profile's `owners` when it lists two or more distinct GitHub usernames, otherwise none.
 export function listedOwners(profile) {
   const raw = profile?.owners;

@@ -6,7 +6,7 @@ This repository maintains the workflow itself. Workflow changes need independent
 
 - Shared entry: `.agents/skills/workflow/SKILL.md`; Claude entry: `CLAUDE.md`.
 - Setup and identity: `procedures/setup.md`, `procedures/identity.md`; model-free scaffold: `bin/wf-adopt`.
-- Readiness and implementation: `procedures/readiness.md`, `procedures/execute.md`.
+- Readiness and implementation: `procedures/readiness.md`, `procedures/execute.md`; two or more owners: `procedures/shared.md`.
 - Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`.
 - Deployment, incidents, maintenance, upgrades: `procedures/operate.md`.
 - Feedback and maintenance: `procedures/maintenance.md`.

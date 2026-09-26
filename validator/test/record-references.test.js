@@ -95,3 +95,11 @@ test('ci does not fail an edit of a record whose older name already dangles', t 
   assert.match(added.text, /T-0003 names T-0008 in prerequisites, but/);
   assert.doesNotMatch(added.text, /names T-0001/, 'only the name the change adds');
 });
+
+test('ci names a naming record without an id by its path', t => {
+  const p = setup(t);
+  const base = p.merge(p.branch('no-id', p.main, { add: { 'T-0005': task('T-0005', 'prerequisites', 'T-0001').replace('id: T-0005\n', '') } }));
+  const r = p.ci(base, p.branch('remove-named', base, { remove: ['T-0001'] }));
+  assert.equal(r.status, 1, r.text);
+  assert.match(r.text, /T-0001\.md is removed, but T-0003 \(prerequisites\), docs\/workflow\/tasks\/T-0005\.md \(prerequisites\) name T-0001;/);
+});

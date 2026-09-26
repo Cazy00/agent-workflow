@@ -54,7 +54,8 @@ const namesIn = data => NAMED.flatMap(field => list(data?.[field]).filter(v => /
 function recordReferences({ baseline, candidate, rd, changed }) {
   const errors = [];
   const dir = `${rd}/${DIRS.task}/`;
-  const tasks = [...loadAll(candidate, rd).tasks.values()].map(r => r.data).filter(Boolean);
+  if (!changed.some(p => p.startsWith(dir))) return errors;
+  const tasks = [...loadAll(candidate, rd).tasks.values()].filter(r => r.data).map(r => ({ ...r.data, id: r.data.id ?? r.path }));
   for (const p of changed) {
     const id = p.startsWith(dir) ? p.slice(dir.length).match(/^(T-\d{4})\.md$/)?.[1] : null;
     if (!id) continue;

@@ -7,8 +7,10 @@ on:
     branches: [main]
 permissions:
   contents: write
+# One group per commit: GitHub drops a pending run when a newer one joins its group, so a shared group could lose the
+# run for the merge that bumped the version.
 concurrency:
-  group: release-tag
+  group: release-tag-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   tag:
@@ -18,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0 # the tag goes on the commit that last changed package.json
+          fetch-depth: 1
       - name: Tag the version if it has no tag yet
         run: |
           set -euo pipefail
@@ -28,9 +30,9 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "$tag already exists"; exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # The commit that set the version, not merely the newest push: a run that GitHub drops or delays while later
-          # merges land still tags the right commit.
-          target="$(git log -1 --format=%H "$GITHUB_SHA" -- package.json)"
+          # The pushed commit itself. GitHub refuses the Actions token a tag on an older commit whose workflow files differ
+          # from main's (v1.6.0's first run failed that way), so the version-bump merge is tagged by its own run.
+          target="$GITHUB_SHA"
           git tag -a "$tag" "$target" -m "$tag: $(git log -1 --format=%s "$target"). Tagged by .github/workflows/release-tag.yml after ${GITHUB_ACTOR} merged to main."
           git push origin "refs/tags/$tag" || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null
           echo "tagged $tag at $target"

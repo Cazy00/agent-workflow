@@ -1,0 +1,1441 @@
+{
+  "schema": "wf-speckit-compatibility/v1",
+  "compatibility_api": 1,
+  "status": "experimental-source-contract",
+  "upstream": {
+    "version": "1.0.12",
+    "revision": "e77daa9021d20db26b878f7dfa5640fe5a42d04e"
+  },
+  "hosts": [
+    "darwin",
+    "linux"
+  ],
+  "integrations": [
+    "codex",
+    "claude"
+  ],
+  "script": "py",
+  "python_minimum": "3.11",
+  "feature_root": "docs/specs",
+  "lock_path": "docs/workflow/speckit.lock.json",
+  "lock_schema": "wf-speckit-lock/v1",
+  "preset_id": "agent-workflow",
+  "extension_id": "agent-workflow",
+  "allowed_overrides": [],
+  "certified": false,
+  "packaged_assets": [
+    {
+      "path": "specify_cli/__init__.py",
+      "sha256": "22e1649bdc85337c735e4030b78a451a30661338e324ef0abc0f2a54b8407fee"
+    },
+    {
+      "path": "specify_cli/_agent_config.py",
+      "sha256": "443407395dea2952723d017fff2cc2935d7f0d8267be908427599abf61e51ee6"
+    },
+    {
+      "path": "specify_cli/_assets.py",
+      "sha256": "5b540633ca45f6b35675647bd4fc755905851618c634920f15c51dc61f81f505"
+    },
+    {
+      "path": "specify_cli/_console.py",
+      "sha256": "d6974d355e73922483bf8809e79a2c26f578594fde39c131a6eb94a15b850c52"
+    },
+    {
+      "path": "specify_cli/_download_security.py",
+      "sha256": "62cc2b246ebccf0800b4781bb4b88cca71b8c4e131699a83f838a1cbc47595d0"
+    },
+    {
+      "path": "specify_cli/_init_options.py",
+      "sha256": "3a70ae9fd79a806b8e5c9c381ceec2fc6a13ac0e588ce439cc05bf0a32d238cc"
+    },
+    {
+      "path": "specify_cli/_installed_list_json.py",
+      "sha256": "095dd21c9cf2b4b0221592ae8bbc36186efc0090453414bcf1fa615b37983735"
+    },
+    {
+      "path": "specify_cli/_invocation_style.py",
+      "sha256": "903298d6f74c40bb49fe4908590c7aee98e4891c3ab656f099646fcf53204efe"
+    },
+    {
+      "path": "specify_cli/_project.py",
+      "sha256": "137edc09ff52f3f6b42bab9ca2f4a14123df406602ddbe1f9444422b073ed24e"
+    },
+    {
+      "path": "specify_cli/_toml_string.py",
+      "sha256": "6d5aa4f7b84a41e8b686e4ea725679212c17f213acb484039347644249070c37"
+    },
+    {
+      "path": "specify_cli/_utils.py",
+      "sha256": "d22edb40cc2e0df7d01962ae59ca3da3263ef4cc13ed45660505d2f23488dcfc"
+    },
+    {
+      "path": "specify_cli/_version.py",
+      "sha256": "c91dc0ec611c87034eecca2c1fa9127cd8ca4515ee6df5c0c844fe8b694b7a84"
+    },
+    {
+      "path": "specify_cli/agents.py",
+      "sha256": "b89241a2548efe8b9a4f9359f7c84d8208a24fe1a677036eb49c9938e88c5e94"
+    },
+    {
+      "path": "specify_cli/artifacts/__init__.py",
+      "sha256": "bdf7092e98c956e2c2e8a546a9c3621220282a0a2eb9ac1d8e2a2fcb64284582"
+    },
+    {
+      "path": "specify_cli/artifacts/_commands.py",
+      "sha256": "65322100bc6a89ec3ed5b8c1e538caa43896930e4da860e48eb2d4e596e34681"
+    },
+    {
+      "path": "specify_cli/artifacts/_identifiers.py",
+      "sha256": "6c1b24ec02750c4c4aed723fe19031f2a270f2411e982144a244aff803f6fc76"
+    },
+    {
+      "path": "specify_cli/artifacts/catalog.py",
+      "sha256": "6f8569a971eee329f84deca155576b6072020e564e77cc2e85a44183762ecd8f"
+    },
+    {
+      "path": "specify_cli/artifacts/command_info.py",
+      "sha256": "9429188ec9ce63142a85f66ff3bbd203cda8337b8b36725809130c14ae14a994"
+    },
+    {
+      "path": "specify_cli/artifacts/command_list.py",
+      "sha256": "f02afb084742c5e0e8d55e40013e8109cbe03912fa3dcd3a2931457df8f07562"
+    },
+    {
+      "path": "specify_cli/artifacts/command_lookup.py",
+      "sha256": "27b841f770e584858a2328b1f06ab06c966ae4f42e14919c00e2cd6a6cc87289"
+    },
+    {
+      "path": "specify_cli/artifacts/models.py",
+      "sha256": "868d785ba9ddc0e59113dd118f2f0b096ecdcdeff9879791127d5afbeb8c2e0a"
+    },
+    {
+      "path": "specify_cli/artifacts/resolution.py",
+      "sha256": "687c7b4ee9830e5959f7cde2eb3745cb930b55bf794dbd39cb2d2958292a4a17"
+    },
+    {
+      "path": "specify_cli/authentication/__init__.py",
+      "sha256": "d23ccb46e6f1aafb3d6f5ca0fa441108e1e548cc37cd8c9b40b621c549ec1be5"
+    },
+    {
+      "path": "specify_cli/authentication/azure_devops.py",
+      "sha256": "884733b869301fe196e220595b953671aecddedffcdaa9c55055fc21db0d5471"
+    },
+    {
+      "path": "specify_cli/authentication/base.py",
+      "sha256": "da4b1f768e324439b37a6c2933bdb088ac713a1a36680403e22418d95f5da31f"
+    },
+    {
+      "path": "specify_cli/authentication/bitbucket.py",
+      "sha256": "5ce5c7f52c33124c6ceb444a5aced270f40d18ba474772cd580e08d4c4108b7c"
+    },
+    {
+      "path": "specify_cli/authentication/config.py",
+      "sha256": "c46e0cc6471b79e8635c404b53029b0c7931fe2fd3208b3123e5ddfad60ca917"
+    },
+    {
+      "path": "specify_cli/authentication/github.py",
+      "sha256": "5f2268d36e0019f9064343655dd4cd7bcc204ed9a94614feef5ba5ee54c8893f"
+    },
+    {
+      "path": "specify_cli/authentication/github_http.py",
+      "sha256": "9df929820e2328653a7014a863eaf62d5755b7cb4ce4543b08b2a1ee34e8142f"
+    },
+    {
+      "path": "specify_cli/authentication/http.py",
+      "sha256": "6117df8ecfe1fcdd2cc392bf3f6439b5c6b7efbd8c8af7eb6500d512d019fe5d"
+    },
+    {
+      "path": "specify_cli/bundler.py",
+      "sha256": "fe25c9b1c3a40378915cc49c485ad2173bb29f6768d859a0c78abdb2674dd0c3"
+    },
+    {
+      "path": "specify_cli/bundles/__init__.py",
+      "sha256": "7fe6f0ee46af49e3712769eef407200712f4bf9f18139840683fe8bb96428b3f"
+    },
+    {
+      "path": "specify_cli/bundles/_commands.py",
+      "sha256": "15ee656cebe4e9f8256b7dc28e081a19dd69890aa71c98872d1092da62852b1b"
+    },
+    {
+      "path": "specify_cli/bundles/adapters.py",
+      "sha256": "504e23d2d55828caf832a516fe6c8da80540c5c4049445e029f459264502b6fb"
+    },
+    {
+      "path": "specify_cli/bundles/catalog/__init__.py",
+      "sha256": "d2599682bb5d6a36c3db0d079c155f8934cb505a3848ddb932dd79f6a40abd0e"
+    },
+    {
+      "path": "specify_cli/bundles/catalog/command_add.py",
+      "sha256": "10c574cd46ecf113c06b2cf0a9fb2521940b24bb1994f6ff6a8c0e977bdc217f"
+    },
+    {
+      "path": "specify_cli/bundles/catalog/command_list.py",
+      "sha256": "cd4a13eaed2ac5ae98c1a6be71f58a9e93f160d91f11ae15406b3d396e0287ca"
+    },
+    {
+      "path": "specify_cli/bundles/catalog/command_remove.py",
+      "sha256": "299ef354fecc65eb293566d156f82bd5b8690f4fae7fe960c0e165a23389ad75"
+    },
+    {
+      "path": "specify_cli/bundles/catalog_config.py",
+      "sha256": "2c0cfab8dd8621c6512ed5cad46b601d167af1e964d528c53ee148ec4ea981c6"
+    },
+    {
+      "path": "specify_cli/bundles/catalog_stack.py",
+      "sha256": "473b988dad9ef54950048c60a9ef2c7c0f815a08137f4432ccce6ebee0c4476b"
+    },
+    {
+      "path": "specify_cli/bundles/catalogs.py",
+      "sha256": "6860cae9dccf26fa25fbe1baf809478f4f22c81a9cb0b01d6e38709d46e069ba"
+    },
+    {
+      "path": "specify_cli/bundles/command_add.py",
+      "sha256": "ba34ab2c28474cf5af7b1f8a4e683a7e690038f7444b627d448606cfe72a0a32"
+    },
+    {
+      "path": "specify_cli/bundles/command_build.py",
+      "sha256": "0d5a96dd3a4b6641d6bdeae4a8113b32ead6cb1f35c0bebdafb980c2d02fae45"
+    },
+    {
+      "path": "specify_cli/bundles/command_info.py",
+      "sha256": "47e435119f1c3243844b2f599cc20469a50503ff17e60faaa88a7441402364d2"
+    },
+    {
+      "path": "specify_cli/bundles/command_init.py",
+      "sha256": "c5cb4bdb3489bcb2f8f890eef4312c5c56a7f14247ec761369f3832f262c74bc"
+    },
+    {
+      "path": "specify_cli/bundles/command_install.py",
+      "sha256": "a865d5aa473a8885994821d5f6a14807c1aa8276278bfb232f4abbdbdeb4a4fe"
+    },
+    {
+      "path": "specify_cli/bundles/command_list.py",
+      "sha256": "0993fc10dfe21f9a5fb5eba1a8e1466bc111300ca226f4bc47c40e0b93e8ead0"
+    },
+    {
+      "path": "specify_cli/bundles/command_remove.py",
+      "sha256": "31e5d45a235b8bfcffea4c80edb7d403f59bd33fa358d32a738a83275b341858"
+    },
+    {
+      "path": "specify_cli/bundles/command_search.py",
+      "sha256": "53cc8c94272869f455db76b6a8981e6419a5e634a9c504527fd57ca36d13fc89"
+    },
+    {
+      "path": "specify_cli/bundles/command_update.py",
+      "sha256": "3043157780aee72f209940ffa6deeb60ab600133dc6a1f30fd7c5a94236fd973"
+    },
+    {
+      "path": "specify_cli/bundles/command_validate.py",
+      "sha256": "831c472b94f1b96ced7d6cfb079fdbb1c26167977faab5b53e868c45039fb457"
+    },
+    {
+      "path": "specify_cli/bundles/conflict.py",
+      "sha256": "a2ff2df1c1b422b3caa543d7fbce439bab3492095d65d127113de87758672401"
+    },
+    {
+      "path": "specify_cli/bundles/installer.py",
+      "sha256": "63e10cf0e485abd909949a7c0848ab671d4ba17f27c095349658ad565154a42f"
+    },
+    {
+      "path": "specify_cli/bundles/manifest.py",
+      "sha256": "1d6f8240aad8e6da27a0ec9f0e1c06442d857bda2157160c3dd05d62e5ccde90"
+    },
+    {
+      "path": "specify_cli/bundles/packager.py",
+      "sha256": "b92f1ef615086b7f0ea3bf00b26c53811e6fa1b4fa9dc19d6d851eae8cd4bbb7"
+    },
+    {
+      "path": "specify_cli/bundles/primitives.py",
+      "sha256": "797253df9fcd5a0dc7eca85ef387b76328e60e09c9a0479ea910b17b06c882f3"
+    },
+    {
+      "path": "specify_cli/bundles/project.py",
+      "sha256": "eec9ed5996970f99224078de053ae577cea4f9e79a07e6403de7adb2c87f9f1f"
+    },
+    {
+      "path": "specify_cli/bundles/records.py",
+      "sha256": "c37214d7534eda9bd94dc3fe33e7249b4d809747e0c2d01b19d1eb2439358898"
+    },
+    {
+      "path": "specify_cli/bundles/references.py",
+      "sha256": "5214b2df8ca3d3f4c932d2bb3693eb3a3f11e6a27e6758561dd146874c9b841b"
+    },
+    {
+      "path": "specify_cli/bundles/resolver.py",
+      "sha256": "5898378ddba7d5139e14b68513ffe0418ea624168b5d44f084ba19b5e49f264b"
+    },
+    {
+      "path": "specify_cli/bundles/sources.py",
+      "sha256": "fca11f1d271879d5a7ec2969bdf3075aa7f20fd2150fada3f9ee0230d53224c8"
+    },
+    {
+      "path": "specify_cli/bundles/validator.py",
+      "sha256": "af41bce1ef8761771d36ea5c2351e4f3d7e2c0e6634f1c9e85d259db3d36f9c7"
+    },
+    {
+      "path": "specify_cli/bundles/versioning.py",
+      "sha256": "e64c267d45c96a823e046cb941dfec79612e61f89f66196d5384374dbb04a1fd"
+    },
+    {
+      "path": "specify_cli/bundles/yamlio.py",
+      "sha256": "b0b1b8ac096d7e4e7243cde66070b18b5f02747b3ac9adb9767d1a77c8ee02b7"
+    },
+    {
+      "path": "specify_cli/catalogs.py",
+      "sha256": "f38f390844a408ce3c69f42c49a2ced19ed9592a58b6e755cd9e2d8d414dde13"
+    },
+    {
+      "path": "specify_cli/command_check.py",
+      "sha256": "5bd147af844b45fc72809ef60da4662597870d8807aa4d1dc854bdaa20d3f502"
+    },
+    {
+      "path": "specify_cli/command_init.py",
+      "sha256": "54ad7f6e62af09e7cd41cefd66a1bcbb46c3f0260c50ece70805d41c16466d24"
+    },
+    {
+      "path": "specify_cli/command_version.py",
+      "sha256": "220ca878295f770f6833632f4fbd4a9d6567cf1c9fa1bdbdd4367e8b12b25c0b"
+    },
+    {
+      "path": "specify_cli/core_pack/bundles/catalog.community.json",
+      "sha256": "9ad3d3296075cd4535d544523b9fe5348889f0877dd54a24d2729a371cd352a8"
+    },
+    {
+      "path": "specify_cli/core_pack/bundles/catalog.json",
+      "sha256": "5cd2952a924287bd591a0247bee53a4edf56be7101d9ac7f4805c6df0d1385f3"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/analyze.md",
+      "sha256": "ffe0640ebe778795737937f2d4ec6f0149d7d55b72692e25369a668f985d1dfe"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/checklist.md",
+      "sha256": "1192784f378fb977b408b72ca1bfb8fc55e129519f3f44bc5d0a7e152c480654"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/clarify.md",
+      "sha256": "5260d798c5671deb9ac7e59d6ffdb69b30c26fb28878d3cc25e30fb71cacc734"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/constitution.md",
+      "sha256": "a915ba6ae5fdbd499c143204eab3888b95a0ff0656e2c16b40282375acb5902c"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/converge.md",
+      "sha256": "4fb017b2869ad02d58aafe272a90077187ce4231f08effee6f340b0f3a07fc16"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/implement.md",
+      "sha256": "feab334232940cfd4ecbcdae41cf63ccb7d581a60380230837385f296f7b49bd"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/plan.md",
+      "sha256": "206a0386d20b3eed4c087a4d9de247a3e7b2b59348bf3c801fc74f63ca2726a5"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/specify.md",
+      "sha256": "7d5a88e6afa504f1d16503df6bf8664f30e3df812b83f9a456a2eaccaeb638ee"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/tasks.md",
+      "sha256": "2f9176c6e7c23d2a83d2bd018ffa1e67aee977389a57f2a3fe35fe987b425944"
+    },
+    {
+      "path": "specify_cli/core_pack/commands/taskstoissues.md",
+      "sha256": "a4298d09f8737bb41abbad481589ecfa277cb222d042c7f244194a3b51828900"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/README.md",
+      "sha256": "a156f3e8683e3763ea0d5edf91a7663b566d396692621d7fb663971f499dfcf7"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/agent-context-config.yml",
+      "sha256": "3964d21a0aeb3568a6622edcc40522697ef8dfc14b6212d76bbadfe62840265c"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/agent-context-defaults.json",
+      "sha256": "fa5ab8ecdef8c85cf576f00d30c6d3e5d1d3479545dfac2a834663678b6697da"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/commands/speckit.agent-context.update.md",
+      "sha256": "215e3df01bafd18e051e31fbb05c5b4986879a3b00127865c62adaec0785ea6d"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/extension.yml",
+      "sha256": "132bcd2b1ab7a1e61e5072682340e0a7fef0d6aa815d4c42ac168cceb01e6308"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/scripts/bash/update-agent-context.sh",
+      "sha256": "356ba4508ab6ab47af23b9ad945e8a5730b8289289d896cfe234eba055a9602e"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/scripts/powershell/update-agent-context.ps1",
+      "sha256": "75dd50b5070728560926f47a3238e4203efa79da63131b97815adffda9236b7a"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/agent-context/scripts/python/update_agent_context.py",
+      "sha256": "5b3c5770d12c06d9854edbe657016dfc8ea276ada3865f5de1dcc3b3e7d5bdcf"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/README.md",
+      "sha256": "3eea79b902052a0ec76d5fd157c0e6eb71d4b7581703171b25289669eea70b29"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/commands/speckit.assess.decide.md",
+      "sha256": "3e427c50c90646bcd9ca590f889633ba7d16cb4880ffe9c6ca1df59c461638d4"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/commands/speckit.assess.define.md",
+      "sha256": "cd75d8a4839efb189f1209bbb0d33a52ff0977742d1de8d6f8daf3e8bb4b043b"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/commands/speckit.assess.intake.md",
+      "sha256": "e3d76bef113c041f28232f6d3ba37403d409e4a04671d0838fae74c6dedfe759"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/commands/speckit.assess.research.md",
+      "sha256": "200dd254abfdb7cc93bed47a6fac9ca9ae0f01bb3f247fe3d73c3fd581245bdd"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/commands/speckit.assess.shape.md",
+      "sha256": "6c2fd8c1687ac5b1e02891bcaf5c83f5ac408bd391b6dd7cfe09ad82272179ab"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/assess/extension.yml",
+      "sha256": "a1c87d9ce8088e7865f1d352137777a693b0595ccc310957c7c051a604ca1db2"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/bug/README.md",
+      "sha256": "5e5f966ddd45714ce547b526e94c45a69ee2946f3d873916ba0148418de106ba"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/bug/commands/speckit.bug.assess.md",
+      "sha256": "6786963d1f89d129e63ac60e570ad28702d59813455fc95284d2facc1eb6b52f"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/bug/commands/speckit.bug.fix.md",
+      "sha256": "df8b28b3687617fa883998d060e5402a2baabd34023bef3d1fbcde9e014c5bf6"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/bug/commands/speckit.bug.test.md",
+      "sha256": "ac2ab5542b0a9b098af75baad0b23b49e3763b8893eda8497bf234fb5a0df2ff"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/bug/extension.yml",
+      "sha256": "1d0da5458f3c18ff08cf1602d88cecc33fad07068208951fb7128090cfa90c90"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/README.md",
+      "sha256": "a2957d9756920058e20adf108dc9754fc3f31519dcbdfe3559f08f95d489f66c"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/commands/speckit.git.commit.md",
+      "sha256": "8e6826f161365dc9c738f006d64103d967caf3ee6502dfe756bfb9ff51be3d71"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/commands/speckit.git.feature.md",
+      "sha256": "f8dec57042b3e477dae7c896bd8515cc7f5806ce9d9898445fa9f4445f660ff2"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/commands/speckit.git.initialize.md",
+      "sha256": "d89e32ec18b3305b8d00ac64069b67b80110074b8b6bd65ede1ea522baa25493"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/commands/speckit.git.remote.md",
+      "sha256": "00397aff45bf00d3111b4f162e4220fd5a9020e72e4afe9179859c21bcd8aac3"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/commands/speckit.git.validate.md",
+      "sha256": "fa5fdbed9b3fa5ecc55091ee3043a6543f3bffcf4f454ee38aa6c488c9706174"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/config-template.yml",
+      "sha256": "7451b7fcc96f368de7536f66e1caaa84525c7573b6b3c241e41561374167cab3"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/extension.yml",
+      "sha256": "698cc7089602db44622de39730555db4999cda94ab47195bcfe18f41d08b430a"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/git-config.yml",
+      "sha256": "7451b7fcc96f368de7536f66e1caaa84525c7573b6b3c241e41561374167cab3"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/bash/auto-commit.sh",
+      "sha256": "351baa7f4f0ecdfb281790ef223f8981a587ec8a2582c013824b1bcfc6039869"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/bash/create-new-feature-branch.sh",
+      "sha256": "22f22cbd2ba7fa4876a94f90d90accff633dbcd8f2ea8d196930e1cf0cb238ae"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/bash/git-common.sh",
+      "sha256": "a27b59fe3d6dfc36f58754e4ad98fb65d010d0fc3b61d1d2ee5ee809588c0ca0"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/bash/initialize-repo.sh",
+      "sha256": "19f1a8bcb591d988a516bd661f9da7029b5a6f265ab27a769d390099104d0763"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/powershell/auto-commit.ps1",
+      "sha256": "79208effa0941b0e9289d014fdc33d9087159699b0d42c73cc585279dbd05a4e"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/powershell/create-new-feature-branch.ps1",
+      "sha256": "691f706758d2d7cf01014b75bc1a08b9261c5fa7b90badd8d1949d793806ea02"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/powershell/git-common.ps1",
+      "sha256": "04cd6527418ad5c04632b368342ad66915988bf8a35e2cb84d09dbd5378daaaf"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/powershell/initialize-repo.ps1",
+      "sha256": "db2aaa27e4bce62ede09d00d94eb42beaf272f4dcddd39732b311de28b4f19a1"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/python/auto_commit.py",
+      "sha256": "f82a73965dcc56d8ec085f6478abeefdb3e15cc7a7149e1bb3ff52438bad1b52"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/python/create_new_feature_branch.py",
+      "sha256": "c97285953d7ff20b00f4372ea35b75db9aa723eb18699efbec259101f7337cff"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/python/git_common.py",
+      "sha256": "0d8590aa2edebe8b251bede591dcca194720a3770974f5c964152898e5150596"
+    },
+    {
+      "path": "specify_cli/core_pack/extensions/git/scripts/python/initialize_repo.py",
+      "sha256": "c5b71ff2e3c71e4b5f1184f7bafbf86935437670e633681926483309526f4096"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/constitution-sync/README.md",
+      "sha256": "973ca0bbffa2a74170c0ac15a6e8fda7398339a15317f4afec98a6f1cc0c5b62"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/constitution-sync/commands/speckit.constitution.md",
+      "sha256": "dba4007aa58578b7edfc0b7dedf6b5d02668677227011a85f0be1e673da0cd31"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/constitution-sync/preset.yml",
+      "sha256": "16599780bebfe3470d6a0c24ae6a6a19c91a77efe8d4c10ca25c739098d6656e"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/README.md",
+      "sha256": "7f7291892edc0fadcc18a027c7bc06ff6767ce08f21039876cd7f455be200536"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/commands/speckit.constitution.md",
+      "sha256": "56ca2ffc2938d04285adc8e0a7cc33164d7f0b8538d5b8aa70791de6ddb9f0a0"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/commands/speckit.implement.md",
+      "sha256": "d50654ebfad997092a939d7020e546c48be47aa676c7ddeb90eb70b5cf20767c"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/commands/speckit.plan.md",
+      "sha256": "d4dbd594dc8ea9853583353cfc556ac419ffedf2300c207d4ce75c24debe2ab9"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/commands/speckit.specify.md",
+      "sha256": "9d68997ce418cc3293f66f946681bed0a33328c64a05757c0554ded19eec0ce2"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/commands/speckit.tasks.md",
+      "sha256": "b363acd5cdbc3312b2fa03c763913515947feb214702281fe13355401ebd0210"
+    },
+    {
+      "path": "specify_cli/core_pack/presets/lean/preset.yml",
+      "sha256": "d316b3ad5f41988d51fe2b7faedab9c942edc68b44cf6970d5e26ef5a8522751"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/check-prerequisites.sh",
+      "sha256": "5e5e3dbfe29d8ca0a6f06de80fb2042cd3d26f42cff475b3a097c4aa0d70f16d"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/common.sh",
+      "sha256": "adaec9a43ecaa52609eeb9661d5f9c36a41d3160aa2bd714be9973082d0dc2d2"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/create-new-feature.sh",
+      "sha256": "7f85da63527be6464b08e79578b35b33d0b259fa7653a61ae64da626a26207e2"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/resolve-template.sh",
+      "sha256": "829e227096abc8bf0889889ec9f792f503ca5d395b7836a8a7eb739ee75214e7"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/setup-plan.sh",
+      "sha256": "d0bd298c026446f3c63167130d65e49e4aa4485de6bef18bcdfd57b19aa0de96"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/bash/setup-tasks.sh",
+      "sha256": "0f7d7e996ed4a26ab7bf09bf10540366ee402b930a4a9cbc0ee7bc6a8bd0013b"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/check-prerequisites.ps1",
+      "sha256": "c7fa3dac16b9a71c0173dc6431072b83472b0e55177e08eb14be5a0ad8d6fa7a"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/common.ps1",
+      "sha256": "e354c24dece2f6537234c756f22227e7db189ade6bcaccbc4b9ca13c15706125"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/create-new-feature.ps1",
+      "sha256": "916f79f0487151a2034cd2eb2aab2fc6fa12bc3e636cb35f311baf8c945902ab"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/resolve-template.ps1",
+      "sha256": "e49c565a09902e4ebd4b5a51c4e014d5067fdee5b1592f15cb44ef31f430d745"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/setup-plan.ps1",
+      "sha256": "3b8173f1553bbf67ae021af949a29e2d3e3bb35805be95e4ba8d0ab83173c66f"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/powershell/setup-tasks.ps1",
+      "sha256": "21b0acbc5f0789ca24b5834a8739c372b3694262627312abe209818f06c67f8c"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/check_prerequisites.py",
+      "sha256": "368e364d1e08e67ae7c19b46b4e41a35596d6a9468ca7cb391c23e7bf0ae1b88"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/common.py",
+      "sha256": "6f8e233f783953fbf0c8fa2530f98db985562557979ced7a18f6169d9092ae0e"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/create_new_feature.py",
+      "sha256": "4494c7b6eb142331bc9582a5e933952c9256b3790c707c7dfd7fd88f41a8774a"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/resolve_template.py",
+      "sha256": "2e80e872519609b21480e16f1b1ad7620e4469b4faf88af1ecefa8f778c768a0"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/setup_plan.py",
+      "sha256": "4371353b509ff352da27846e6e68d495fce2f9eeda87c28a39f8dc9d5354e438"
+    },
+    {
+      "path": "specify_cli/core_pack/scripts/python/setup_tasks.py",
+      "sha256": "9133333ba0971723d165d5575493404b43ec8d227e96ddbd3a9f63ad2cf174fe"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/checklist-template.md",
+      "sha256": "c65b7f10aa9a965ea9c7f4e879d4ab0240665473731c5e9e638c4acb3ca9afc4"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/constitution-template.md",
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/plan-template.md",
+      "sha256": "dfba43da2b2a207ff8c177a0fba03af074fd45e261696b4b64172041fad2e992"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/spec-template.md",
+      "sha256": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/tasks-template.md",
+      "sha256": "1e448e9153462e8c5b5a55231a54c756d870a82950d4dd9425a2bf5b7008a0d9"
+    },
+    {
+      "path": "specify_cli/core_pack/templates/vscode-settings.json",
+      "sha256": "3db3a1d8417d38a56b405f60b600dce666b4fc47be7fe332a0b051c4bd1fd4b7"
+    },
+    {
+      "path": "specify_cli/core_pack/workflows/assess/workflow.yml",
+      "sha256": "0009e93c843ee9d9690475d9397f0b33c6dc6d2006116288d2ee58ccdff121a8"
+    },
+    {
+      "path": "specify_cli/core_pack/workflows/bugfix/workflow.yml",
+      "sha256": "d3372bdee13805ef852686d160bdfa43ecbce56411459cd7c4ad01c712a63feb"
+    },
+    {
+      "path": "specify_cli/core_pack/workflows/speckit/workflow.yml",
+      "sha256": "177761c5e7df28126beea043b5cb45aeaf7958090c022dc11ac71399422fcfbc"
+    },
+    {
+      "path": "specify_cli/events/__init__.py",
+      "sha256": "4594bd1f6d0f8529608363963df31cf1d0c324a22f13a3d734451d983e06f639"
+    },
+    {
+      "path": "specify_cli/events/command_run.py",
+      "sha256": "6602f61b4bc3d7f3bec9e445c890fd191a0f7df7246fab965055e0a44b44dcd8"
+    },
+    {
+      "path": "specify_cli/extensions/__init__.py",
+      "sha256": "3be601064bfce351b855ec09dc32fa951b947766358c16fe7ea937d48fbe90b6"
+    },
+    {
+      "path": "specify_cli/extensions/_command_update_artifacts.py",
+      "sha256": "189e06611f70b95a1e5ad34dcbcd3a50b133151a7f8eddd91e67156d8d9a7c76"
+    },
+    {
+      "path": "specify_cli/extensions/_command_update_discovery.py",
+      "sha256": "47b2dea9d0aa138f3c3d75765cde6e41b4371e1cca731530a1f5426a3c0cc8aa"
+    },
+    {
+      "path": "specify_cli/extensions/_command_update_transaction.py",
+      "sha256": "70c9425ce2699046988de6e1cc4c9b8bb01ca18455e2a1f6e575ad03354d6037"
+    },
+    {
+      "path": "specify_cli/extensions/_commands.py",
+      "sha256": "59a61b9032713a9f8bf851382c6620e7ebbb2a979ee69b1ed747ec441365d4b6"
+    },
+    {
+      "path": "specify_cli/extensions/catalog/__init__.py",
+      "sha256": "9e4f1a56fa05219aa4a8080a75981aad171a9b7ff374374f76cc0cba2639e0aa"
+    },
+    {
+      "path": "specify_cli/extensions/catalog/_helpers.py",
+      "sha256": "182c6a5f8eb01840374072b464ca3ed1288855f43a9811a53a420e712d059040"
+    },
+    {
+      "path": "specify_cli/extensions/catalog/command_add.py",
+      "sha256": "d146e3ad182834f16d7c5e472d13c25b1c87d817c6edb65e3cbf0ef6a07a09f4"
+    },
+    {
+      "path": "specify_cli/extensions/catalog/command_list.py",
+      "sha256": "00b88da62ceee4015aa4d509dd0daae6d90aecb863a25c970961dd3873c2a4f9"
+    },
+    {
+      "path": "specify_cli/extensions/catalog/command_remove.py",
+      "sha256": "3e6029b26a0b6291244cdf03aadf9eb69eaf9d96ff3efa868b6b5d37a6ea9cf9"
+    },
+    {
+      "path": "specify_cli/extensions/command_add.py",
+      "sha256": "54469c181893c63342ba84c48d5fbe8ccff87590d3c7fd9b57df14e362823de7"
+    },
+    {
+      "path": "specify_cli/extensions/command_disable.py",
+      "sha256": "1682006a4a5be2fc2cd50bea79de242b120be273315d0dd267d99f8c59d779f0"
+    },
+    {
+      "path": "specify_cli/extensions/command_enable.py",
+      "sha256": "e1310ae5f76706a07d963b7d6c7d30a350cd96e40617e99c31479ed2b0eb318b"
+    },
+    {
+      "path": "specify_cli/extensions/command_info.py",
+      "sha256": "88506ff21c5566bf6045fc686c1030aa2ed2ca4af81cdd091d8f674b31edb9a2"
+    },
+    {
+      "path": "specify_cli/extensions/command_list.py",
+      "sha256": "b54496cacf231cb8fe6c9381c8c8619c7478e74b039ca63ffb7a4991b620bd8f"
+    },
+    {
+      "path": "specify_cli/extensions/command_remove.py",
+      "sha256": "3ea9b2741d4e0328f9c94a5c5d420b5f6db832de0e096275ee43243be7f57e2a"
+    },
+    {
+      "path": "specify_cli/extensions/command_search.py",
+      "sha256": "ef8f37a421844c2436913a91ccebe5edb4a6f0a6a8895f824625fbd35e0a3623"
+    },
+    {
+      "path": "specify_cli/extensions/command_set_priority.py",
+      "sha256": "314a13c95ae575d49599423e2ffe525c13559d52bbdf8d9a7d9e69703ceb739b"
+    },
+    {
+      "path": "specify_cli/extensions/command_update.py",
+      "sha256": "596c5fe4446f1e839770519f0a5fc8cac4c740da569b24208f04b2eed79fcae0"
+    },
+    {
+      "path": "specify_cli/integration_runtime.py",
+      "sha256": "a317bc9100de976d956457f8c5585271d2b1f08a9fc9435ac56833e7f7ebddae"
+    },
+    {
+      "path": "specify_cli/integration_state.py",
+      "sha256": "102753e52891ff7b28c1e502df2962cdfe10b71c9a868320d316441a753d8ede"
+    },
+    {
+      "path": "specify_cli/integration_status.py",
+      "sha256": "4513d719db5085992245b81aee564c458c206cb34521f7c801000fce16666ecf"
+    },
+    {
+      "path": "specify_cli/integrations/__init__.py",
+      "sha256": "ff2e1e8d8fa7b85f80cef85f05f83c1f25e5407ba1f7807acb14e73dedf50365"
+    },
+    {
+      "path": "specify_cli/integrations/_command_scaffold_generation.py",
+      "sha256": "f9c2a6aef2763f0ad8e2f6cbb17f471ff566b96c0fc8c661b9580a115e2a89ab"
+    },
+    {
+      "path": "specify_cli/integrations/_command_upgrade_layout.py",
+      "sha256": "d0055c80c16094119b0749cb0d3132fac0f2df9c9fcd7b7a357b6c8d11e13f48"
+    },
+    {
+      "path": "specify_cli/integrations/_commands.py",
+      "sha256": "9374b3ab64533250062a3c669d78ae945e7e6ecf2de66f255407ec9c04919ea6"
+    },
+    {
+      "path": "specify_cli/integrations/_helpers.py",
+      "sha256": "0773395052f2e567bc4e9b639255c53780948d26ae514ac11502f8d93c1b5ad3"
+    },
+    {
+      "path": "specify_cli/integrations/agy/__init__.py",
+      "sha256": "12b8c5b6ca5ff543b6a231915992fb81e0810e414b093c6d4c6b0cd5eba75c15"
+    },
+    {
+      "path": "specify_cli/integrations/alquimia/__init__.py",
+      "sha256": "236d41762d7fa9c8ec6febc3092d01bea030ba2366558146e0c547dff19d5f5d"
+    },
+    {
+      "path": "specify_cli/integrations/amp/__init__.py",
+      "sha256": "ae8433a93fc9cb8f6474ff19ce66e957f5ec3dd37327eb939c9d1f55613f77ce"
+    },
+    {
+      "path": "specify_cli/integrations/auggie/__init__.py",
+      "sha256": "ccfd395cb928192e366e26ea5384b5114610e8859f08fd82ce591d6a056c45b8"
+    },
+    {
+      "path": "specify_cli/integrations/base.py",
+      "sha256": "6b4e8e3f39ef27867d426edc23afd2101c1fab0b27402a33e0a79032ba77a1f1"
+    },
+    {
+      "path": "specify_cli/integrations/bob/__init__.py",
+      "sha256": "097c0e542fe3bdea965566fa4e38d1088b74cb7e40e7545a5bb499e41a9d3914"
+    },
+    {
+      "path": "specify_cli/integrations/catalog/__init__.py",
+      "sha256": "97ddc0d1a6d967c88fe7fa6975c4435927b73d319458a1a9b892d8b1ee3e147b"
+    },
+    {
+      "path": "specify_cli/integrations/catalog/command_add.py",
+      "sha256": "0d332987f6676bb49e58f1b2079d0e51b3870577c605d652bae9e95d3e79f75f"
+    },
+    {
+      "path": "specify_cli/integrations/catalog/command_list.py",
+      "sha256": "369b490e523700a17aaf91dc29854b8f0fbcd1cac2838e05096a019cc49d6e8c"
+    },
+    {
+      "path": "specify_cli/integrations/catalog/command_remove.py",
+      "sha256": "db4ed22ae6efdd8df70bcfabdf6549d5ec1b9e0109386051dd7ecf5281b1c3b7"
+    },
+    {
+      "path": "specify_cli/integrations/claude/__init__.py",
+      "sha256": "49d79611a21b64f6aef80f244d598a57940e656f7c02b1384962f723fb070f12"
+    },
+    {
+      "path": "specify_cli/integrations/cline/__init__.py",
+      "sha256": "364d5d0921df08177c4de67620801d00fca1063269dece3b85b6ad874efc9b1d"
+    },
+    {
+      "path": "specify_cli/integrations/codebuddy/__init__.py",
+      "sha256": "b657bbd7d83331526ca61f871150cf48abc78340c51ef16773e6ea8a9ae1a422"
+    },
+    {
+      "path": "specify_cli/integrations/codex/__init__.py",
+      "sha256": "e99fc2f3674aaf0a1c1a82a144b55c9772e8b7982b8f6928b2dd680b8309d0d8"
+    },
+    {
+      "path": "specify_cli/integrations/command_code/__init__.py",
+      "sha256": "e5fab0834d132b6781208d6311fe6481fa42c446045f79cca05868140baeae3f"
+    },
+    {
+      "path": "specify_cli/integrations/command_info.py",
+      "sha256": "808e19e00a2bf3f60cca84b09c9852c97db0f1208f7938a1cd9bcbad85c48345"
+    },
+    {
+      "path": "specify_cli/integrations/command_install.py",
+      "sha256": "293e98f092c047b8ddf50bd195a9b90e6bb62659ebda488a182ed2a6e33f7d2a"
+    },
+    {
+      "path": "specify_cli/integrations/command_list.py",
+      "sha256": "23cf66666bbce2aed967eb714371a7148749acd4d6f01a3c7518575702aa272b"
+    },
+    {
+      "path": "specify_cli/integrations/command_scaffold.py",
+      "sha256": "c00102713f1ad9e0ff1cb3b529641c50db221860102409109aea3cd59e885b21"
+    },
+    {
+      "path": "specify_cli/integrations/command_search.py",
+      "sha256": "b1f9cccffc83f69a8580b93ac4fe3cd8b10f7d1bf06578cbfaf65c24acc2ad9a"
+    },
+    {
+      "path": "specify_cli/integrations/command_status.py",
+      "sha256": "abb695a8f33d72229ccda17d3aa85f2a265c47e313c4f717bc20123b35d007ff"
+    },
+    {
+      "path": "specify_cli/integrations/command_switch.py",
+      "sha256": "87bc80c7c4c19de672584f1c0123c167392b01b30dc75bbb2d5aac78639d307f"
+    },
+    {
+      "path": "specify_cli/integrations/command_uninstall.py",
+      "sha256": "c9228b9147627a615b7ca2dc51d979a393905d9cfd1c7bf3b23f6203c39afc51"
+    },
+    {
+      "path": "specify_cli/integrations/command_upgrade.py",
+      "sha256": "3e821af379465c3267ee445cd41aa01e85ed139d43416dfe024e119a91012cd0"
+    },
+    {
+      "path": "specify_cli/integrations/command_use.py",
+      "sha256": "027ff7da9f2ec17a73eb7df2d68cd4b0d2e297969f2a3abc6bbaf9b8801d72e4"
+    },
+    {
+      "path": "specify_cli/integrations/copilot/__init__.py",
+      "sha256": "7d27975fcf7adc7145a2e50ab7b2d08bf4fd00106f75788018221160e2f36b71"
+    },
+    {
+      "path": "specify_cli/integrations/cursor_agent/__init__.py",
+      "sha256": "9a57e4131a81b245a7fbd5092987a6a9a8550f22d06620ebeead11c7653bc908"
+    },
+    {
+      "path": "specify_cli/integrations/devin/__init__.py",
+      "sha256": "4fa1414f7991d413631dc79343e9a0bc31b97011abf810117f78f7b81ac8ca0a"
+    },
+    {
+      "path": "specify_cli/integrations/docker_agent/__init__.py",
+      "sha256": "996bf3da3e68ed8a56474bb294aac24214b1aafc5d49f50ddbbbadec78567774"
+    },
+    {
+      "path": "specify_cli/integrations/droid/__init__.py",
+      "sha256": "6fee05592582e80efb3ad7243c3d5eae31c2524422e7361b3e905185dc08f66a"
+    },
+    {
+      "path": "specify_cli/integrations/dsh/__init__.py",
+      "sha256": "c0ff8b75b25f4d761081beadd197f238efb059768d2cfe62fea135cefec090a9"
+    },
+    {
+      "path": "specify_cli/integrations/firebender/__init__.py",
+      "sha256": "cbc64fe4d3f2a9a89b5e1ca14951b70eae8c6be3014d600de3130b99147959f6"
+    },
+    {
+      "path": "specify_cli/integrations/forge/__init__.py",
+      "sha256": "1ad2bf135f7616c72126c73888310a789e3897c402a2cf8e3485feaaeb3c53b0"
+    },
+    {
+      "path": "specify_cli/integrations/gemini/__init__.py",
+      "sha256": "abfb3aa75b3162305410bd1ddff4d1611e10e9c03407181c6123cc8904ace7c1"
+    },
+    {
+      "path": "specify_cli/integrations/generic/__init__.py",
+      "sha256": "834b2964696236f2d6cc6d1ce5245b827fd8cd381c2692ff02d1f0b0012325d0"
+    },
+    {
+      "path": "specify_cli/integrations/goose/__init__.py",
+      "sha256": "0138a9567856150c5a5571914a040facd1231584375565f794bd69d4a681e276"
+    },
+    {
+      "path": "specify_cli/integrations/grok/__init__.py",
+      "sha256": "fb9fab8d1bdf20c2e022dea2afea2181e3303e4438ef9c1e994f66b449541a7e"
+    },
+    {
+      "path": "specify_cli/integrations/hermes/__init__.py",
+      "sha256": "ac2ae378c24ce8c36a8d22e3cced29dd1d2a0beb004fc08fb925de35dd4c0ac5"
+    },
+    {
+      "path": "specify_cli/integrations/junie/__init__.py",
+      "sha256": "06421bf67b155fb5dfee28f61c96f7efb4b23c8bb5d299e1065a6ab7f4e7c8e9"
+    },
+    {
+      "path": "specify_cli/integrations/kilocode/__init__.py",
+      "sha256": "fa8ef5421e379f05432e7ee42b886c467e64ae10c85eeb084973f6759abed9b8"
+    },
+    {
+      "path": "specify_cli/integrations/kimi/__init__.py",
+      "sha256": "679aa008ed4728b40311ef3519d5619c4aeccfce5b4593c36954042fe19b586b"
+    },
+    {
+      "path": "specify_cli/integrations/kiro_cli/__init__.py",
+      "sha256": "36f2ee5c2f3872923335dbe4acf3ec0ca4d828b491c87e004bfead891cde3d90"
+    },
+    {
+      "path": "specify_cli/integrations/lingma/__init__.py",
+      "sha256": "b7a11bf93a1bb1c2f027e8c4f352fc3c9065a5fdfb2255c99ab855f820f80443"
+    },
+    {
+      "path": "specify_cli/integrations/manifest.py",
+      "sha256": "275bcd5aa6555367f4489c3d27dc02f9c65ceee9408a5d2533e506f31f4e40ad"
+    },
+    {
+      "path": "specify_cli/integrations/muse/__init__.py",
+      "sha256": "49e89434dcb31a1220888bcddf3ded248067853f6f8081b873fd47bf298a9abf"
+    },
+    {
+      "path": "specify_cli/integrations/omp/__init__.py",
+      "sha256": "eb9d6b4016bad42df9ec1a5ab1874167f43b463f5a649df3a6c2db908a62d8cd"
+    },
+    {
+      "path": "specify_cli/integrations/opencode/__init__.py",
+      "sha256": "f67db37237001c7433ae9846b1791b4b0ca05d765fec057b0cbdc78708176ad0"
+    },
+    {
+      "path": "specify_cli/integrations/pi/__init__.py",
+      "sha256": "c43092587c54ae6a6ad1361856f1c0e079349f2c5a5cd6b3d36fd880a4bb16bb"
+    },
+    {
+      "path": "specify_cli/integrations/qodercli/__init__.py",
+      "sha256": "c20a9a4f87971d82e00192116ed1d5dc8e480ec9b3570b79e5d0a7c647c08f26"
+    },
+    {
+      "path": "specify_cli/integrations/qwen/__init__.py",
+      "sha256": "ca1d2ad44b4a670c7ba02b20c90ccc3b4ee13184820304ea507f97a63a0502db"
+    },
+    {
+      "path": "specify_cli/integrations/rovodev/__init__.py",
+      "sha256": "90576abcc8060b99627d45aee6f93f3d8e1594e0efff80b191eaaa3da02c3844"
+    },
+    {
+      "path": "specify_cli/integrations/shai/__init__.py",
+      "sha256": "01a1ac32f3aa945f1c6764cdf2c413a6607985caa3e5840646bc3bc64d2b3328"
+    },
+    {
+      "path": "specify_cli/integrations/tabnine/__init__.py",
+      "sha256": "6cd6686a8a52dfaf24bc009756292a65b65494d8efca3e93f2d234338b542617"
+    },
+    {
+      "path": "specify_cli/integrations/trae/__init__.py",
+      "sha256": "7530f4d35525033d6f96042dbc3e14ea6bbfb4d3620bf9d0758208f344227634"
+    },
+    {
+      "path": "specify_cli/integrations/vibe/__init__.py",
+      "sha256": "d94d099e37b7668d58a47a1a9523db7f65c3e9e237d8af950521068d898e5eee"
+    },
+    {
+      "path": "specify_cli/integrations/zcode/__init__.py",
+      "sha256": "b5b0a5ecf17054f4bd27950a52eb7d79147f58e7811253a8ebab7d2e2079af97"
+    },
+    {
+      "path": "specify_cli/integrations/zed/__init__.py",
+      "sha256": "5f2103a5a048bb49affdd6f2425db8aaeb2e8482b64732a68ad9d33c243518a5"
+    },
+    {
+      "path": "specify_cli/presets/__init__.py",
+      "sha256": "c984efbad88422a0b8ead5b76f184aac7d00cc588b8a7b0a72ec6600378c923e"
+    },
+    {
+      "path": "specify_cli/presets/_catalog.py",
+      "sha256": "76203cca464f3f9ddf0e4bcaba97e298d7e63fea7fa23a37962efd84dc0c2ae9"
+    },
+    {
+      "path": "specify_cli/presets/_commands.py",
+      "sha256": "b5a98a1eeaefadfbae58b26d8d7d805c3f64cfe944d1ffb8811ad9e00ba66b85"
+    },
+    {
+      "path": "specify_cli/presets/_manager.py",
+      "sha256": "a0f8590adf93a5cbfb75fcd2d8ef15cc8116042aab294003dc8e39e5649adad6"
+    },
+    {
+      "path": "specify_cli/presets/_manager_commands.py",
+      "sha256": "b31b595d4db3ac317c42ba6c0a76b3f10661db704eb44703c4c6ac771c5eb586"
+    },
+    {
+      "path": "specify_cli/presets/_manager_skills.py",
+      "sha256": "918f6ef52adccf53b06c31921d64e2eefeecdb06270b3952679671491758be11"
+    },
+    {
+      "path": "specify_cli/presets/_manifest.py",
+      "sha256": "6ce77b1112d365d6fbe1298408e6b5fe7dd0f652913daf144771a50fa7e1ac4b"
+    },
+    {
+      "path": "specify_cli/presets/_registry.py",
+      "sha256": "e6ae59e421acaee1d6399dab9ee89d02c67555a8978eb4a45738d78dbe60f993"
+    },
+    {
+      "path": "specify_cli/presets/_resolver.py",
+      "sha256": "fd9c84c74ed9957cdcebfc96a44eceff86ae3afea20b352bd326cfb37f99e996"
+    },
+    {
+      "path": "specify_cli/presets/catalog/__init__.py",
+      "sha256": "00097563a7da6abe13bb2fca1369e1eaacd0310a2571092417faf135cbebbb66"
+    },
+    {
+      "path": "specify_cli/presets/catalog/command_add.py",
+      "sha256": "60da665f49c69e8012d3b56212e9956b8f971195af591dcfbb63d515a7718032"
+    },
+    {
+      "path": "specify_cli/presets/catalog/command_list.py",
+      "sha256": "4b03ecf0782d810306db97c13c89134744c3ae470a4b84da3607e274a55fd0a1"
+    },
+    {
+      "path": "specify_cli/presets/catalog/command_remove.py",
+      "sha256": "ee7ab57b9ab26afddcd8c9cff8ba4b01e01243b1d3109cf8453db4585185e76f"
+    },
+    {
+      "path": "specify_cli/presets/command_add.py",
+      "sha256": "de5099bf8dd975416c547730c66e3f6f8123e7e923a6ff772f51b4983e738847"
+    },
+    {
+      "path": "specify_cli/presets/command_disable.py",
+      "sha256": "199bdd98bbbcd1d215c78a502fcfb07ffed379be453c9b14f11864d15a58f521"
+    },
+    {
+      "path": "specify_cli/presets/command_enable.py",
+      "sha256": "9e24c232f136d17e487271cdcdbec34df1163b056f8e0f1b0b1167a8c65b3466"
+    },
+    {
+      "path": "specify_cli/presets/command_info.py",
+      "sha256": "a28b67ecce77d232d0428f193e30b63863fc7c3394f1771d13fadc71fa115f3d"
+    },
+    {
+      "path": "specify_cli/presets/command_list.py",
+      "sha256": "a999c4ddab4450718588cf11d6d4a6d684f073591817c29b59d13d3a0c85c80a"
+    },
+    {
+      "path": "specify_cli/presets/command_remove.py",
+      "sha256": "157febf85a075ec820f84098f8525bf44378e94aeb2e13ed273c982769aa1ad7"
+    },
+    {
+      "path": "specify_cli/presets/command_resolve.py",
+      "sha256": "fc3318b8be869587fdeb21c653772feab90799c4d54e3da67d6d6578a944ab4e"
+    },
+    {
+      "path": "specify_cli/presets/command_search.py",
+      "sha256": "eb851f655b60ffac324d4c1677af811a4b9f04fc3a2e87d91375da4b8c92be9c"
+    },
+    {
+      "path": "specify_cli/presets/command_set_priority.py",
+      "sha256": "732ef6462ae65cefa843f8d5d85a990bd94923abb5b9cb11b0028c0c23adec13"
+    },
+    {
+      "path": "specify_cli/presets/command_update.py",
+      "sha256": "a91a79187cab119043b029717375f2afb0629128f6d4dbc6e49933babca1150b"
+    },
+    {
+      "path": "specify_cli/selfs/__init__.py",
+      "sha256": "9af5b8d456ac6a7be3cd3afcda19d4bf7aab09b74d2692ea93f2f176219156a5"
+    },
+    {
+      "path": "specify_cli/selfs/command_check.py",
+      "sha256": "770049d9c04190e30c2e3179b68f8820442a52faa33a3f00ce2641729b31e1db"
+    },
+    {
+      "path": "specify_cli/selfs/command_upgrade.py",
+      "sha256": "8b556d76d10e4cf6a08fed0b8935ce2e9371816ce9524efbfce499bba1ca5f60"
+    },
+    {
+      "path": "specify_cli/shared_infra.py",
+      "sha256": "d2cbd0b78ac66ac8aafbfa262c18ad186321a6a74045d8e8bb169df134184c3f"
+    },
+    {
+      "path": "specify_cli/workflows/__init__.py",
+      "sha256": "5ddbeaecbf647c47cd53ca8bc4f9a5cf93acf023380ca27c595f7f9e7f91f02c"
+    },
+    {
+      "path": "specify_cli/workflows/_command_resume_state.py",
+      "sha256": "cd771505e4fd822a4bc00c87aa62d4ce1161d137b2a545fe6ec11a8ffbdf8a47"
+    },
+    {
+      "path": "specify_cli/workflows/_command_run_ownership.py",
+      "sha256": "e7e04598d86a564c1a413ce9651a5ff661ae94da6f8abd847c8fb39ce145bfae"
+    },
+    {
+      "path": "specify_cli/workflows/_commands.py",
+      "sha256": "5bc8b44abd07cf01b5484040c014bece3c2775a2ee01af32d13cfbacde575df3"
+    },
+    {
+      "path": "specify_cli/workflows/base.py",
+      "sha256": "a5d33cf5f3891473787749718343c74f8e7d6ee55227ef7c17812d1cabf2e3c9"
+    },
+    {
+      "path": "specify_cli/workflows/catalog/__init__.py",
+      "sha256": "862e3c95f0b838116777e9783f4d3d18ffd8f27db5f68866069ea530b79a157d"
+    },
+    {
+      "path": "specify_cli/workflows/catalog/_domain.py",
+      "sha256": "1b8e8835b85e4b7e51c97a516e0b59fbe133a1d7cc807bdbcd8675f6738ec199"
+    },
+    {
+      "path": "specify_cli/workflows/catalog/command_add.py",
+      "sha256": "274a478abcda32d1fd42dd476453593399436f4af3781568474e88a3d8ba44cd"
+    },
+    {
+      "path": "specify_cli/workflows/catalog/command_list.py",
+      "sha256": "8be4123ea1f8e61ace49365e2caa320c02ec611056a012aed6c17aea9fbaa8af"
+    },
+    {
+      "path": "specify_cli/workflows/catalog/command_remove.py",
+      "sha256": "fbea8ead6499aa358087f740a8d6abcc8c8e7a67eb782a58b1d753ec9cef58bb"
+    },
+    {
+      "path": "specify_cli/workflows/command_add.py",
+      "sha256": "aae9abeba9832e265c497342cc7819d13da3af1f87e8e687aea4b798820542bd"
+    },
+    {
+      "path": "specify_cli/workflows/command_disable.py",
+      "sha256": "6c0ccda5c67c62ee95d3cc11ed96a152730e6628a0098b68d3378dd581237f42"
+    },
+    {
+      "path": "specify_cli/workflows/command_enable.py",
+      "sha256": "615b525da55370b25a2335cc1fff0464026e18c705767d9e3f3771df950505a3"
+    },
+    {
+      "path": "specify_cli/workflows/command_info.py",
+      "sha256": "d6ea70906b00bf655ce273530e109e8314461d762cdf35e9c0dd6a6d425cd806"
+    },
+    {
+      "path": "specify_cli/workflows/command_list.py",
+      "sha256": "6b62fd78a964e0079489baf6026a12dbd1f2232721987e17e8fb64f629536188"
+    },
+    {
+      "path": "specify_cli/workflows/command_remove.py",
+      "sha256": "9bc7cbf543883b93a1fc1641bb34a03e20f69cf74271b44f927dba66b892d1c2"
+    },
+    {
+      "path": "specify_cli/workflows/command_resolve.py",
+      "sha256": "1a8da60e1bc40cdfcd3cda475cd89332dfcf00d4760a7dfab1190abbf0a2c255"
+    },
+    {
+      "path": "specify_cli/workflows/command_resume.py",
+      "sha256": "8ea70d3445f5ff9f03556031587c4a7aeecc056009ebafdd79ac70b840ca7a77"
+    },
+    {
+      "path": "specify_cli/workflows/command_run.py",
+      "sha256": "1b7c486de1b4a3f14871a47e3d18f9838bc3ce59f435c3894c0f61265330a0de"
+    },
+    {
+      "path": "specify_cli/workflows/command_search.py",
+      "sha256": "cad82a2eabd7d23478e9cf23c5db6f1cd5882b16494102d783bb5ef584ec943f"
+    },
+    {
+      "path": "specify_cli/workflows/command_status.py",
+      "sha256": "76f9c8510c71a62988831d4b8e727fea70a5d1bc1a1f6c592d2e17e4008e4f0e"
+    },
+    {
+      "path": "specify_cli/workflows/command_update.py",
+      "sha256": "abf305ab54bd9e09d32254a03bed43df4f0b210f005f1ac43dfe5a185fa31c9b"
+    },
+    {
+      "path": "specify_cli/workflows/engine.py",
+      "sha256": "16e2e257700bc272d37cd58f78bca858d501757b93bca0c3f806b434b77a600c"
+    },
+    {
+      "path": "specify_cli/workflows/expressions.py",
+      "sha256": "69a067a4a180958bde48ff5ebafa2cc217959c29da80ef7d953748241aca9e79"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/__init__.py",
+      "sha256": "0cf4114d0abf975159e32dd4a748b357febbab8b944a9482637b9bbf5797acd3"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_add.py",
+      "sha256": "5e8a0336531d67b1fecaaab28085975992f99e23b72b424c68026ee9b3309723"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_disable.py",
+      "sha256": "ad3db432f1da71f6ccad3e408f38f867a150a5d169d3b492105055dd7a1f4071"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_enable.py",
+      "sha256": "977390d60b406e86566bf1d41ca40ead3f8056ddd996489ac03d19d5c8871db7"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_list.py",
+      "sha256": "1f073e4fe031f6e648fbce2d7c24bc3838899b5244c0a6a85c377b9d97f628cd"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_remove.py",
+      "sha256": "2e162d9658d50db9e25fa9692eaeaa4df273b3727d8ce22d78481c9b1a12aef0"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/command_set_priority.py",
+      "sha256": "89f9e7edf06cce8e5807dfda6e6a41fc9331b2eb1158e619677665d8c5f2a41a"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/composer.py",
+      "sha256": "7d1385b70226ea4d65155bacb6ac31023723c27b09b60cfc7e74488b17081ba8"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/layer_sources.py",
+      "sha256": "91f58a87f5d4f09061d8039e4d401802bf20f51f77653d37e3feea997793d233"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/merge.py",
+      "sha256": "7847759c56ea0cc411c913b462041c5fcd4bff990b78b0768eb037f5e0507791"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/operations.py",
+      "sha256": "9fd2a791ee07cddd09ee0400e2d43a59b57e4da592c0d629012eaef0f3c4a14a"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/resolver.py",
+      "sha256": "0a71fad9fcd5d94d087ec49dd4c76acd02f8f501c45ee7d91bdb40feba8e5c71"
+    },
+    {
+      "path": "specify_cli/workflows/overlay/schema.py",
+      "sha256": "fddbc8e30631160695a25e4d4395cf7465c74e7bd351a043c77ab58a9e49517c"
+    },
+    {
+      "path": "specify_cli/workflows/step/__init__.py",
+      "sha256": "f362ce4fc7adc49bc12f852ade224507b513eb5ab4a9c540e30c32e304d9b485"
+    },
+    {
+      "path": "specify_cli/workflows/step/_helpers.py",
+      "sha256": "d0f144c29ebc85d414e80c0ca64921634caa6487561ecfcdbbed80859a099450"
+    },
+    {
+      "path": "specify_cli/workflows/step/catalog/__init__.py",
+      "sha256": "223a3936fe287dc05848f9c0e5fdebeda2db225471fa1d670b7208337f7092fc"
+    },
+    {
+      "path": "specify_cli/workflows/step/catalog/_domain.py",
+      "sha256": "cf8629c5fad66d513b0f57979e2f3c5fb34a51b9fe6a70e2abf75ad4eba9a007"
+    },
+    {
+      "path": "specify_cli/workflows/step/catalog/command_add.py",
+      "sha256": "618becc16940caecf477c10ef1fb1d43ca352abf43ff234c611b5405a4e0aae0"
+    },
+    {
+      "path": "specify_cli/workflows/step/catalog/command_list.py",
+      "sha256": "dccceba432afbb3e01bb88fa9651ecf455e51e8f520efcb946bd79134fa2a528"
+    },
+    {
+      "path": "specify_cli/workflows/step/catalog/command_remove.py",
+      "sha256": "cefd64aef6300920bc5716d8dc1aa05038d2df3a3723720ad1c3633a80fd7f29"
+    },
+    {
+      "path": "specify_cli/workflows/step/command/__init__.py",
+      "sha256": "6b0fc8e88fab955c123c3bec7f9dd6569cdc6ce1c4eac4764a4aefe08332df21"
+    },
+    {
+      "path": "specify_cli/workflows/step/command_add.py",
+      "sha256": "c4a2efe1cf23a76b8904729f2fdeff20977a3bae4d899b20c573e05f0941b48d"
+    },
+    {
+      "path": "specify_cli/workflows/step/command_info.py",
+      "sha256": "9f3bdbb0acb73e5a36239504b894496cf96b672c735f8ebe2fd84e4aee43fc1d"
+    },
+    {
+      "path": "specify_cli/workflows/step/command_list.py",
+      "sha256": "842a9854a53c7504e7d973d7e0898ddb61c657974c2d8364e10af8970ae66001"
+    },
+    {
+      "path": "specify_cli/workflows/step/command_remove.py",
+      "sha256": "b6357036a425a2182aed1da9403fadc69b0e3c9540b4abdbfcc6bf8fb6a87514"
+    },
+    {
+      "path": "specify_cli/workflows/step/command_search.py",
+      "sha256": "c586a7be09328ef58d435400d995c349d66138c16b8651fc0c901f093fd1c770"
+    },
+    {
+      "path": "specify_cli/workflows/step/do_while/__init__.py",
+      "sha256": "e25ecce043267b0676c805bd4c4ed24ed6cc84487e7f37fbd46dfb67b0b47bc0"
+    },
+    {
+      "path": "specify_cli/workflows/step/fan_in/__init__.py",
+      "sha256": "68d555178d8a0f7bbeb5aed9bba2adff30c315763501cf1f6a64f236e5431c53"
+    },
+    {
+      "path": "specify_cli/workflows/step/fan_out/__init__.py",
+      "sha256": "2966b218cce3c6d079f29170ee4fa622606faa51d3c58461f82a6e2f5ffd387d"
+    },
+    {
+      "path": "specify_cli/workflows/step/gate/__init__.py",
+      "sha256": "2d314532f992828c9d39eac95017f4eb4bbeed788b35f022fff5faf99bc869f1"
+    },
+    {
+      "path": "specify_cli/workflows/step/if_then/__init__.py",
+      "sha256": "395add4d8c33a85a361d45343c76dc0d6dc8bab3a43d0cf98587c1368549191a"
+    },
+    {
+      "path": "specify_cli/workflows/step/init/__init__.py",
+      "sha256": "4f39f1ec583468d7b2d874c11cf3bd52fc971b546069c58a5db72bdca0dd12be"
+    },
+    {
+      "path": "specify_cli/workflows/step/prompt/__init__.py",
+      "sha256": "bbd102b5a205e58e2d06be1483b9e3fe71cfdb5833d66424d391dbf5f941075e"
+    },
+    {
+      "path": "specify_cli/workflows/step/shell/__init__.py",
+      "sha256": "6e47d63c5ccd27c30ff27dfee06594cadb1b661dd0333673ffe4465e2cbf2a78"
+    },
+    {
+      "path": "specify_cli/workflows/step/slot/__init__.py",
+      "sha256": "890f22d6b23969bf7849dd66d1fd37168c2640c954356468b2b2005baed93cc6"
+    },
+    {
+      "path": "specify_cli/workflows/step/switch/__init__.py",
+      "sha256": "b76713589b7afcea7f8bf55655186d25dd8a5fa4196c7102e993258876045f03"
+    },
+    {
+      "path": "specify_cli/workflows/step/while_loop/__init__.py",
+      "sha256": "6391b252732c407e05ca97e42b10e4113115821919a2c884f2ced1b2b7c4f368"
+    }
+  ],
+  "dependency_lock_sha256": "0675a7d8ecc718b7708ebea70c45d4df16e971d9bec5ee95c7c4bf3d3aefb727",
+  "managed_paths": [
+    ".agents/skills/speckit-agent-workflow-prepare/SKILL.md",
+    ".agents/skills/speckit-analyze/SKILL.md",
+    ".agents/skills/speckit-checklist/SKILL.md",
+    ".agents/skills/speckit-clarify/SKILL.md",
+    ".agents/skills/speckit-constitution/SKILL.md",
+    ".agents/skills/speckit-converge/SKILL.md",
+    ".agents/skills/speckit-implement/SKILL.md",
+    ".agents/skills/speckit-plan/SKILL.md",
+    ".agents/skills/speckit-specify/SKILL.md",
+    ".agents/skills/speckit-tasks/SKILL.md",
+    ".agents/skills/speckit-taskstoissues/SKILL.md",
+    ".claude/skills/speckit-agent-workflow-prepare/SKILL.md",
+    ".claude/skills/speckit-analyze/SKILL.md",
+    ".claude/skills/speckit-checklist/SKILL.md",
+    ".claude/skills/speckit-clarify/SKILL.md",
+    ".claude/skills/speckit-constitution/SKILL.md",
+    ".claude/skills/speckit-converge/SKILL.md",
+    ".claude/skills/speckit-implement/SKILL.md",
+    ".claude/skills/speckit-plan/SKILL.md",
+    ".claude/skills/speckit-specify/SKILL.md",
+    ".claude/skills/speckit-tasks/SKILL.md",
+    ".claude/skills/speckit-taskstoissues/SKILL.md",
+    ".specify/.gitignore",
+    ".specify/extensions.yml",
+    ".specify/extensions/.registry",
+    ".specify/extensions/agent-workflow/commands/speckit.agent-workflow.prepare.md",
+    ".specify/extensions/agent-workflow/extension.yml",
+    ".specify/init-options.json",
+    ".specify/integrations/claude.manifest.json",
+    ".specify/integrations/codex.manifest.json",
+    ".specify/integrations/speckit.manifest.json",
+    ".specify/memory/.constitution-template.json",
+    ".specify/memory/constitution.md",
+    ".specify/presets/.registry",
+    ".specify/presets/agent-workflow/commands/speckit.clarify.md",
+    ".specify/presets/agent-workflow/commands/speckit.constitution.md",
+    ".specify/presets/agent-workflow/commands/speckit.implement.md",
+    ".specify/presets/agent-workflow/commands/speckit.plan.md",
+    ".specify/presets/agent-workflow/commands/speckit.specify.md",
+    ".specify/presets/agent-workflow/commands/speckit.tasks.md",
+    ".specify/presets/agent-workflow/commands/unsupported.md",
+    ".specify/presets/agent-workflow/preset.yml",
+    ".specify/presets/agent-workflow/templates/constitution-template.md",
+    ".specify/scripts/bash/check-prerequisites.sh",
+    ".specify/scripts/bash/common.sh",
+    ".specify/scripts/bash/create-new-feature.sh",
+    ".specify/scripts/bash/resolve-template.sh",
+    ".specify/scripts/bash/setup-plan.sh",
+    ".specify/scripts/bash/setup-tasks.sh",
+    ".specify/scripts/python/check_prerequisites.py",
+    ".specify/scripts/python/common.py",
+    ".specify/scripts/python/create_new_feature.py",
+    ".specify/scripts/python/resolve_template.py",
+    ".specify/scripts/python/setup_plan.py",
+    ".specify/scripts/python/setup_tasks.py",
+    ".specify/templates/checklist-template.md",
+    ".specify/templates/constitution-template.md",
+    ".specify/templates/plan-template.md",
+    ".specify/templates/spec-template.md",
+    ".specify/templates/tasks-template.md",
+    ".specify/workflows/speckit/workflow.yml",
+    ".specify/workflows/workflow-registry.json"
+  ],
+  "distribution_sha256": "d2fc3ee79e7533f3ba0e901b26c806ac9c5ce7a967a8bd6ce406570a2b4ba98c",
+  "dependencies": {
+    "annotated-doc": "0.0.5",
+    "click": "8.5.0",
+    "hatchling": "1.32.4",
+    "json5": "0.15.0",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "packaging": "26.3",
+    "pathspec": "1.1.1",
+    "pluggy": "1.6.0",
+    "pygments": "2.21.0",
+    "pyyaml": "6.0.3",
+    "readchar": "4.2.2",
+    "rich": "15.0.0",
+    "shellingham": "1.5.4",
+    "tomlkit": "0.15.1",
+    "trove-classifiers": "2026.9.21.13",
+    "typer": "0.27.2"
+  }
+}

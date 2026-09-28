@@ -102,3 +102,30 @@ test('a profile change other than the pin stales readiness',t=>{
  const p=setup(t);p.edit('docs/workflow/profile.md',s=>s.replace('required_checks: [unit]','required_checks: [unit, lint]'));p.commit();
  assert.ok(p.run().reasons.some(s=>s.includes('stale')));
 });
+
+// The adapter reuses the core dependency closure rather than introducing a
+// second digest that can approve a stale task. Directories cover new contracts.
+for (const change of ['spec', 'plan', 'edit contract', 'add contract', 'remove contract', 'unrelated feature']) {
+ test(`Spec Kit canonical sources: ${change} has the expected freshness effect`, t => {
+  const p = setup(t), tp = 'docs/workflow/tasks/T-0001.md';
+  const feature = 'docs/specs/orders';
+  p.write(`${feature}/spec.md`, 'AC-001-1: approved behavior.');
+  p.write(`${feature}/plan.md`, 'Approved design.');
+  p.write(`${feature}/contracts/order.json`, '{"version":1}');
+  p.edit('docs/workflow/config.json', s => JSON.stringify({ ...JSON.parse(s),
+   planning_frontend: { name: 'speckit', compatibility_api: 1, feature_root: 'docs/specs' } }));
+  p.edit(tp, s => s.replace('feature_readiness: docs/specs/feature.md', `feature_readiness: ${feature}/spec.md`)
+   .replace('governing: [PROFILE]', `governing: [PROFILE, ${feature}/contracts]`)
+   .replace('review: independent context required', `review: independent context required\ndesign: ${feature}/plan.md`));
+  const established = p.commit();
+  p.edit(tp, s => s.replace(/^governing_baseline_revision:.*$/m, `governing_baseline_revision: ${established}`));
+  p.commit(); assert.equal(p.run().outcome, 'Ready', p.run().reasons.join(' | '));
+  if (change === 'spec' || change === 'plan') p.edit(`${feature}/${change}.md`, s => s + '\nChanged.');
+  if (change === 'edit contract') p.write(`${feature}/contracts/order.json`, '{"version":2}');
+  if (change === 'add contract') p.write(`${feature}/contracts/refund.yaml`, 'version: 1');
+  if (change === 'remove contract') fs.unlinkSync(path.join(p.repo, feature, 'contracts/order.json'));
+  if (change === 'unrelated feature') p.write('docs/specs/unrelated/plan.md', 'Independent design.');
+  p.commit();
+  assert.equal(p.run().reasons.some(s => s.includes('stale')), change !== 'unrelated feature', p.run().reasons.join(' | '));
+ });
+}

@@ -1,5 +1,7 @@
 # Discover and assess readiness
 
+For an explicitly adopted Spec Kit planning frontend, also use `speckit.md`: canonical spec/design/contract paths enter these same readiness checks; generated task views and command completion grant no authority.
+
 Read the profile, current governing baseline, feature sources, milestone and task. Fetch the configured authoritative branch through the verified worker route; record its full commit hash. A merge base, stale local ref, newer timestamp, or branch named main does not establish authority. Validate the current owner approval receipt for that exact baseline.
 
 Owner input arrives in `docs/workflow/inbox/`: notes, transcripts, screenshots, links and requirement fragments dropped there without structure. Inbox items are raw and carry no authority. At discovery, and at the start of any session that finds new items, triage each one: quote the owner's words with the date into the profile, a spec, a decision, a milestone or a task; record in the item where it went; move it to `docs/workflow/inbox/done/`. Ask only about what the triage cannot place. A note that resolves a reserved decision is the request, not the approval; the approval route still applies.

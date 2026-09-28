@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0",
+  "preset": {
+    "id": "agent-workflow",
+    "name": "Agent workflow planning",
+    "version": "0.1.0",
+    "description": "Experimental native-ledger planning adapter",
+    "author": "agent-workflow",
+    "repository": "https://github.com/Cazy00/agent-workflow",
+    "license": "MIT"
+  },
+  "requires": {
+    "speckit_version": "==1.0.12"
+  },
+  "provides": {
+    "templates": [
+      {
+        "type": "command",
+        "name": "speckit.constitution",
+        "file": "commands/speckit.constitution.md",
+        "description": "Native workflow constitution boundary",
+        "replaces": "speckit.constitution"
+      },
+      {
+        "type": "command",
+        "name": "speckit.specify",
+        "file": "commands/speckit.specify.md",
+        "description": "Native workflow specify boundary",
+        "replaces": "speckit.specify"
+      },
+      {
+        "type": "command",
+        "name": "speckit.clarify",
+        "file": "commands/speckit.clarify.md",
+        "description": "Native workflow clarify boundary",
+        "replaces": "speckit.clarify"
+      },
+      {
+        "type": "command",
+        "name": "speckit.plan",
+        "file": "commands/speckit.plan.md",
+        "description": "Native workflow plan boundary",
+        "replaces": "speckit.plan"
+      },
+      {
+        "type": "command",
+        "name": "speckit.tasks",
+        "file": "commands/speckit.tasks.md",
+        "description": "Native workflow tasks boundary",
+        "replaces": "speckit.tasks"
+      },
+      {
+        "type": "command",
+        "name": "speckit.implement",
+        "file": "commands/speckit.implement.md",
+        "description": "Native workflow implement boundary",
+        "replaces": "speckit.implement"
+      },
+      {
+        "type": "command",
+        "name": "speckit.analyze",
+        "file": "commands/unsupported.md",
+        "description": "Native workflow analyze boundary",
+        "replaces": "speckit.analyze"
+      },
+      {
+        "type": "command",
+        "name": "speckit.checklist",
+        "file": "commands/unsupported.md",
+        "description": "Native workflow checklist boundary",
+        "replaces": "speckit.checklist"
+      },
+      {
+        "type": "command",
+        "name": "speckit.converge",
+        "file": "commands/unsupported.md",
+        "description": "Native workflow converge boundary",
+        "replaces": "speckit.converge"
+      },
+      {
+        "type": "command",
+        "name": "speckit.taskstoissues",
+        "file": "commands/unsupported.md",
+        "description": "Native workflow taskstoissues boundary",
+        "replaces": "speckit.taskstoissues"
+      },
+      {
+        "type": "template",
+        "name": "constitution-template",
+        "file": "templates/constitution-template.md",
+        "description": "Pointer to native policy authority",
+        "replaces": "constitution-template"
+      }
+    ]
+  }
+}

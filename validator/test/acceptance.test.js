@@ -70,7 +70,7 @@ test('a map that existed on the baseline and was removed still fails closed; one
 
 const renamed = { ...mapping[0], file: 'test/renamed.js', name: 'reject invalid payment after rename' };
 const grant = { task: 'T-0001', from: mapping[0], to: renamed, requirement: 'docs/specs/payment.md' };
-function migrationCase({ declarations = [grant], candidateDeclarations, old = mapping, maps = [renamed], task = 'T-0001', tests, enforced = false } = {}) {
+function migrationCase({ declarations = [grant], candidateDeclarations, old = mapping, maps = [renamed], task = 'T-0001', requiredIds = ['AC-001-1'], tests, enforced = false } = {}) {
   const baseline = source({
     'docs/workflow/acceptance.json': JSON.stringify({ ...definition, mapping_migrations: declarations }),
     'docs/specs/payment.md': 'approved requirement',
@@ -82,7 +82,7 @@ function migrationCase({ declarations = [grant], candidateDeclarations, old = ma
     'test/payment.js': 'old test',
     'test/renamed.js': 'new test',
   });
-  return evaluateAcceptance({ baseline, candidate, task, requiredIds: ['AC-001-1'], enforced,
+  return evaluateAcceptance({ baseline, candidate, task, requiredIds, enforced,
     execution: enforced ? undefined : { revision: 'candidate', tests: tests ?? maps.map(m => ({ ...m, status: 'passed' })) } });
 }
 test('a baseline-approved exact rename for the current task passes with one successful new test run', () => {
@@ -94,6 +94,7 @@ test('a baseline-approved exact rename for the current task passes with one succ
 test('wrong task and candidate-only declarations cannot remove a baseline mapping', () => {
   assert.match(migrationCase({ task: 'T-0002' }).errors.join(' '), /removed required mapping/);
   assert.match(migrationCase({ declarations: [], candidateDeclarations: [grant] }).errors.join(' '), /removed required mapping/);
+  assert.match(migrationCase({ requiredIds: [] }).errors.join(' '), /migrated acceptance is not required by the current task/);
 });
 test('a migration permits only its exact pair and never an unrelated removal', () => {
   const other = { ...mapping[0], name: 'another required scenario' };

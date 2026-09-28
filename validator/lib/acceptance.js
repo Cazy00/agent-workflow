@@ -78,6 +78,10 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     }
     if (oldKeys.has(to)) { errors.push(`${label}: destination is already mapped on the baseline`); continue; }
     if (migration.task !== task || seen.has(from)) continue;
+    if (!requiredIds.includes(migration.from.acceptance)) {
+      errors.push(`${label}: migrated acceptance is not required by the current task`);
+      continue;
+    }
     if (!seen.has(to)) { errors.push(`${label}: destination mapping is missing from candidate`); continue; }
     if (errors.length === entryStart) eligible.push({ from, label });
   }

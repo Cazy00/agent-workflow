@@ -50,7 +50,8 @@ if (live) {
     assert.equal(revision.stdout.trim(), compatibility.upstream.revision);
     assert.equal(spawnSync('git', ['-C', source, 'diff', '--quiet', 'HEAD']).status, 0, 'upstream source must be unchanged');
     for (const file of compatibility.packaged_assets) {
-      const rel = file.path.startsWith('specify_cli/core_pack/') ? file.path.slice('specify_cli/core_pack/'.length) : `src/${file.path}`;
+      const rel = file.path.startsWith('specify_cli/core_pack/commands/') ? `templates/${file.path.slice('specify_cli/core_pack/'.length)}` :
+        file.path.startsWith('specify_cli/core_pack/') ? file.path.slice('specify_cli/core_pack/'.length) : `src/${file.path}`;
       assert.equal(sha256(fs.readFileSync(path.join(source, rel))), file.sha256, rel);
     }
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-speckit-live-'));

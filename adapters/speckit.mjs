@@ -9,6 +9,7 @@ import path from 'node:path';
 import { resolveFeatureContext, verifyAdoptedInstallation } from './speckit/context.mjs';
 import { collectAllocationSnapshot } from './speckit/allocation.mjs';
 import { writeDraftTasks, taskProjection } from './speckit/operations.mjs';
+import { proposeAuthority, activateIntegration } from './speckit/maintenance.mjs';
 export { resolveFeatureContext } from './speckit/context.mjs';
 export { writeDraftTasks } from './speckit/operations.mjs';
 export { renderTaskProjection, verifyTaskProjection } from './speckit/projection.mjs';
@@ -17,6 +18,8 @@ const commands = {
   'check-install': ['repo','integration','lock','python'],
   'context': ['repo','integration','baseline','feature','python'],
   'allocation-snapshot': ['repo','baseline','integration','python'],
+  'propose-authority': ['repo','baseline','integration','python'],
+  'activate': ['repo','baseline','integration','python'],
   'write-tasks': ['repo','integration','baseline','plan','open-pulls','python'],
   'project': ['repo','integration','baseline','feature','task','python'],
   'check-projection': ['repo','integration','baseline','feature','task','python'],
@@ -43,6 +46,8 @@ export function main(argv) {
     for(const key of required)if(!options[key])throw new Error(`required option: --${key}`);
     let result;
     if(command==='check-install')result=verifyInstallation({...options,lock:JSON.parse(fs.readFileSync(options.lock,'utf8'))});
+    else if(command==='propose-authority')result=proposeAuthority(options);
+    else if(command==='activate')result=activateIntegration(options);
     else if(command==='allocation-snapshot'){verifyAdoptedInstallation(options);result=collectAllocationSnapshot(options);}
     else if(command==='context') {
       const plan=options.plan?externalJson(options.plan,options.repo):null;

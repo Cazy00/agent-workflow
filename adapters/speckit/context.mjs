@@ -63,7 +63,7 @@ export function collectFeatureSources({ repo, baseline, feature, milestone, seed
   return [...result].sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([,source]) => source);
 }
 
-export function verifyAdoptedInstallation({ repo, baseline, integration, python }) {
+export function verifyAdoptedInstallation({ repo, baseline, integration, python, allowWorkingProfileDrift = false }) {
   if (!/^[a-f0-9]{40}$/.test(baseline)) throw new Error('exact baseline required');
   const source = gitSource(repo, baseline), config = loadConfig(source);
   if (!planningEnforcement(config).length || (config.records_dir ?? 'docs/workflow') !== 'docs/workflow') throw new Blocked('baseline has not adopted the supported planning contract');
@@ -77,7 +77,7 @@ export function verifyAdoptedInstallation({ repo, baseline, integration, python 
   if (sha256(readPinnedPolicy(lock.core.revision)) !== lock.authority?.policy?.sha256) throw new Blocked('authority pointer differs from pinned core policy');
   if ((loadAll(source,'docs/workflow').profile?.data?.owners?.length ?? 0) >= 2) throw new Blocked('Spec Kit adapter currently supports one owner only');
   const profile = source.read('docs/workflow/profile.md');
-  if (profile === null || sha256(profile) !== lock.authority?.profile?.sha256 || !read(repo,'docs/workflow/profile.md').equals(Buffer.from(profile)))
+  if (profile === null || sha256(profile) !== lock.authority?.profile?.sha256 || (!allowWorkingProfileDrift && !read(repo,'docs/workflow/profile.md').equals(Buffer.from(profile))))
     throw new Blocked('authority pointer is stale for the baseline/current profile; propose the pointer and lock with the governing change');
   return {config,lock,installed};
 }

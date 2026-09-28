@@ -19,7 +19,7 @@ function git(repo, args, accepted = [0]) {
   if (!accepted.includes(r.status)) throw new Error(`Git ${args[0]} operation failed`);
   return {code:r.status,stdout:r.stdout.trim()};
 }
-function withOperation(repo, fn) {
+export function withOperation(repo, fn) {
   const lock = git(repo,['rev-parse','--path-format=absolute','--git-path','wf-speckit-operation.lock']).stdout;
   try { fs.mkdirSync(lock); } catch (e) { if(e.code==='EEXIST') throw new Blocked('another operation or interrupted operation exists; inspect its Git-metadata intent before recovery');throw e; }
   let intent = false, complete = false;

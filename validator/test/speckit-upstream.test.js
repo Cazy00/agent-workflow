@@ -11,6 +11,8 @@ import { sha256 } from '../../adapters/speckit/files.mjs';
 import { verifyInstallation } from '../../adapters/speckit.mjs';
 import { resolveFeatureContext } from '../../adapters/speckit/context.mjs';
 import { assertCommandBoundary } from './helpers/speckit-command-contract.js';
+import { activateIntegration, proposeAuthority } from '../../adapters/speckit/maintenance.mjs';
+import { main } from '../../adapters/speckit.mjs';
 import { taskProjection } from '../../adapters/speckit/operations.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -91,15 +93,33 @@ if (live) {
     const args={repo:project,baseline,feature:'docs/specs/orders',task:'T-0001',integration:'codex',python};
     const context=resolveFeatureContext(args);assert.equal(context.environment.SPECIFY_FEATURE_NO_PERSIST,'1');
     assert.match(context.source_digest,/^[a-f0-9]{64}$/);
+    assert.equal(activateIntegration({...args,integration:'claude'}).changed,true);
+    assert.equal(resolveFeatureContext({...args,integration:'claude'}).environment.SPECIFY_FEATURE_NO_PERSIST,'1');
+    activateIntegration(args);
+    assert.equal(git('diff','--name-only'),'', 'round-trip activation leaves no tracked shared-file diff');
     taskProjection({...args,write:true});assert.equal(taskProjection(args).ok,true);
     fs.appendFileSync(path.join(project,'docs/specs/orders/tasks.md'),'\nManual edit.');
     assert.deepEqual(taskProjection(args).reasons,['projection_modified']);
     assert.throws(()=>taskProjection({...args,write:true}),/explicitly regenerate/);
+    const cli=['--repo',project,'--baseline',baseline,'--feature',args.feature,'--task',args.task,'--integration','codex','--python',python];
+    assert.equal(main(['project',...cli]).code,1,'supported blocked projection state');
+    assert.equal(main(['unknown']).code,2,'invalid input');
     const recovered=taskProjection({...args,write:true,regenerate:true});
     assert.match(fs.readFileSync(path.join(project,recovered.recovery),'utf8'),/Manual edit/);
     assert.equal(taskProjection(args).ok,true);assert.equal(fs.readFileSync(taskPath,'utf8'),native);
     write('docs/specs/orders/spec.md','AC-001-1: changed requirement');
     assert.deepEqual(taskProjection(args).reasons,['projection_stale']);
+    // Proposed profile edits produce only external draft bytes until the
+    // synthetic governing change is committed; no real approval is simulated.
+    fs.appendFileSync(path.join(project,'docs/workflow/profile.md'),'\nProposed owner delegation.\n');
+    assert.throws(()=>resolveFeatureContext(args),/authority pointer is stale/);
+    const beforeProposal=git('diff');
+    const proposal=proposeAuthority(args);assert.equal(proposal.authority,'proposal-only');assert.equal(proposal.changed,true);
+    assert.equal(git('diff'),beforeProposal,'authority proposal does not write project bytes');
+    for(const file of proposal.files)write(file.path,file.text);
+    assert.throws(()=>resolveFeatureContext(args),/lock must match/);
+    git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','core.hooksPath=/dev/null','commit','-qm','synthetic governing candidate');
+    assert.ok(resolveFeatureContext({...args,baseline:git('rev-parse','HEAD')}).source_digest);
     // Exercise the optional scaffold from its exact pin, preserving native entries.
     const scaffold=path.join(temp,'scaffold');fs.mkdirSync(scaffold);
     const adoption=spawnSync(process.execPath,[path.join(root,'bin/wf-adopt'),'--project',scaffold,'--workflow-repo',root,'--rev',ownRevision.stdout.trim(),'--repository','fixture/scaffold','--coordinator','owner','--planning-frontend','speckit','--speckit-python',python,'--json'],{encoding:'utf8',timeout:60000});

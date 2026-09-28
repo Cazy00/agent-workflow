@@ -131,6 +131,14 @@ if (live) {
     assert.ok(fs.existsSync(path.join(scaffold,'.claude/agents/independent-reviewer.md')));
     assert.match(fs.readFileSync(path.join(scaffold,'AGENTS.md'),'utf8'),/workflow/);
     assert.match(fs.readFileSync(path.join(scaffold,'.gitignore'),'utf8'),/docs\/specs\/\*\/tasks\.md/);
+    for(const [name,relative,directory] of [['ignore-directory','.gitignore',true],['cache-file','.cache/agent-workflow',false],['cache-not-git','.cache/agent-workflow',true]]) {
+      const incompatible=path.join(temp,name),target=path.join(incompatible,relative);fs.mkdirSync(path.dirname(target),{recursive:true});
+      if(directory)fs.mkdirSync(target);else fs.writeFileSync(target,'preserve user content');
+      const refused=spawnSync(process.execPath,[path.join(root,'bin/wf-adopt'),'--project',incompatible,'--workflow-repo',root,'--rev',ownRevision.stdout.trim(),'--repository','fixture/scaffold','--coordinator','owner','--planning-frontend','speckit','--speckit-python',python,'--json'],{encoding:'utf8',timeout:60000});
+      assert.equal(refused.status,2,refused.stdout+refused.stderr);assert.equal(fs.existsSync(path.join(incompatible,'docs/workflow/config.json')),false);
+      if(!directory)assert.equal(fs.readFileSync(target,'utf8'),'preserve user content');
+    }
+
     fs.appendFileSync(path.join(staged.directory, '.claude/skills/speckit-plan/SKILL.md'), '\nTampered inactive entry.');
     const damaged = verifyManagedFiles({ repo: staged.directory, lock: staged.lock, integration: 'codex' });
     assert.equal(damaged.ok, false);

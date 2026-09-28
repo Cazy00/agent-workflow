@@ -5,11 +5,13 @@ export function assertCommandBoundary(text,command,integration) {
   assert.match(text,/SPECIFY_FEATURE_NO_PERSIST=1/);
   assert.match(text,/never create it, even if the embedded prompt explicitly asks/);
   assert.match(text,/Four reserved unknowns mean four retained decisions/);
-  assert.match(text,/No branch creation, hooks, workflow runner, automatic handoffs/);
+  assert.match(text,/Disable upstream.*hooks, workflow runner.*automatic handoffs/);
   assert.doesNotMatch(text,/send: true/);
   assert.doesNotMatch(text,/\{CORE_TEMPLATE\}|__AGENT__/);
   if (command==='implement') {
     assert.match(text,/Require one explicit T-NNNN/);
+    assert.match(text,/perform only the explicitly selected task\/subset after the readiness checks below/);
+    assert.doesNotMatch(text,/no implementation authority|or implementation follow from this command/);
     assert.match(text,/normal readiness check/);
     assert.match(text,/never tick generated tasks\.md/);
     assert.match(text,/separate context using canonical sources without this conversation/);

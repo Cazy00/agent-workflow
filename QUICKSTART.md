@@ -58,3 +58,5 @@ Other commands: `paths` classifies the actual diff; `acceptance` checks mappings
 ## Central reporting and assisted runtime
 
 After the owner-directed central mode is adopted, use [operations.md](procedures/operations.md) for `wf report`, `wf runtime` and `wf prepare-evidence`. Their configuration and private outbox live outside the product repository. Reporting works even when readiness blocks implementation; it cannot approve work. The evidence helper currently supports the included Node test reporter, produces unsigned drafts only, and does not imply compatibility with an uninspected product test runner.
+
+Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit.md). A fresh scaffold accepts `--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python` only for the supported pin/environment. Use an explicitly authorised non-production pilot; certification, release and adoption gates remain open.

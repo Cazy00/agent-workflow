@@ -100,6 +100,17 @@ if (live) {
     assert.equal(taskProjection(args).ok,true);assert.equal(fs.readFileSync(taskPath,'utf8'),native);
     write('docs/specs/orders/spec.md','AC-001-1: changed requirement');
     assert.deepEqual(taskProjection(args).reasons,['projection_stale']);
+    // Exercise the optional scaffold from its exact pin, preserving native entries.
+    const scaffold=path.join(temp,'scaffold');fs.mkdirSync(scaffold);
+    const adoption=spawnSync(process.execPath,[path.join(root,'bin/wf-adopt'),'--project',scaffold,'--workflow-repo',root,'--rev',ownRevision.stdout.trim(),'--repository','fixture/scaffold','--coordinator','owner','--planning-frontend','speckit','--speckit-python',python,'--json'],{encoding:'utf8',timeout:60000});
+    assert.equal(adoption.status,0,adoption.stdout+adoption.stderr);
+    assert.equal(JSON.parse(adoption.stdout).planning_frontend.certified,false);
+    const scaffoldLock=JSON.parse(fs.readFileSync(path.join(scaffold,'docs/workflow/speckit.lock.json')));
+    assert.equal(verifyInstallation({repo:scaffold,lock:scaffoldLock,integration:'codex',python}).ok,true);
+    assert.equal(scaffoldLock.authority.profile.sha256,sha256(fs.readFileSync(path.join(scaffold,'docs/workflow/profile.md'))));
+    assert.ok(fs.existsSync(path.join(scaffold,'.claude/agents/independent-reviewer.md')));
+    assert.match(fs.readFileSync(path.join(scaffold,'AGENTS.md'),'utf8'),/workflow/);
+    assert.match(fs.readFileSync(path.join(scaffold,'.gitignore'),'utf8'),/docs\/specs\/\*\/tasks\.md/);
     fs.appendFileSync(path.join(staged.directory, '.claude/skills/speckit-plan/SKILL.md'), '\nTampered inactive entry.');
     const damaged = verifyManagedFiles({ repo: staged.directory, lock: staged.lock, integration: 'codex' });
     assert.equal(damaged.ok, false);

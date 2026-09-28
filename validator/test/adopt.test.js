@@ -153,3 +153,14 @@ test('wf-adopt sets up a shared project with --owner and refuses one owner, a ba
   assert.doesNotMatch(fs.readFileSync(path.join(solo, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project/m);
   assert.doesNotMatch(fs.readFileSync(path.join(solo, 'AGENTS.md'), 'utf8'), /Several people share/);
 });
+
+test('Spec Kit scaffold options refuse unsupported inputs before project writes',t=>{
+ for(const args of [
+  ['--planning-frontend','unknown'],['--planning-frontend','speckit'],['--speckit-python','/tmp/python'],
+  ['--planning-frontend','speckit','--speckit-python','relative/python'],
+  ['--planning-frontend','speckit','--speckit-python','/tmp/python','--owner','alice','--owner','bob']
+ ]) {
+  const dir=project(t),r=adopt(dir,...args);assert.equal(r.status,2,r.stdout+r.stderr);
+  assert.equal(fs.existsSync(path.join(dir,'docs/workflow')),false);
+ }
+});

@@ -1,6 +1,6 @@
 # Spec Kit planning adapter
 
-Experimental and opt-in. Source protection, package inventories and experimental installation checks exist. Composed planning commands and native task helpers are experimental; scaffolding, authority refresh and pilots remain incomplete. `integrations/speckit/compatibility.json` records the intended upstream pin and certification state. An API number is not approval, installation proof or a successful pilot. Existing projects keep their current workflow and approval mode.
+Experimental and opt-in. Source protection, package inventories and experimental installation checks exist. Composed planning commands and native task helpers are experimental; authority refresh and pilots remain incomplete. `integrations/speckit/compatibility.json` records the intended upstream pin and certification state. An API number is not approval, installation proof or a successful pilot. Existing projects keep their current workflow and approval mode.
 
 ## Sources and protected configuration
 
@@ -32,7 +32,7 @@ Build the exact upstream revision from the compatibility manifest in a disposabl
 
 `node adapters/speckit.mjs check-install --repo STAGE --integration codex --lock LOCK --python ISOLATED_PYTHON` returns JSON, with exit 0 for intact local content, 1 for unsupported/mismatched content, 2 for invalid input/execution. Success is explicitly uncertified and supplies no workflow authority. Both inactive and active entries are checked. Upstream switching also changes shared instruction/script bytes; the lock admits only the exact Codex/Claude variants collected during staging, never arbitrary changes.
 
-`applyStagedInstallation` is a library helper for a reviewed staged diff: it refuses collisions before writes, preserves unrelated files, and creates missing files only. The stage holds the intended bytes. After interruption, inspect the target and rerun only with that same stage; identical files are retained, conflicting files stop recovery. Do not delete user files, overwrite existing installations, or treat this helper as an upgrade/approval tool. Consumer scaffold integration and supported upgrade handling remain unimplemented.
+`applyStagedInstallation` is a library helper for a reviewed staged diff: it refuses collisions before writes, preserves unrelated files, and creates missing files only. The stage holds the intended bytes. After interruption, inspect the target and rerun only with that same stage; identical files are retained, conflicting files stop recovery. Do not delete user files, overwrite existing installations, or treat this helper as an upgrade/approval tool. Supported upgrade handling remains unimplemented.
 
 Ordinary `npm test` uses synthetic fixtures without Python/network. The additional live contract lane is:
 
@@ -44,7 +44,7 @@ Missing live inputs fail; supplying live variables without the switch is an erro
 
 ## Experimental native planning helpers
 
-These helpers are available for technical fixtures and a later reviewed installation. The composed feature commands retain native authority; scaffold support, automatic authority refresh and the fresh-agent pilot remain incomplete. Do not adopt this checkpoint into PrintFlow.
+These helpers are available for technical fixtures and a later reviewed installation. The composed feature commands retain native authority; automatic authority refresh and the fresh-agent pilot remain incomplete. Do not adopt this checkpoint into PrintFlow.
 
 All commands require an explicit repository and integration (`codex` or `claude`), matching the verified local selector, and the trusted isolated `--python`. Planning operations also require an exact `--baseline`; its protected config must opt in and its installation lock must match the working copy and core pin. The generated authority pointer binds the pinned policy and exact project profile contents. Changed profiles block until the pointer and protected lock are updated in the same reviewed governing change. This first adapter surface supports one owner; shared-owner projects stop explicitly. Draft batches also undergo native schema/profile validation before any write. The helper never supplies baseline approval or task readiness.
 
@@ -60,3 +60,7 @@ Writes serialize through `wf-speckit-operation.lock` in Git metadata and record 
 ## Command composition
 
 The pinned preset wraps upstream specification, clarification and design prompts. Its native boundary disables persistent feature selection, automatic handoffs/hooks, reserved-choice defaults and numerical limits that would drop unresolved decisions. The tasks and implement entries replace upstream execution: native Draft records are the only ledger, required tests/review remain required, and implementation requires one explicit native task plus normal readiness. Constitution checks the generated pointer; refreshing an existing installation remains an explicit reviewed change, not an automatic command. Materialized-content assertions are technical checks, not proof that a fresh agent follows them. G1 still requires observed Codex and Claude behavior.
+
+## Optional fresh-project scaffold
+
+After authorisation for a non-production pilot, add `--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python` to `bin/wf-adopt`. The Python environment must already contain the pinned verified package/dependencies. The scaffold clones the exact workflow pin outside the project, completes both integrations and collision checks there, then writes the opt-in configuration, managed files/lock and ignore rules. It preserves existing workflow/Claude entries and binds the actual retained profile. Normal invocations retain their existing behavior. It cannot re-scaffold an adopted project, certify the adapter or switch approval mode. On interruption after project writes begin, it preserves the external stage and reports its path; inspect the partial native scaffold and use create-only recovery without deleting user files. Never treat a partial setup as adopted authority.

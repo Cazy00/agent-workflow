@@ -5,13 +5,16 @@
 // checklist into docs/workflow/setup.md.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner'];
+const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner', 'planning-frontend', 'speckit-python'];
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
+  [--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python]
+  Spec Kit is experimental and opt-in; use an authorised non-production pilot until certified release/adoption.
   --owner, given once for each person (two or more), sets up a shared project: the profile's owners and their setup steps.
   The project always starts in manual approval mode; the switch to enforced is a code-owner-reviewed pull request after setup steps 5 and 9.
   Writes docs/workflow/config.json (full-hash pin), the record directories, profile/setup/acceptance seeds,
@@ -53,6 +56,10 @@ if (o.owner.length === 1) fail('--owner is for a shared project: give it once fo
 for (const name of o.owner) if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(name)) fail(`--owner ${name} is not a GitHub username`);
 if (new Set(o.owner).size !== o.owner.length) fail('--owner names a person twice');
 const shared = o.owner.length >= 2;
+if (o['planning-frontend'] && o['planning-frontend'] !== 'speckit') fail('unsupported --planning-frontend');
+if (Boolean(o['planning-frontend']) !== Boolean(o['speckit-python'])) fail('--planning-frontend speckit requires --speckit-python, and vice versa');
+if (o['planning-frontend'] && shared) fail('the experimental Spec Kit adapter supports one owner only');
+if (o['speckit-python'] && !path.isAbsolute(o['speckit-python'])) fail('--speckit-python must be an absolute isolated Python executable');
 const workflowRepo = path.resolve(o['workflow-repo'] ?? path.join(HERE, '..'));
 const project = path.resolve(o.project);
 if (!fs.existsSync(project) || !fs.statSync(project).isDirectory()) fail(`project directory not found: ${project}`);
@@ -111,7 +118,6 @@ config.approval = { ...(config.approval ?? {}), mechanism: 'manual-signed-receip
 config.paths ??= {};
 config.paths.production ??= [];
 for (const g of o.production) if (!config.paths.production.includes(g)) config.paths.production.push(g);
-write('docs/workflow/config.json', JSON.stringify(config, null, 2) + '\n');
 
 // Records: profile, setup record, empty acceptance definitions and mappings, record directories, inbox.
 const name = o.repository.split('/')[1];
@@ -122,6 +128,28 @@ profile = setLine(profile, 'coordinator', o.coordinator);
 profile = setLine(profile, 'approval_mechanism', 'manual-signed-receipts');
 profile = setLine(profile, 'approval_label', 'manual');
 if (shared) profile = setLine(profile, 'owners', `[${o.owner.join(', ')}]`);
+
+// Optional staging executes only the exact pinned adapter in an isolated clone.
+// Complete inventory/runtime/collision checks precede the first project write.
+let speckit = null, scaffoldStarted = false, scaffoldComplete = false;
+if (o['planning-frontend']) {
+  if (optional('adapters/speckit/scaffold.mjs') === null) fail('the pinned workflow has no Spec Kit scaffold support');
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-adopt-speckit-'));
+  process.on('exit', () => {
+    if (!scaffoldStarted || scaffoldComplete) fs.rmSync(temporary, {recursive:true,force:true});
+    else console.error(`wf-adopt: interrupted scaffold; inspect the preserved stage at ${path.join(temporary,'stage')} before create-only recovery`);
+  });
+  try {
+    const checkout = path.join(temporary,'workflow');
+    git(workflowRepo, ['clone','--quiet','--no-hardlinks',workflowRepo,checkout]);
+    git(checkout, ['checkout','--quiet','--detach',revision]);
+    const adapter = await import(pathToFileURL(path.join(checkout,'adapters/speckit/scaffold.mjs')).href);
+    speckit = adapter.prepareScaffold({project, directory:path.join(temporary,'stage'), python:o['speckit-python'], coreRevision:revision, profileText:profile});
+    config.planning_frontend = {name:'speckit',compatibility_api:1,feature_root:'docs/specs'};
+  } catch(error) { fail(`Spec Kit staging refused: ${error.message}`); }
+}
+scaffoldStarted = true;
+write('docs/workflow/config.json', JSON.stringify(config, null, 2) + '\n');
 write('docs/workflow/profile.md', profile);
 
 const today = new Date().toISOString().slice(0, 10);
@@ -187,6 +215,12 @@ if (!(ignored ?? '').split(/\r?\n/).some(l => ['.cache/', '.cache'].includes(l.t
   fs.writeFileSync(gitignore, (ignored ?? '') + (ignored && !ignored.endsWith('\n') ? '\n' : '') + '.cache/\n');
   (ignored == null ? created : appended).push('.gitignore');
 }
+if (speckit) {
+  fs.appendFileSync(gitignore, speckit.ignoreRules);
+  if (!created.includes('.gitignore') && !appended.includes('.gitignore')) appended.push('.gitignore');
+  const installed = speckit.apply();
+  created.push(...installed.created);
+}
 
 write('AGENTS.md', `# ${name} — agent guide
 
@@ -229,6 +263,8 @@ else {
 }
 
 const result = { ok: true, project, repository: o.repository, workflow: config.workflow, revision, version, lane: o.lane, owners: o.owner, created, appended, skipped };
+if (speckit) result.planning_frontend = {name:'speckit',certified:false,integration:'codex',pilot_required:true};
+scaffoldComplete = true;
 if (o.json) console.log(JSON.stringify(result, null, 2));
 else {
   console.log(`Adopted ${slug} ${version} (${revision}) in ${project} for ${o.repository}.`);

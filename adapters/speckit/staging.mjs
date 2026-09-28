@@ -75,7 +75,7 @@ export function stageInstallation({ directory, python, coreRevision, profileText
 // Collision-first, create-only publication of an already reviewed staged diff.
 // On interruption, the stage is the manifest of intended bytes; rerunning only
 // completes missing files after rechecking every byte. It never deletes a file.
-export function applyStagedInstallation({ stage, repo, afterWrite = () => {} }) {
+export function preflightStagedInstallation({ stage, repo }) {
   const lock = JSON.parse(read(stage, LOCK));
   const selector = JSON.parse(read(stage, SELECTOR));
   const check = verifyManagedFiles({ repo: stage, lock, integration: selector.integration });
@@ -90,6 +90,10 @@ export function applyStagedInstallation({ stage, repo, afterWrite = () => {} }) 
       if (!fs.statSync(target).isFile() || !fs.readFileSync(target).equals(bytes)) throw new Error(`target collision: ${p}`);
     } else pending.push({ path: p, bytes });
   }
+  return { pending, unchanged: files.length - pending.length };
+}
+export function applyStagedInstallation({ stage, repo, afterWrite = () => {} }) {
+  const {pending,unchanged}=preflightStagedInstallation({stage,repo});
   for (const item of pending) { writeNew(repo, item.path, item.bytes); afterWrite(item.path); }
-  return { created: pending.map(p => p.path), unchanged: files.length - pending.length, certified: false };
+  return { created: pending.map(p => p.path), unchanged, certified: false };
 }

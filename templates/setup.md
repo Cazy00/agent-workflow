@@ -29,3 +29,5 @@ What was allowed; who performed it; when normal protections became active:
 ## Supported scope and limitations
 Execution mode: assisted. Runner not adopted. Optional navigation tools deferred.
 Remaining controls, owner, required-before stage and evidence needed:
+
+Optional Spec Kit pilot: see `procedures/speckit.md` in the trusted workflow installation. Record the exact reviewed adapter/core/upstream pins, isolated Python, complete staged diff, actual profile binding, ignore rules, rollback/recovery evidence and fresh Codex/Claude observations. Default remains disabled; a scaffold or passing package test does not approve adoption.

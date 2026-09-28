@@ -67,3 +67,84 @@ test('a map that existed on the baseline and was removed still fails closed; one
   assert.deepEqual(run(never).errors, []);
   assert.match(run(removed).errors.join(' '), /tests\/acceptance-map\.json: missing/);
 });
+
+const renamed = { ...mapping[0], file: 'test/renamed.js', name: 'reject invalid payment after rename' };
+const grant = { task: 'T-0001', from: mapping[0], to: renamed, requirement: 'docs/specs/payment.md' };
+function migrationCase({ declarations = [grant], candidateDeclarations, old = mapping, maps = [renamed], task = 'T-0001', requiredIds = ['AC-001-1'], tests, enforced = false } = {}) {
+  const baseline = source({
+    'docs/workflow/acceptance.json': JSON.stringify({ ...definition, mapping_migrations: declarations }),
+    'docs/specs/payment.md': 'approved requirement',
+    'tests/acceptance-map.json': JSON.stringify(old),
+  }, 'baseline');
+  const candidate = source({
+    'docs/workflow/acceptance.json': JSON.stringify({ ...definition, mapping_migrations: candidateDeclarations }),
+    'tests/acceptance-map.json': JSON.stringify(maps),
+    'test/payment.js': 'old test',
+    'test/renamed.js': 'new test',
+  });
+  return evaluateAcceptance({ baseline, candidate, task, requiredIds, enforced,
+    execution: enforced ? undefined : { revision: 'candidate', tests: tests ?? maps.map(m => ({ ...m, status: 'passed' })) } });
+}
+test('a baseline-approved exact rename for the current task passes with one successful new test run', () => {
+  assert.equal(migrationCase().ok, true);
+  assert.match(migrationCase({ tests: [] }).errors.join(' '), /did not run exactly once and pass/);
+  assert.match(migrationCase({ tests: [{ ...renamed, status: 'passed' }, { ...renamed, status: 'passed' }] }).errors.join(' '), /did not run exactly once and pass/);
+  assert.match(migrationCase({ tests: [{ ...renamed, status: 'skipped' }] }).errors.join(' '), /did not run exactly once and pass/);
+});
+test('wrong task and candidate-only declarations cannot remove a baseline mapping', () => {
+  assert.match(migrationCase({ task: 'T-0002' }).errors.join(' '), /removed required mapping/);
+  assert.match(migrationCase({ declarations: [], candidateDeclarations: [grant] }).errors.join(' '), /removed required mapping/);
+  assert.match(migrationCase({ requiredIds: [] }).errors.join(' '), /migrated acceptance is not required by the current task/);
+});
+test('a migration permits only its exact pair and never an unrelated removal', () => {
+  const other = { ...mapping[0], name: 'another required scenario' };
+  assert.match(migrationCase({ old: [mapping[0], other] }).errors.join(' '), /removed required mapping/);
+  assert.match(migrationCase({ maps: [{ ...renamed, name: 'different name' }] }).errors.join(' '), /destination mapping is missing/);
+  assert.match(migrationCase({ maps: [] }).errors.join(' '), /destination mapping is missing/);
+});
+test('malformed, unsafe and non-automated grants fail closed even when otherwise unused', () => {
+  const bad = [
+    { ...grant, task: 'T-0002', requirement: '../outside.md' },
+    { ...grant, task: 'T-0002', from: { ...mapping[0], file: '../outside.js' } },
+    { ...grant, task: 'T-0002', to: { ...renamed, acceptance: 'AC-999-1' } },
+    { ...grant, task: 'T-0002', requirement: 'docs/specs/other.md' },
+    { ...grant, task: 42 },
+    { ...grant, unexpected: true },
+    null,
+  ];
+  for (const declaration of bad) assert.equal(migrationCase({ declarations: [declaration], maps: mapping }).ok, false, JSON.stringify(declaration));
+});
+test('duplicate, fan-in, fan-out, reverse and chained migration declarations fail closed', () => {
+  const another = { ...mapping[0], name: 'another scenario' };
+  const variants = [
+    [grant, grant],
+    [grant, { ...grant, to: { ...renamed, name: 'second destination' } }],
+    [grant, { ...grant, from: another }],
+    [grant, { ...grant, from: renamed, to: mapping[0] }],
+    [grant, { ...grant, from: renamed, to: { ...renamed, name: 'third destination' } }],
+  ];
+  for (const declarations of variants) assert.equal(migrationCase({ declarations, old: [mapping[0], another] }).ok, false, JSON.stringify(declarations));
+});
+test('a consumed grant is inert and its destination remains protected as a baseline mapping', () => {
+  assert.equal(migrationCase({ old: [renamed], maps: [renamed] }).ok, true);
+  assert.match(migrationCase({ old: [renamed], maps: [mapping[0]] }).errors.join(' '), /removed required mapping/);
+  assert.equal(migrationCase({ old: [], maps: [renamed] }).ok, false);
+  assert.equal(migrationCase({ old: [mapping[0], renamed], maps: [renamed] }).ok, false);
+});
+// A task may keep the old test beside its replacement, so both reach the baseline while the grant remains. The grant
+// then removes nothing, and it must not block the named task or any other one that keeps the source.
+test('a grant whose source and destination are both on the baseline blocks only an attempt to remove the source', () => {
+  const both = [mapping[0], renamed];
+  for (const task of ['T-0001', 'T-0002']) {
+    const kept = migrationCase({ old: both, maps: both, task });
+    assert.equal(kept.ok, true, `${task}: ${kept.errors.join(' | ')}`);
+    assert.match(migrationCase({ old: both, maps: [renamed], task }).errors.join(' '), /removed required mapping/);
+  }
+  assert.match(migrationCase({ old: both, maps: [renamed] }).errors.join(' '), /destination is already mapped on the baseline/);
+});
+test('enforced mode leaves migrated coverage and execution for code-owner review', () => {
+  const result = migrationCase({ enforced: true });
+  assert.equal(result.ok, true, result.errors.join(' | '));
+  assert.ok(result.unverified.some(x => x.includes('renamed test execution')));
+  assert.ok(result.unverified.some(x => x.startsWith('execution:')));
+});

@@ -121,7 +121,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const profile = loadAll(baseline, rd).profile?.data;
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(profile?.required_checks), trust, stage: 'integrate' });
     const execution = trust?.claim('verification', candidate.name)?.execution;
-    const acceptance = evaluateAcceptance({ baseline, candidate, execution, requiredIds: list(t.acceptance), enforced: trust?.mode === 'enforced' });
+    const acceptance = evaluateAcceptance({ baseline, candidate, task, execution, requiredIds: list(t.acceptance), enforced: trust?.mode === 'enforced' });
     for (const error of [...lifecycle.errors, ...acceptance.errors]) { findings.push(error); fail = true; }
     for (const item of [...(lifecycle.unverified ?? []), ...(acceptance.unverified ?? [])]) findings.push(`unverified: ${item}`);
   }

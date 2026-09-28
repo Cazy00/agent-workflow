@@ -8,6 +8,7 @@ Read the repository `AGENTS.md` and current profile, milestone, task, and govern
 | Action | Procedure |
 |---|---|
 | Adopt or verify setup | `procedures/setup.md` and `procedures/identity.md` |
+| Use an explicitly adopted Spec Kit planning frontend | `procedures/speckit.md`, then the native action procedure |
 | Discover, resolve or assess readiness | `procedures/readiness.md` |
 | Implement, checkpoint or recover | `procedures/execute.md` |
 | Work in a project with two or more owners | `procedures/shared.md`, with the procedure for the action |

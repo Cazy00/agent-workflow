@@ -13,7 +13,7 @@ Start with [QUICKSTART.md](QUICKSTART.md): run `bin/wf-adopt` against the projec
 | `SCHEMA.md`, `config.default.json` | Mechanical gates, record formats, limits and path defaults |
 | `validator/`, `bin/wf` | Approval/readiness/coverage/lifecycle checks, the derived `status` view, and externally pinned launcher |
 | `bin/wf-adopt` | Deterministic, model-free scaffold that adopts the workflow in a project and writes the owner checklist, for one owner or, with `--owner`, a project two or more people share |
-| `adapters/` | Explicit-worker identity preflight and experimental Spec Kit installation and native planning helpers; Spec Kit feature commands remain disabled (`procedures/speckit.md`) |
+| `adapters/` | Explicit-worker identity preflight and experimental Spec Kit installation, commands and native planning helpers; live certification remains pending (`procedures/speckit.md`) |
 | `fixtures/`, `validator/test/` | Policy gate cases and adverse acceptance, identity, Git, trust and session tests |
 | `docs/proposals/ideas-backlog.md` | Owner ideas with their verdicts and implementation notes (no authority) |
 

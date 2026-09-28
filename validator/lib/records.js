@@ -1,5 +1,6 @@
 // Record loading and schema checks. SCHEMA.md "Profile", "Task", "Decision", "Feedback".
 import { parseFrontMatter } from './frontmatter.js';
+import { planningEnforcement } from './planning.js';
 
 export class WfError extends Error {}
 
@@ -34,7 +35,11 @@ export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|accept|release)$/;
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
-  try { return JSON.parse(text); } catch (e) { throw new WfError(`docs/workflow/config.json: ${e.message}`); }
+  try {
+    const config = JSON.parse(text);
+    planningEnforcement(config);
+    return config;
+  } catch (e) { throw new WfError(`docs/workflow/config.json: ${e.message}`); }
 }
 
 export function loadRecord(source, relPath, expected) {

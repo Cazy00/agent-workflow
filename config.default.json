@@ -6,6 +6,7 @@
   },
   "records_dir": "docs/workflow",
   "trusted_branch": "main",
+  "planning_frontend": null,
   "approval": {
     "mechanism": "manual-signed-receipts",
     "label": "manual",

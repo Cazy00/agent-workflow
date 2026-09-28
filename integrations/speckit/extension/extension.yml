@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "extension": {
+    "id": "agent-workflow",
+    "name": "Agent workflow preparation",
+    "version": "0.1.0",
+    "description": "Explicit adapter preflight; no hooks or extra authority",
+    "author": "agent-workflow",
+    "repository": "https://github.com/Cazy00/agent-workflow",
+    "license": "MIT"
+  },
+  "requires": {
+    "speckit_version": "==1.0.12"
+  },
+  "provides": {
+    "commands": [
+      {
+        "name": "speckit.agent-workflow.prepare",
+        "file": "commands/speckit.agent-workflow.prepare.md",
+        "description": "Check the installed adapter before planning"
+      }
+    ]
+  }
+}

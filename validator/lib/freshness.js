@@ -4,7 +4,7 @@ import { list, loadAll } from './records.js';
 import { safePath } from './sources.js';
 import { overlaps } from './scope.js';
 
-function relevant(source, rd, seeds) {
+export function governingInputs(source, rd, seeds) {
   const all = loadAll(source, rd);
   if (all.errors.length) throw new Error('cannot establish freshness from invalid governing records');
   const paths = new Set([`${rd}/profile.md`, 'docs/workflow/config.json']);
@@ -95,8 +95,8 @@ export function governingChanged({ baseline, revision, recordsDir, task, previou
   const old = baseline.atRevision(revision);
   const oldTask = loadAll(old, recordsDir).tasks.get(task.id)?.data;
   const seeds = [task, previous, oldTask];
-  const before = relevant(old, recordsDir, seeds);
-  const after = relevant(baseline, recordsDir, seeds);
+  const before = governingInputs(old, recordsDir, seeds);
+  const after = governingInputs(baseline, recordsDir, seeds);
   const paths = new Set([...before.paths, ...after.paths]);
   const ids = new Set([...before.acceptance, ...after.acceptance]);
   for (const id of ids) {

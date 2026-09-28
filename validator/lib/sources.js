@@ -61,6 +61,12 @@ export function gitSource(repo, revision) {
       return r.stdout.split('\0').filter(f => f && path.posix.dirname(f) === relDir).sort();
     },
     hasCommit(commit) { return /^[a-f0-9]{40,64}$/.test(commit ?? '') && git('cat-file', '-e', `${commit}^{commit}`).status === 0; },
+    listTree(relDir) {
+      safePath(relDir);
+      const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
+      if (r.status !== 0) throw new Error(`cannot enumerate ${relDir} at ${rev}`);
+      return r.stdout.split('\0').filter(Boolean).sort();
+    },
     isAncestor(commit) { if (!/^[a-f0-9]{40,64}$/.test(commit)) return false; return git('merge-base', '--is-ancestor', commit, rev).status === 0; },
     changedSince(commit, paths) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;

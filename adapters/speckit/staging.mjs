@@ -40,6 +40,7 @@ export function stageInstallation({ directory, python, coreRevision }) {
   const pointer = fs.readFileSync(path.join(ROOT, 'integrations/speckit/preset/templates/constitution-template.md'));
   fs.writeFileSync(contained(directory, '.specify/memory/constitution.md'), pointer);
   fs.writeFileSync(contained(directory, '.specify/memory/.constitution-template.json'), JSON.stringify({ sha256: sha256(pointer), source: 'preset:agent-workflow' }, null, 2) + '\n');
+  writeNew(directory, '.specify/UPSTREAM-LICENSE', fs.readFileSync(path.join(ROOT, 'integrations/speckit/UPSTREAM-LICENSE')));
   const codex = snapshot(directory);
   specify('integration', 'use', 'claude');
   const claude = snapshot(directory);

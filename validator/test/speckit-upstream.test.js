@@ -6,9 +6,11 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compatibility, verifyManagedFiles } from '../../adapters/speckit/installation.mjs';
-import { stageInstallation } from '../../adapters/speckit/staging.mjs';
+import { stageInstallation, applyStagedInstallation } from '../../adapters/speckit/staging.mjs';
 import { sha256 } from '../../adapters/speckit/files.mjs';
 import { verifyInstallation } from '../../adapters/speckit.mjs';
+import { resolveFeatureContext } from '../../adapters/speckit/context.mjs';
+import { taskProjection } from '../../adapters/speckit/operations.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const live = process.env.WF_SPECKIT_UPSTREAM === '1';
@@ -66,6 +68,37 @@ if (live) {
         assert.match(fs.readFileSync(path.join(staged.directory, tool, 'skills', `speckit-${command}`, 'SKILL.md'), 'utf8'), /Stop:.*incomplete/);
     }
     assert.match(fs.readFileSync(path.join(staged.directory, '.specify/memory/constitution.md'), 'utf8'), /not an independent constitution/);
+    // Exercise the actual installed files with a synthetic adopted project.
+    // This is a technical fixture, not owner approval or a real delivery pilot.
+    const project=path.join(temp,'project');
+    fs.cpSync(path.join(root,'fixtures/04a-accepted-decision-permits/baseline'),project,{recursive:true});
+    applyStagedInstallation({stage:staged.directory,repo:project});
+    const write=(rel,bytes)=>{fs.mkdirSync(path.dirname(path.join(project,rel)),{recursive:true});fs.writeFileSync(path.join(project,rel),bytes);};
+    const git=(...args)=>{const r=spawnSync('git',['-C',project,...args],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
+    const configPath=path.join(project,'docs/workflow/config.json');
+    const config=JSON.parse(fs.readFileSync(configPath));
+    config.planning_frontend={name:'speckit',compatibility_api:1,feature_root:'docs/specs'};
+    config.workflow={...config.workflow,revision:ownRevision.stdout.trim()};
+    fs.writeFileSync(configPath,JSON.stringify(config));
+    const taskPath=path.join(project,'docs/workflow/tasks/T-0001.md');
+    const native=fs.readFileSync(taskPath,'utf8').replace('record: task','record: task\nfeature: docs/specs/orders')+'\n- [ ] Verify behavior\n';
+    fs.writeFileSync(taskPath,native);
+    write('docs/specs/orders/spec.md','AC-001-1: order behavior');write('docs/specs/orders/plan.md','Order design');
+    write('.gitignore','.specify/integration.json\n.specify/feature.json\ndocs/specs/*/tasks.md\ndocs/specs/*/.wf-speckit/\n');
+    git('init','-q');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','core.hooksPath=/dev/null','commit','-qm','synthetic adoption');
+    const baseline=git('rev-parse','HEAD');
+    const args={repo:project,baseline,feature:'docs/specs/orders',task:'T-0001',integration:'codex',python};
+    const context=resolveFeatureContext(args);assert.equal(context.environment.SPECIFY_FEATURE_NO_PERSIST,'1');
+    assert.match(context.source_digest,/^[a-f0-9]{64}$/);
+    taskProjection({...args,write:true});assert.equal(taskProjection(args).ok,true);
+    fs.appendFileSync(path.join(project,'docs/specs/orders/tasks.md'),'\nManual edit.');
+    assert.deepEqual(taskProjection(args).reasons,['projection_modified']);
+    assert.throws(()=>taskProjection({...args,write:true}),/explicitly regenerate/);
+    const recovered=taskProjection({...args,write:true,regenerate:true});
+    assert.match(fs.readFileSync(path.join(project,recovered.recovery),'utf8'),/Manual edit/);
+    assert.equal(taskProjection(args).ok,true);assert.equal(fs.readFileSync(taskPath,'utf8'),native);
+    write('docs/specs/orders/spec.md','AC-001-1: changed requirement');
+    assert.deepEqual(taskProjection(args).reasons,['projection_stale']);
     fs.appendFileSync(path.join(staged.directory, '.claude/skills/speckit-plan/SKILL.md'), '\nTampered inactive entry.');
     const damaged = verifyManagedFiles({ repo: staged.directory, lock: staged.lock, integration: 'codex' });
     assert.equal(damaged.ok, false);

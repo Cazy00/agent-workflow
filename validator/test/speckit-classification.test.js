@@ -66,3 +66,20 @@ test('candidate configuration cannot turn off baseline Spec Kit protection', () 
   assert.equal(unknown.verdict, 'fail');
   assert.match(unknown.findings.join('\n'), /unclassified/i);
 });
+
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { gitSource } from '../lib/sources.js';
+test('adapter CI rejects tracked projections and runtime artifacts even outside the current diff', t => {
+  const repo=fs.mkdtempSync(path.join(os.tmpdir(),'wf-speckit-tracked-'));t.after(()=>fs.rmSync(repo,{recursive:true,force:true}));
+  fs.cpSync(fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline',import.meta.url)),repo,{recursive:true});
+  const cp=path.join(repo,'docs/workflow/config.json');fs.writeFileSync(cp,JSON.stringify({...JSON.parse(fs.readFileSync(cp)),planning_frontend:optIn}));
+  const forbidden=['docs/specs/orders/tasks.md','docs/specs/orders/research.md','docs/specs/orders/analysis.md','docs/specs/orders/checklists/requirements.md','docs/specs/orders/.wf-speckit/recovery/a.md','.specify/feature.json','.specify/integration.json'];
+  for(const p of forbidden){fs.mkdirSync(path.dirname(path.join(repo,p)),{recursive:true});fs.writeFileSync(path.join(repo,p),'temporary');}
+  for(const args of [['init','-q'],['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','core.hooksPath=/dev/null','commit','-qm','fixture']])assert.equal(spawnSync('git',['-C',repo,...args]).status,0);
+  const source=gitSource(repo,'HEAD'),result=evaluateCi({baseline:source,candidate:source,changed:[]});
+  assert.equal(result.verdict,'fail');
+  for(const p of forbidden)assert.ok(result.findings.some(f=>f.includes(`must not be tracked: ${p}`)),p);
+});

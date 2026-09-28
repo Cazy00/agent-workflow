@@ -2,6 +2,7 @@
 import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths } from './paths.js';
+import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance } from './acceptance.js';
@@ -78,6 +79,17 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
   let fail = false;
+
+  // Check tracked runtime output at the whole candidate, not only today's diff.
+  // A directory diagnostic cannot establish what Git actually tracks.
+  if (planningEnforcement(config).length) {
+    if (candidate.kind === 'git') {
+      const tracked = [...candidate.listTree('docs/specs'), ...candidate.listTree('.specify')];
+      for (const p of tracked.filter(isPlanningRuntime)) {
+        findings.push(`Spec Kit runtime/projection output must not be tracked: ${p}`); fail = true;
+      }
+    } else findings.push('unverified: Spec Kit tracked-output exclusion requires a Git candidate');
+  }
 
   const records = validateRecords(candidate, rd);
   for (const e of records.errors) { findings.push(`record: ${e}`); fail = true; }

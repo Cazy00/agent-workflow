@@ -16,3 +16,8 @@ export function planningEnforcement(config) {
   }
   return SPECKIT_ENFORCEMENT;
 }
+
+export function isPlanningRuntime(path) {
+  return ['.specify/integration.json', '.specify/feature.json'].includes(path) ||
+    /^docs\/specs\/[a-z0-9]+(?:-[a-z0-9]+)*\/(?:(?:tasks|research|analysis)\.md$|(?:checklists|\.wf-speckit)\/)/.test(path);
+}

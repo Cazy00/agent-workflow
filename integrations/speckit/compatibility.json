@@ -1,7 +1,7 @@
 {
   "schema": "wf-speckit-compatibility/v1",
   "compatibility_api": 1,
-  "status": "experimental-source-contract",
+  "status": "experimental-adapter-foundations",
   "upstream": {
     "version": "1.0.12",
     "revision": "e77daa9021d20db26b878f7dfa5640fe5a42d04e"
@@ -1378,6 +1378,7 @@
     ".claude/skills/speckit-tasks/SKILL.md",
     ".claude/skills/speckit-taskstoissues/SKILL.md",
     ".specify/.gitignore",
+    ".specify/UPSTREAM-LICENSE",
     ".specify/extensions.yml",
     ".specify/extensions/.registry",
     ".specify/extensions/agent-workflow/commands/speckit.agent-workflow.prepare.md",

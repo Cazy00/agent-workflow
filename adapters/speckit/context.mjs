@@ -1,3 +1,4 @@
+import { Blocked } from './errors.mjs';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirSource, gitSource, safePath } from '../../validator/lib/sources.js';
@@ -65,19 +66,19 @@ export function collectFeatureSources({ repo, baseline, feature, milestone, seed
 export function verifyAdoptedInstallation({ repo, baseline, integration, python }) {
   if (!/^[a-f0-9]{40}$/.test(baseline)) throw new Error('exact baseline required');
   const source = gitSource(repo, baseline), config = loadConfig(source);
-  if (!planningEnforcement(config).length || (config.records_dir ?? 'docs/workflow') !== 'docs/workflow') throw new Error('baseline has not adopted the supported planning contract');
+  if (!planningEnforcement(config).length || (config.records_dir ?? 'docs/workflow') !== 'docs/workflow') throw new Blocked('baseline has not adopted the supported planning contract');
   const lockPath = 'docs/workflow/speckit.lock.json';
   const baselineLock = source.read(lockPath);
-  if (!baselineLock || !read(repo,lockPath).equals(Buffer.from(baselineLock))) throw new Error('installation lock must match the explicit baseline');
+  if (!baselineLock || !read(repo,lockPath).equals(Buffer.from(baselineLock))) throw new Blocked('installation lock must match the explicit baseline');
   const lock = JSON.parse(baselineLock);
-  if (lock.core.revision !== config.workflow?.revision) throw new Error('adapter/core adoption pins differ');
+  if (lock.core.revision !== config.workflow?.revision) throw new Blocked('adapter/core adoption pins differ');
   const installed = verifyInstallation({repo,lock,integration,python});
-  if (!installed.ok) throw new Error(installed.mismatches.join('; '));
-  if (sha256(readPinnedPolicy(lock.core.revision)) !== lock.authority?.policy?.sha256) throw new Error('authority pointer differs from pinned core policy');
-  if ((loadAll(source,'docs/workflow').profile?.data?.owners?.length ?? 0) >= 2) throw new Error('Spec Kit adapter currently supports one owner only');
+  if (!installed.ok) throw new Blocked(installed.mismatches.join('; '));
+  if (sha256(readPinnedPolicy(lock.core.revision)) !== lock.authority?.policy?.sha256) throw new Blocked('authority pointer differs from pinned core policy');
+  if ((loadAll(source,'docs/workflow').profile?.data?.owners?.length ?? 0) >= 2) throw new Blocked('Spec Kit adapter currently supports one owner only');
   const profile = source.read('docs/workflow/profile.md');
   if (profile === null || sha256(profile) !== lock.authority?.profile?.sha256 || !read(repo,'docs/workflow/profile.md').equals(Buffer.from(profile)))
-    throw new Error('authority pointer is stale for the baseline/current profile; propose the pointer and lock with the governing change');
+    throw new Blocked('authority pointer is stale for the baseline/current profile; propose the pointer and lock with the governing change');
   return {config,lock,installed};
 }
 
@@ -86,7 +87,7 @@ export function resolveFeatureContext({ repo, baseline, feature, integration, py
   featurePath(feature);
   if (milestone !== undefined && !/^M-\d{4}$/.test(milestone)) throw new Error('invalid native milestone');
   const {installed}=verifyAdoptedInstallation({repo,baseline,integration,python});
-  if (fs.existsSync(contained(repo,'.specify/feature.json'))) throw new Error('persistent feature selector is unsupported; inspect and remove it explicitly');
+  if (fs.existsSync(contained(repo,'.specify/feature.json'))) throw new Blocked('persistent feature selector is unsupported; inspect and remove it explicitly');
   const featureDirectory = contained(repo, feature);
   const sources = collectFeatureSources({repo,baseline,feature,milestone,seeds});
   const sourceDigest = digest({baseline,feature,milestone:milestone ?? null,lock:installed.lock_digest,sources});

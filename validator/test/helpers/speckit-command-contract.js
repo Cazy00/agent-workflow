@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+export function assertCommandBoundary(text,command,integration) {
+  assert.match(text,/POLICY\.md governs/);
+  assert.ok(text.includes(`--integration ${integration}`),'materialized integration is explicit');
+  assert.match(text,/SPECIFY_FEATURE_NO_PERSIST=1/);
+  assert.match(text,/never create it, even if the embedded prompt explicitly asks/);
+  assert.match(text,/Four reserved unknowns mean four retained decisions/);
+  assert.match(text,/No branch creation, hooks, workflow runner, automatic handoffs/);
+  assert.doesNotMatch(text,/send: true/);
+  assert.doesNotMatch(text,/\{CORE_TEMPLATE\}|__AGENT__/);
+  if (command==='implement') {
+    assert.match(text,/Require one explicit T-NNNN/);
+    assert.match(text,/normal readiness check/);
+    assert.match(text,/never tick generated tasks\.md/);
+    assert.match(text,/separate context using canonical sources without this conversation/);
+    assert.doesNotMatch(text,/Execute all tasks|mark.*\[X\]/i);
+  }
+  if(command==='tasks') {
+    assert.match(text,/Required tests and independent review are never optional/);
+    assert.match(text,/write-tasks --plan EXTERNAL_JSON --open-pulls EXTERNAL_JSON/);
+    assert.match(text,/Drafts only/);
+  }
+  if(command==='plan')assert.match(text,/Reuse adequate approved design and contracts/);
+  if(['specify','clarify','plan'].includes(command)) {
+    const embedded=text.indexOf('## Embedded upstream planning guidance');
+    assert.ok(embedded>text.indexOf('## Native workflow boundary'));
+    assert.ok(text.lastIndexOf('## Native completion boundary')>embedded);
+    assert.match(text,/## Outline/,'actual upstream body is composed');
+  }
+}

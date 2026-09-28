@@ -10,6 +10,7 @@ import { stageInstallation, applyStagedInstallation } from '../../adapters/speck
 import { sha256 } from '../../adapters/speckit/files.mjs';
 import { verifyInstallation } from '../../adapters/speckit.mjs';
 import { resolveFeatureContext } from '../../adapters/speckit/context.mjs';
+import { assertCommandBoundary } from './helpers/speckit-command-contract.js';
 import { taskProjection } from '../../adapters/speckit/operations.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -43,7 +44,7 @@ test('compatibility inventories are complete sorted distinct paths and fixed has
 });
 
 if (live) {
-  test('real pinned package stages both integrations, blocks tampering and preserves stop entries', t => {
+  test('real pinned package stages both integrations, blocks tampering and materializes native command boundaries', t => {
     const source = process.env.WF_SPECKIT_SOURCE, executable = process.env.WF_SPECKIT_EXECUTABLE;
     assert.ok(source && executable, 'source checkout and isolated executable required in live lane');
     assert.ok(path.isAbsolute(source) && path.isAbsolute(executable), 'absolute live paths required');
@@ -65,7 +66,7 @@ if (live) {
     assert.equal(verifyInstallation({ repo: staged.directory, lock: staged.lock, integration: 'codex', python }).ok, true);
     for (const tool of ['.agents', '.claude']) {
       for (const command of ['specify', 'clarify', 'plan', 'tasks', 'implement', 'constitution'])
-        assert.match(fs.readFileSync(path.join(staged.directory, tool, 'skills', `speckit-${command}`, 'SKILL.md'), 'utf8'), /Stop:.*incomplete/);
+        assertCommandBoundary(fs.readFileSync(path.join(staged.directory, tool, 'skills', `speckit-${command}`, 'SKILL.md'), 'utf8'), command, tool === '.agents' ? 'codex' : 'claude');
     }
     assert.match(fs.readFileSync(path.join(staged.directory, '.specify/memory/constitution.md'), 'utf8'), /not an independent constitution/);
     // Exercise the actual installed files with a synthetic adopted project.

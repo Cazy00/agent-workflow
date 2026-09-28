@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { Blocked } from './speckit/errors.mjs';
 import { pathToFileURL } from 'node:url';
 import { verifyInstallation } from './speckit/verify.mjs';
 export { verifyInstallation } from './speckit/verify.mjs';
@@ -50,7 +51,7 @@ export function main(argv) {
     } else if(command==='write-tasks')result=writeDraftTasks({...options,plan:externalJson(options.plan,options.repo),openPulls:externalJson(options['open-pulls'],options.repo)});
     else result=taskProjection({...options,write:command==='project'});
     return {code:result.ok===false?1:0,result};
-  } catch(error){return {code:2,result:{ok:false,error:error.message}};}
+  } catch(error){return {code:error instanceof Blocked?1:2,result:{ok:false,error:error.message}};}
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { code, result } = main(process.argv.slice(2));

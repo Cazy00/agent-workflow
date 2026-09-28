@@ -26,21 +26,24 @@
         "name": "speckit.specify",
         "file": "commands/speckit.specify.md",
         "description": "Native workflow specify boundary",
-        "replaces": "speckit.specify"
+        "replaces": "speckit.specify",
+        "strategy": "wrap"
       },
       {
         "type": "command",
         "name": "speckit.clarify",
         "file": "commands/speckit.clarify.md",
         "description": "Native workflow clarify boundary",
-        "replaces": "speckit.clarify"
+        "replaces": "speckit.clarify",
+        "strategy": "wrap"
       },
       {
         "type": "command",
         "name": "speckit.plan",
         "file": "commands/speckit.plan.md",
         "description": "Native workflow plan boundary",
-        "replaces": "speckit.plan"
+        "replaces": "speckit.plan",
+        "strategy": "wrap"
       },
       {
         "type": "command",

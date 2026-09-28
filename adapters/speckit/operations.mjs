@@ -1,3 +1,4 @@
+import { Blocked } from './errors.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -20,7 +21,7 @@ function git(repo, args, accepted = [0]) {
 }
 function withOperation(repo, fn) {
   const lock = git(repo,['rev-parse','--path-format=absolute','--git-path','wf-speckit-operation.lock']).stdout;
-  try { fs.mkdirSync(lock); } catch (e) { if(e.code==='EEXIST') throw new Error('another operation or interrupted operation exists; inspect its Git-metadata intent before recovery');throw e; }
+  try { fs.mkdirSync(lock); } catch (e) { if(e.code==='EEXIST') throw new Blocked('another operation or interrupted operation exists; inspect its Git-metadata intent before recovery');throw e; }
   let intent = false, complete = false;
   try {
     const result = fn(value => { fs.writeFileSync(path.join(lock,'intent.json'),JSON.stringify(value,null,2)+'\n',{flag:'wx'});intent=true; });
@@ -37,10 +38,10 @@ export function writeDraftTasks({ repo, baseline, plan, openPulls, integration, 
     const config=loadConfig(gitSource(repo,baseline));
     validateAllocationSnapshot(snapshot,{repository:config.repository,baseline});
     const source=dirSource(repo);
-    for(const p of [context.spec_path,context.plan_path]) if(!source.exists(p)) throw new Error(`missing canonical source: ${p}`);
+    for(const p of [context.spec_path,context.plan_path]) if(!source.exists(p)) throw new Blocked(`missing canonical source: ${p}`);
     const drafts=prepareDraftTasks({plan,sourceDigest:context.source_digest,usedIds:snapshot.ids,exists:p=>{contained(repo,p);return source.exists(p);}});
     validateDraftCandidate({source,drafts});
-    if(resolveFeatureContext(contextArgs).source_digest!==context.source_digest) throw new Error('canonical sources changed during allocation; refresh before writing');
+    if(resolveFeatureContext(contextArgs).source_digest!==context.source_digest) throw new Blocked('canonical sources changed during allocation; refresh before writing');
     validateAllocationSnapshot(snapshot,{repository:config.repository,baseline});
     markIntent({schema:'wf-speckit-draft-intent/v1',baseline,plan_digest:digest(plan),allocation_digest:digest(snapshot),drafts});
     const created=writeDraftBatch({repo,drafts});
@@ -49,8 +50,8 @@ export function writeDraftTasks({ repo, baseline, plan, openPulls, integration, 
 }
 function requireIgnored(repo, rel) {
   contained(repo,rel);
-  if(git(repo,['ls-files','--error-unmatch','--',rel],[0,1]).code===0) throw new Error(`projection/runtime path is tracked: ${rel}`);
-  if(git(repo,['check-ignore','--no-index','-q','--',rel],[0,1]).code!==0) throw new Error(`projection/runtime path must be explicitly ignored: ${rel}`);
+  if(git(repo,['ls-files','--error-unmatch','--',rel],[0,1]).code===0) throw new Blocked(`projection/runtime path is tracked: ${rel}`);
+  if(git(repo,['check-ignore','--no-index','-q','--',rel],[0,1]).code!==0) throw new Blocked(`projection/runtime path must be explicitly ignored: ${rel}`);
 }
 export function taskProjection({repo,baseline,feature,task,integration,python,write=false,regenerate=false}) {
   const execute = markIntent => {
@@ -62,14 +63,14 @@ export function taskProjection({repo,baseline,feature,task,integration,python,wr
     if(!write) return previous===null?{ok:false,reasons:['projection_missing']}:verifyTaskProjection({...args,bytes:previous});
     const rendered=renderTaskProjection(args);
     let recovery=null;
-    if(previous!==null && previous!==rendered.bytes && !regenerate) throw new Error('projection differs; explicitly regenerate to preserve a recovery copy before replacing it');
+    if(previous!==null && previous!==rendered.bytes && !regenerate) throw new Blocked('projection differs; explicitly regenerate to preserve a recovery copy before replacing it');
     if(previous!==rendered.bytes) {
       if(previous!==null) { recovery=`${feature}/.wf-speckit/recovery/${randomUUID()}.md`;requireIgnored(repo,recovery); }
       const temporary=`${feature}/.wf-speckit/${randomUUID()}.tmp`;requireIgnored(repo,temporary);
       markIntent({schema:'wf-speckit-projection-intent/v1',relative,previous_digest:previous===null?null:digest(previous),recovery,temporary,source_digest:rendered.sourceDigest});
       if(recovery)writeNew(repo,recovery,previous);
       writeNew(repo,temporary,rendered.bytes);
-      if((fs.existsSync(target)?read(repo,relative).toString('utf8'):null)!==previous) throw new Error('projection changed concurrently; inspect recovery and temporary files');
+      if((fs.existsSync(target)?read(repo,relative).toString('utf8'):null)!==previous) throw new Blocked('projection changed concurrently; inspect recovery and temporary files');
       fs.renameSync(contained(repo,temporary),target);
     }
     return {path:relative,source_digest:rendered.sourceDigest,content_digest:rendered.contentDigest,recovery,authority:'derived-only'};

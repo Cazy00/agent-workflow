@@ -50,7 +50,7 @@ export function stageInstallation({ directory, python, coreRevision, profileText
   refreshPointer();
   const claude = snapshot(directory);
   if (JSON.stringify(Object.keys(codex)) !== JSON.stringify(compatibility.managed_paths) ||
-      JSON.stringify(Object.keys(claude)) !== JSON.stringify(compatibility.managed_paths)) throw new Error('staged upstream inventory differs from the reviewed contract');
+      JSON.stringify(Object.keys(claude)) !== JSON.stringify(compatibility.managed_paths)) throw new Error('staged upstream inventory differs from the reviewed contract: ' + JSON.stringify({extra:Object.keys(codex).filter(p=>!compatibility.managed_paths.includes(p)),missing:compatibility.managed_paths.filter(p=>!Object.hasOwn(codex,p))}));
   const managed_files = Object.entries(codex).map(([p, hash]) => ({ path: p, sha256: hash,
     role: p.startsWith('.specify/presets/') || p.startsWith('.specify/extensions/') ? 'adapter' : 'materialized',
     ...(hash !== claude[p] ? { integration_sha256: { codex: hash, claude: claude[p] } } : {}) }));

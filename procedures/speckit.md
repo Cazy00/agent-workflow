@@ -1,6 +1,6 @@
 # Spec Kit planning adapter
 
-Experimental and opt-in. Source protection, package inventories and experimental installation checks exist. The planning flow and pilots remain incomplete; all feature command entries stop explicitly. `integrations/speckit/compatibility.json` records the intended upstream pin and certification state. An API number is not approval, installation proof or a successful pilot. Existing projects keep their current workflow and approval mode.
+Experimental and opt-in. Source protection, package inventories and experimental installation checks exist. Composed planning commands and native task helpers are experimental; scaffolding, authority refresh and pilots remain incomplete. `integrations/speckit/compatibility.json` records the intended upstream pin and certification state. An API number is not approval, installation proof or a successful pilot. Existing projects keep their current workflow and approval mode.
 
 ## Sources and protected configuration
 
@@ -14,7 +14,7 @@ Omission or `null` keeps existing behavior. Other names, roots, API versions or 
 
 Keep requirements at `docs/specs/<feature>/spec.md`, design at `docs/specs/<feature>/plan.md`, and durable contracts alongside them. That root is governing, subject to existing classification precedence. Executable contracts retain production gates; initially use Markdown, JSON or YAML for governing contracts. Importing another root needs a reviewed contract/configuration change before use. The adapter does not migrate or approve it.
 
-Native task records remain the only ledger. Group steps into coherent reviewable outcomes, retaining required tests and independent review. The future ignored `docs/specs/<feature>/tasks.md` projection cannot supply completion, readiness or scope. The constitution entry points to adopted policy/profile without amending either. All reserved choices, including more than three unresolved choices, remain native decisions.
+Native task records remain the only ledger. Group steps into coherent reviewable outcomes, retaining required tests and independent review. The ignored `docs/specs/<feature>/tasks.md` projection cannot supply completion, readiness or scope. The constitution entry points to adopted policy/profile without amending either. All reserved choices, including more than three unresolved choices, remain native decisions.
 
 ## Readiness and delivery
 
@@ -44,7 +44,7 @@ Missing live inputs fail; supplying live variables without the switch is an erro
 
 ## Experimental native planning helpers
 
-These helpers are available for technical fixtures and a later reviewed installation. The Spec Kit feature commands still stop: command composition, scaffold support and the fresh-agent pilot remain incomplete. Do not adopt this checkpoint into PrintFlow.
+These helpers are available for technical fixtures and a later reviewed installation. The composed feature commands retain native authority; scaffold support, automatic authority refresh and the fresh-agent pilot remain incomplete. Do not adopt this checkpoint into PrintFlow.
 
 All commands require an explicit repository and integration (`codex` or `claude`), matching the verified local selector, and the trusted isolated `--python`. Planning operations also require an exact `--baseline`; its protected config must opt in and its installation lock must match the working copy and core pin. The generated authority pointer binds the pinned policy and exact project profile contents. Changed profiles block until the pointer and protected lock are updated in the same reviewed governing change. This first adapter surface supports one owner; shared-owner projects stop explicitly. Draft batches also undergo native schema/profile validation before any write. The helper never supplies baseline approval or task readiness.
 
@@ -56,3 +56,7 @@ All commands require an explicit repository and integration (`codex` or `claude`
 Keep `/docs/specs/*/tasks.md`, `/docs/specs/*/research.md`, `/docs/specs/*/analysis.md`, `/docs/specs/*/checklists/`, `/docs/specs/*/.wf-speckit/`, `/.specify/integration.json` and `/.specify/feature.json` ignored in the reviewed installation diff. The last selector remains forbidden at runtime: commands use `SPECIFY_FEATURE_DIRECTORY` and `SPECIFY_FEATURE_NO_PERSIST=1` instead. CI rejects tracked copies; it does not infer readiness from a digest or ignore rule.
 
 Writes serialize through `wf-speckit-operation.lock` in Git metadata and record intent before mutation. A normal error before mutation removes the lock; a failure after intent or a killed process retains it for inspection. A coordinator compares the recorded intended paths/bytes with actual state before an explicit recovery, never blindly removes a lock or replays a write. Draft batch preflight checks all targets before writing and rolls back unchanged files it created on a caught write error; process termination can still leave uncommitted partial Drafts. Automatic crash recovery is not implemented. Do not commit a partial batch or claim an interruption pilot passed. A reviewed complete batch becomes durable at its task-prefixed Git checkpoint. Projection replacement is an atomic single-file rename; recovery copies remain ignored local data.
+
+## Command composition
+
+The pinned preset wraps upstream specification, clarification and design prompts. Its native boundary disables persistent feature selection, automatic handoffs/hooks, reserved-choice defaults and numerical limits that would drop unresolved decisions. The tasks and implement entries replace upstream execution: native Draft records are the only ledger, required tests/review remain required, and implementation requires one explicit native task plus normal readiness. Constitution checks the generated pointer; refreshing an existing installation remains an explicit reviewed change, not an automatic command. Materialized-content assertions are technical checks, not proof that a fresh agent follows them. G1 still requires observed Codex and Claude behavior.

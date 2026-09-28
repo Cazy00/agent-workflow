@@ -11,8 +11,11 @@ import { renderTaskProjection, verifyTaskProjection } from './projection.mjs';
 import { contained, digest, read, writeNew } from './files.mjs';
 
 function git(repo, args, accepted = [0]) {
-  const r = spawnSync('git', ['--literal-pathspecs','-C',repo,...args], {encoding:'utf8',timeout:30000,maxBuffer:1024*1024});
-  if (!accepted.includes(r.status)) throw new Error('Git operation failed');
+  // check-ignore takes filesystem paths and rejects Git's literal pathspec
+  // magic. Its input here is a validated, fixed feature/runtime path.
+  const literal = args[0] === 'check-ignore' ? [] : ['--literal-pathspecs'];
+  const r = spawnSync('git', [...literal,'-C',repo,...args], {encoding:'utf8',timeout:30000,maxBuffer:1024*1024});
+  if (!accepted.includes(r.status)) throw new Error(`Git ${args[0]} operation failed`);
   return {code:r.status,stdout:r.stdout.trim()};
 }
 function withOperation(repo, fn) {

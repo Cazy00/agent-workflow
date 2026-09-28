@@ -31,7 +31,7 @@ Stable acceptance IDs, actions, expected results and evidence methods.
 Coordinator serialises claims in the separate operational run record (with two or more `owners`, through task branches: `procedures/execute.md`). Link that record; keep task scope and prerequisites here. `owner`: the person who authorises and accepts the milestone. `tasks`: the plan as authorised (`procedures/readiness.md`); work found later is not added.
 
 ## Execution authority and limits
-Approved time, usage, retry, spending and owner-effort limits. Prefer limits the coordinator can measure at every checkpoint (wall-clock hours, task count, retries per task); add usage or spend limits only where the harness reports them, and name the counter. Running totals, remaining allowance and unknown usage belong in the operational run record; do not edit this governing record for bookkeeping.
+Approved time, usage, retry, spending and owner-effort limits. Prefer limits the coordinator can measure at every checkpoint (wall-clock hours, task count, retries per named check or task); state the retry unit and counting rule. Add usage or spend limits only where the harness reports them, and name the counter. Running totals, remaining allowance and unknown usage belong in the operational run record; do not edit this governing record for bookkeeping.
 
 ## Technical verification and independent review
 

@@ -21,3 +21,12 @@ Correction and existing safeguards:
 
 ## Usage and follow-up
 Actual usage or unknown; elapsed time; stopped reason; next responsible party:
+
+## Cost and quality benchmark (when evaluating efficiency)
+Rule/practice → observed action → avoidable cost → smallest correction; expected savings (estimate), quality tradeoff and recurrence check:
+
+Use comparable bounded tasks with fixed scope, acceptance, starting revision, risk and completion stage. Record model/effort, agent count, workflow version, CI/environment, owner availability and scope changes. Compare workflow-assisted and ordinary AI-assisted work with equivalent verification, independent review and owner acceptance; state unmatched factors. No sound comparator means no superiority claim.
+
+Measure elapsed critical path and interval unions for concurrent work; distinguish active turns, tools/CI, owner-response latency and unavailable telemetry. Record owner attention minutes and interruptions separately from waiting. Count distinct response usage once across coordinator, agents and continuation files: cached input, non-cached input, output and its reasoning subset; reconcile cumulative counters, never sum them. Tokens do not establish a plan-limit share or dollar cost.
+
+Track review findings, repeated work and what each repetition found, rework through acceptance and a fixed follow-up window, escaped defects by severity, acceptance completeness and first-pass acceptance. A speed gain counts only with equivalent accepted scope, no shifted owner work and no reduction in review or quality. Retain source references, estimates and uncertainty; collect several matched tasks before drawing comparative conclusions.

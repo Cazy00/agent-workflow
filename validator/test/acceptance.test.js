@@ -131,6 +131,17 @@ test('a consumed grant is inert and its destination remains protected as a basel
   assert.equal(migrationCase({ old: [], maps: [renamed] }).ok, false);
   assert.equal(migrationCase({ old: [mapping[0], renamed], maps: [renamed] }).ok, false);
 });
+// A task may keep the old test beside its replacement, so both reach the baseline while the grant remains. The grant
+// then removes nothing, and it must not block the named task or any other one that keeps the source.
+test('a grant whose source and destination are both on the baseline blocks only an attempt to remove the source', () => {
+  const both = [mapping[0], renamed];
+  for (const task of ['T-0001', 'T-0002']) {
+    const kept = migrationCase({ old: both, maps: both, task });
+    assert.equal(kept.ok, true, `${task}: ${kept.errors.join(' | ')}`);
+    assert.match(migrationCase({ old: both, maps: [renamed], task }).errors.join(' '), /removed required mapping/);
+  }
+  assert.match(migrationCase({ old: both, maps: [renamed] }).errors.join(' '), /destination is already mapped on the baseline/);
+});
 test('enforced mode leaves migrated coverage and execution for code-owner review', () => {
   const result = migrationCase({ enforced: true });
   assert.equal(result.ok, true, result.errors.join(' | '));

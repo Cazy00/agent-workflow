@@ -76,7 +76,11 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
       if (!oldKeys.has(to)) errors.push(`${label}: neither source nor consumed destination is in the baseline map`);
       continue;
     }
-    if (oldKeys.has(to)) { errors.push(`${label}: destination is already mapped on the baseline`); continue; }
+    // Both on the baseline: the grant removes nothing. Only its own task, trying to drop the source, is told why.
+    if (oldKeys.has(to)) {
+      if (migration.task === task && !seen.has(from)) errors.push(`${label}: destination is already mapped on the baseline`);
+      continue;
+    }
     if (migration.task !== task || seen.has(from)) continue;
     if (!requiredIds.includes(migration.from.acceptance)) {
       errors.push(`${label}: migrated acceptance is not required by the current task`);

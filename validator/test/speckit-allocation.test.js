@@ -44,3 +44,18 @@ test('allocation rejects a shallow client before requesting remote authority',t=
  const r=spawnSync('git',['clone','--quiet','--depth','1',`file://${f.source}`,clone],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);
  assert.throws(()=>collectAllocationSnapshot({repo:clone,baseline:f.baseline,token:'synthetic'}),/full local history/);
 });
+
+test('allocation reserves unpublished local claims and deleted local history IDs',t=>{
+ const f=fixture(t),client=path.join(f.temp,'client');
+ f.git(f.temp,'clone','--quiet',f.source,client);
+ f.git(client,'config','user.name','Fixture');f.git(client,'config','user.email','fixture@example.invalid');
+ f.git(client,'remote','set-url','origin','https://github.com/fixture/project.git');
+ f.git(client,'checkout','-q','-b','codex/T-0099-local-claim');
+ fs.mkdirSync(path.join(client,'docs/workflow/tasks'),{recursive:true});
+ fs.writeFileSync(path.join(client,'docs/workflow/tasks/T-0088.md'),'retired local task');
+ f.git(client,'add','.');f.git(client,'-c','core.hooksPath=/dev/null','commit','-qm','local task');
+ f.git(client,'rm','-q','docs/workflow/tasks/T-0088.md');f.git(client,'-c','core.hooksPath=/dev/null','commit','-qm','retire local task');
+ f.git(client,'checkout','-q','main');
+ const snapshot=collectAllocationSnapshot({repo:client,baseline:f.baseline,token:'synthetic-no-authority-token'});
+ assert.deepEqual(snapshot.ids,['T-0017','T-0020','T-0042','T-0088','T-0099']);
+});

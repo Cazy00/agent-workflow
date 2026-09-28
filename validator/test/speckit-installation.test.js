@@ -4,13 +4,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { compatibility, verifyManagedFiles } from '../../adapters/speckit/installation.mjs';
+import { authorityMetadata, renderAuthorityPointer } from '../../adapters/speckit/authority.mjs';
 import { sha256, writeNew } from '../../adapters/speckit/files.mjs';
 
 function fixture(t) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-speckit-install-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const authority=authorityMetadata({coreRevision:'c'.repeat(40),policyText:'Synthetic policy',profileText:'Synthetic profile'});
   const files = {
     ...Object.fromEntries(compatibility.managed_paths.map(p => [p, 'synthetic managed content'])),
+    '.specify/memory/constitution.md': renderAuthorityPointer(authority),
     '.specify/scripts/python/common.py': 'trusted script',
     '.specify/templates/plan-template.md': 'Codex plan',
     '.agents/skills/speckit-plan/SKILL.md': 'Codex entry',
@@ -28,6 +31,7 @@ function fixture(t) {
     preset_id: 'agent-workflow', extension_id: 'agent-workflow', script: 'py', integrations: ['codex', 'claude'],
     feature_root: 'docs/specs', runtime_paths: ['.specify/integration.json'], allowed_overrides: [],
     unsupported_commands: ['analyze', 'checklist', 'converge', 'taskstoissues'],
+    authority,
     managed_files: Object.entries(files).sort(([a],[b]) => a < b ? -1 : 1).map(([p, bytes]) => ({path: p, sha256: sha256(bytes), role: 'materialized'})) };
   const run = () => verifyManagedFiles({ repo, lock, integration: 'codex' });
   const write = (p, bytes) => fs.writeFileSync(path.join(repo, p), bytes);

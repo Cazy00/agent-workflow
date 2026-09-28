@@ -18,7 +18,7 @@ function setup(t) {
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('add','.');git('-c','core.hooksPath=/dev/null','commit','-qm','fixture');
  const baseline=git('rev-parse','HEAD');
  const collect=()=>collectFeatureSources({repo,baseline,feature:'docs/specs/orders',milestone:'M-0001'});
- return {repo,write,baseline,collect};
+ return {repo,write,baseline,collect,git};
 }
 test('feature closure sees uncommitted changes and removed baseline contracts',t=>{
  const f=setup(t),before=f.collect();
@@ -43,4 +43,17 @@ test('source namespace retains both baseline and working records without collisi
 test('feature symlinks are refused before reading through them',t=>{
  const f=setup(t);fs.symlinkSync('/tmp',path.join(f.repo,'docs/specs/orders/outside'));
  assert.throws(()=>f.collect(),/symlink/);
+});
+
+test('baseline feature membership retains removed governing dependencies',t=>{
+ const f=setup(t),task='docs/workflow/tasks/T-0001.md',target=path.join(f.repo,task);
+ f.write('docs/retired-governing.md','old governing content');
+ f.write(task,fs.readFileSync(target,'utf8').replace('governing: [','governing: [docs/retired-governing.md, '));
+ f.git('add','.');f.git('-c','core.hooksPath=/dev/null','commit','-qm','old dependency');
+ const baseline=f.git('rev-parse','HEAD');
+ f.write(task,fs.readFileSync(target,'utf8').replace('feature: docs/specs/orders','feature: docs/specs/other').replace('docs/retired-governing.md, ',''));
+ const collect=()=>collectFeatureSources({repo:f.repo,baseline,feature:'docs/specs/orders'});
+ const before=collect();assert.ok(before.some(s=>s.path==='docs/retired-governing.md'&&s.version==='working'));
+ f.write('docs/retired-governing.md','changed old governing content');
+ assert.notEqual(digest(collect()),digest(before));
 });

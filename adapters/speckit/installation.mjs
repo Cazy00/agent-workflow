@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { read, inventory, digest, sha256 } from './files.mjs';
+import { renderAuthorityPointer } from './authority.mjs';
 
 export const compatibility = JSON.parse(fs.readFileSync(new URL('../../integrations/speckit/compatibility.json', import.meta.url)));
 const HEX = /^[a-f0-9]{64}$/;
@@ -28,6 +29,8 @@ export function verifyManagedFiles({ repo, lock, integration }) {
     require(equal(lock?.runtime_paths ?? null, [SELECTOR]), 'unsupported runtime paths');
     require(equal(lock?.unsupported_commands ?? null, ['analyze', 'checklist', 'converge', 'taskstoissues']), 'unsupported command contract');
     if (mismatches.length) return { ok: false, mismatches };
+    require(lock.authority?.core_revision === lock.core.revision, 'authority/core revisions differ');
+    require(read(repo, '.specify/memory/constitution.md').toString('utf8') === renderAuthorityPointer(lock.authority), 'authority pointer differs from locked source bindings');
     const selector = JSON.parse(read(repo, SELECTOR));
     const expected = { version: compatibility.upstream.version, integration_state_schema: 1,
       installed_integrations: ['codex', 'claude'], integration_settings: {

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { parseFrontMatter } from '../../validator/lib/frontmatter.js';
 import { safePath } from '../../validator/lib/sources.js';
+import { validateRecords } from '../../validator/lib/records.js';
 import { contained, digest, writeNew } from './files.mjs';
 
 export function featurePath(feature) {
@@ -79,6 +80,19 @@ export function prepareDraftTasks({ plan, sourceDigest, usedIds, exists }) {
     if (parsed.errors.length || digest(parsed.data) !== digest(fields)) throw new Error(`task serialization would alter fields: ${id}`);
     return { id, path: rel, text };
   });
+}
+
+// Validate the candidate in memory before any write. Native schema/profile
+// rules remain authoritative, including future changes to those rules.
+export function validateDraftCandidate({ source, drafts }) {
+  const proposed = new Map(drafts.map(d => [d.path,d.text]));
+  const overlay = { ...source,
+    read: p => proposed.has(p) ? proposed.get(p) : source.read(p),
+    list: dir => [...new Set([...source.list(dir),...proposed.keys()].filter(p => p.slice(0,p.lastIndexOf('/')) === dir))].sort(),
+  };
+  const result = validateRecords(overlay,'docs/workflow');
+  if (!result.ok) throw new Error(`invalid native Draft candidate: ${result.errors.join('; ')}`);
+  return result;
 }
 
 // Creates no Ready or approved record. The caller serializes allocation before

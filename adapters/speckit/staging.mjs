@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { compatibility, managedInventory, verifyManagedFiles } from './installation.mjs';
 import { inspectRuntime, cleanEnvironment } from './runtime.mjs';
 import { contained, read, inventory, sha256, writeNew } from './files.mjs';
+import { authorityMetadata, renderAuthorityPointer, readPinnedPolicy } from './authority.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SELECTOR = '.specify/integration.json';
@@ -18,16 +19,23 @@ const snapshot = root => Object.fromEntries(managedInventory(root).filter(p => p
 
 // Only a fresh scratch directory. Never run upstream's overwrite/update commands
 // against a consumer. This function neither approves nor adopts the result.
-export function stageInstallation({ directory, python, coreRevision }) {
+export function stageInstallation({ directory, python, coreRevision, profileText }) {
   if (!path.isAbsolute(directory) || fs.existsSync(directory)) throw new Error('stage directory must be an absent absolute path');
   if (!/^[a-f0-9]{40}$/.test(coreRevision)) throw new Error('exact core revision required');
   const runtime = inspectRuntime(python);
   if (!runtime.ok) throw new Error(runtime.mismatches.join('; '));
   const adapterRevision = run('git', ['rev-parse', 'HEAD'], ROOT);
   if (run('git', ['status', '--porcelain', '--untracked-files=all'], ROOT)) throw new Error('commit the adapter candidate before staging');
+  const policyText = readPinnedPolicy(coreRevision);
+  const authority = authorityMetadata({coreRevision,policyText,profileText});
   fs.mkdirSync(directory, { recursive: true });
   const launch = "import pathlib,sys; sys.path.insert(0,str(pathlib.Path(sys.executable).parent.parent/'lib'/('python%d.%d'%sys.version_info[:2])/'site-packages')); from specify_cli import main; main()";
   const specify = (...args) => run(python, ['-I', '-S', '-c', launch, ...args], directory);
+  const pointer = Buffer.from(renderAuthorityPointer(authority));
+  const refreshPointer = () => {
+    fs.writeFileSync(contained(directory, '.specify/memory/constitution.md'), pointer);
+    fs.writeFileSync(contained(directory, '.specify/memory/.constitution-template.json'), JSON.stringify({ sha256: sha256(pointer), source: 'preset:agent-workflow' }, null, 2) + '\n');
+  };
   specify('init', '--here', '--non-interactive', '--integration', 'codex', '--script', 'py', '--ignore-agent-tools');
   specify('preset', 'add', '--dev', path.join(ROOT, 'integrations/speckit/preset'));
   specify('extension', 'add', '--dev', path.join(ROOT, 'integrations/speckit/extension'));
@@ -35,14 +43,11 @@ export function stageInstallation({ directory, python, coreRevision }) {
   // Prime both registries/materializations, then collect the stable pair.
   specify('integration', 'use', 'claude');
   specify('integration', 'use', 'codex');
-  // Keep the memory entry a bounded authority pointer, not the upstream draft
-  // constitution. This experimental stage cannot authorise planning commands.
-  const pointer = fs.readFileSync(path.join(ROOT, 'integrations/speckit/preset/templates/constitution-template.md'));
-  fs.writeFileSync(contained(directory, '.specify/memory/constitution.md'), pointer);
-  fs.writeFileSync(contained(directory, '.specify/memory/.constitution-template.json'), JSON.stringify({ sha256: sha256(pointer), source: 'preset:agent-workflow' }, null, 2) + '\n');
+  refreshPointer();
   writeNew(directory, '.specify/UPSTREAM-LICENSE', fs.readFileSync(path.join(ROOT, 'integrations/speckit/UPSTREAM-LICENSE')));
   const codex = snapshot(directory);
   specify('integration', 'use', 'claude');
+  refreshPointer();
   const claude = snapshot(directory);
   if (JSON.stringify(Object.keys(codex)) !== JSON.stringify(compatibility.managed_paths) ||
       JSON.stringify(Object.keys(claude)) !== JSON.stringify(compatibility.managed_paths)) throw new Error('staged upstream inventory differs from the reviewed contract');
@@ -54,9 +59,10 @@ export function stageInstallation({ directory, python, coreRevision }) {
     adapter: { version: '0.1.0-dev', revision: adapterRevision }, core: { revision: coreRevision, compatibility_api: 1 },
     preset_id: 'agent-workflow', extension_id: 'agent-workflow', script: 'py', integrations: ['codex', 'claude'],
     feature_root: 'docs/specs', runtime_paths: [SELECTOR], allowed_overrides: [],
-    unsupported_commands: ['analyze', 'checklist', 'converge', 'taskstoissues'], managed_files };
+    unsupported_commands: ['analyze', 'checklist', 'converge', 'taskstoissues'], managed_files, authority };
   for (const integration of ['claude', 'codex']) {
     specify('integration', 'use', integration);
+    refreshPointer();
     const check = verifyManagedFiles({ repo: directory, lock, integration });
     if (!check.ok) throw new Error(check.mismatches.join('; '));
   }

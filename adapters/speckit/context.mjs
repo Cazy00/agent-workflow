@@ -5,8 +5,9 @@ import { loadAll, loadConfig } from '../../validator/lib/records.js';
 import { governingInputs } from '../../validator/lib/freshness.js';
 import { planningEnforcement } from '../../validator/lib/planning.js';
 import { verifyInstallation } from './verify.mjs';
-import { contained, inventory, read, digest } from './files.mjs';
+import { contained, inventory, read, digest, sha256 } from './files.mjs';
 import { featurePath } from './task-plan.mjs';
+import { readPinnedPolicy } from './authority.mjs';
 
 export const runtimeFeaturePath = p => /^(tasks|research|analysis)\.md$/.test(p) || p.startsWith('checklists/') || p.startsWith('.wf-speckit/');
 function gitFiles(repo, revision, prefix) {
@@ -21,9 +22,12 @@ function gitFiles(repo, revision, prefix) {
 export function collectFeatureSources({ repo, baseline, feature, milestone, seeds = [] }) {
   featurePath(feature);
   const local = dirSource(repo), approved = gitSource(repo, baseline);
-  const all = loadAll(local, 'docs/workflow');
-  if (all.errors.length) throw new Error(`invalid native records: ${all.errors.join('; ')}`);
-  const tasks = [...all.tasks.values()].filter(t => t.data?.feature === feature).map(t => t.data);
+  const all = loadAll(local, 'docs/workflow'), old = loadAll(approved, 'docs/workflow');
+  if (all.errors.length || old.errors.length) throw new Error(`invalid native records: ${[...all.errors,...old.errors].join('; ')}`);
+  // A local edit can remove feature membership or an old governing reference.
+  // Seed both closures with both versions of every matching feature task.
+  const ids = new Set([...all.tasks.values(),...old.tasks.values()].filter(t => t.data?.feature === feature).map(t => t.data.id));
+  const tasks = [...ids].flatMap(id => [all.tasks.get(id)?.data,old.tasks.get(id)?.data]).filter(Boolean);
   const seed = { feature, milestone, feature_readiness: `${feature}/spec.md`, design: `${feature}/plan.md`, governing: [`${feature}/contracts`] };
   const current = governingInputs(local, 'docs/workflow', [seed,...tasks,...seeds]);
   const prior = governingInputs(approved, 'docs/workflow', [seed,...tasks,...seeds]);
@@ -69,6 +73,11 @@ export function verifyAdoptedInstallation({ repo, baseline, integration, python 
   if (lock.core.revision !== config.workflow?.revision) throw new Error('adapter/core adoption pins differ');
   const installed = verifyInstallation({repo,lock,integration,python});
   if (!installed.ok) throw new Error(installed.mismatches.join('; '));
+  if (sha256(readPinnedPolicy(lock.core.revision)) !== lock.authority?.policy?.sha256) throw new Error('authority pointer differs from pinned core policy');
+  if ((loadAll(source,'docs/workflow').profile?.data?.owners?.length ?? 0) >= 2) throw new Error('Spec Kit adapter currently supports one owner only');
+  const profile = source.read('docs/workflow/profile.md');
+  if (profile === null || sha256(profile) !== lock.authority?.profile?.sha256 || !read(repo,'docs/workflow/profile.md').equals(Buffer.from(profile)))
+    throw new Error('authority pointer is stale for the baseline/current profile; propose the pointer and lock with the governing change');
   return {config,lock,installed};
 }
 

@@ -76,9 +76,13 @@ export function collectAllocationSnapshot({ repo, baseline, expectedSnapshot, to
       revisions.push(ref);
     }
     const paths = git('log', '--full-history', '--format=', '--name-only', '-z', ...revisions, '--', 'docs/workflow/tasks/').split('\0').map(s => s.replace(/^\n+/, '')).filter(Boolean);
-    const ids = new Set([...taskIdsFromPaths(paths), ...taskIdsFromPaths(inventory(repo, 'docs/workflow/tasks'))]);
+    // Include unpublished branches and retired IDs reachable only in this
+    // client's history. Conservative reservation is cheaper than ID reuse.
+    const localPaths = localGit('log', '--all', 'HEAD', '--full-history', '--format=', '--name-only', '-z', '--', 'docs/workflow/tasks/').split('\0').map(s => s.replace(/^\n+/, '')).filter(Boolean);
+    const ids = new Set([...taskIdsFromPaths(paths), ...taskIdsFromPaths(localPaths), ...taskIdsFromPaths(inventory(repo, 'docs/workflow/tasks'))]);
     const claims = transport('ls-remote', '--heads', url).split('\n').map(line => line.split(/\s+/)[1]?.replace('refs/heads/', '')).filter(Boolean);
-    for (const label of [...claims, ...pulls.flatMap(p => [p.title, p.head.ref])]) {
+    const localClaims = localGit('for-each-ref', '--format=%(refname:strip=2)', 'refs/heads/').split('\n');
+    for (const label of [...claims, ...localClaims, ...pulls.flatMap(p => [p.title, p.head.ref])]) {
       const match = label?.match(/^(?:codex\/)?(T-\d{4})(?:\b|-)/);
       if (match) ids.add(match[1]);
     }

@@ -57,3 +57,21 @@ test('allocation snapshots reject stale, incomplete, shallow and unavailable-hea
   for (const delta of [{complete:false},{shallow:true},{observed_at:0},{pulls:[{number:2,head:'b'.repeat(40),available:false}]},{baseline:'c'.repeat(40)}])
     assert.throws(()=>validateAllocationSnapshot({...s,...delta},expected),/snapshot/);
 });
+
+import { validateDraftCandidate } from '../../adapters/speckit/task-plan.mjs';
+import { dirSource } from '../lib/sources.js';
+import { fileURLToPath } from 'node:url';
+test('candidate validation uses native profile ownership before any Draft writes',t=>{
+ const repo=fs.mkdtempSync(path.join(os.tmpdir(),'wf-speckit-native-validation-'));t.after(()=>fs.rmSync(repo,{recursive:true,force:true}));
+ const root=fileURLToPath(new URL('../../',import.meta.url));
+ fs.cpSync(path.join(root,'fixtures/04a-accepted-decision-permits/baseline'),repo,{recursive:true});
+ const profile=path.join(repo,'docs/workflow/profile.md'),task=path.join(repo,'docs/workflow/tasks/T-0001.md'),milestone=path.join(repo,'docs/workflow/milestones/M-0001.md');
+ fs.writeFileSync(profile,fs.readFileSync(profile,'utf8').replace('record: profile','record: profile\nowners: [alice, bob]'));
+ fs.writeFileSync(task,fs.readFileSync(task,'utf8').replace(/^owner:.*$/m,'owner: alice'));
+ fs.writeFileSync(milestone,fs.readFileSync(milestone,'utf8').replace('record: milestone','record: milestone\nowner: alice'));
+ const drafts=prepareDraftTasks(input());
+ assert.throws(()=>validateDraftCandidate({source:dirSource(repo),drafts}),/owner worker is not one/);
+ assert.equal(fs.existsSync(path.join(repo,drafts[0].path)),false);
+ for(const d of drafts)d.text=d.text.replace('owner: worker','owner: alice');
+ assert.equal(validateDraftCandidate({source:dirSource(repo),drafts}).ok,true);
+});

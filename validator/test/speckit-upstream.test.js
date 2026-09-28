@@ -61,7 +61,7 @@ if (live) {
     const python = path.join(path.dirname(executable), 'python');
     const ownRevision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
     assert.equal(ownRevision.status, 0, ownRevision.stderr);
-    const staged = stageInstallation({ directory: path.join(temp, 'stage'), python, coreRevision: ownRevision.stdout.trim() });
+    const staged = stageInstallation({ directory: path.join(temp, 'stage'), python, coreRevision: ownRevision.stdout.trim(), profileText:fs.readFileSync(path.join(root,'fixtures/04a-accepted-decision-permits/baseline/docs/workflow/profile.md'),'utf8') });
     assert.equal(verifyInstallation({ repo: staged.directory, lock: staged.lock, integration: 'codex', python }).ok, true);
     for (const tool of ['.agents', '.claude']) {
       for (const command of ['specify', 'clarify', 'plan', 'tasks', 'implement', 'constitution'])

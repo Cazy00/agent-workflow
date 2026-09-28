@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { dirSource, gitSource } from '../../validator/lib/sources.js';
 import { loadConfig } from '../../validator/lib/records.js';
 import { resolveFeatureContext } from './context.mjs';
-import { prepareDraftTasks, writeDraftBatch } from './task-plan.mjs';
+import { prepareDraftTasks, writeDraftBatch, validateDraftCandidate } from './task-plan.mjs';
 import { collectAllocationSnapshot, validateAllocationSnapshot } from './allocation.mjs';
 import { renderTaskProjection, verifyTaskProjection } from './projection.mjs';
 import { contained, digest, read, writeNew } from './files.mjs';
@@ -39,6 +39,7 @@ export function writeDraftTasks({ repo, baseline, plan, openPulls, integration, 
     const source=dirSource(repo);
     for(const p of [context.spec_path,context.plan_path]) if(!source.exists(p)) throw new Error(`missing canonical source: ${p}`);
     const drafts=prepareDraftTasks({plan,sourceDigest:context.source_digest,usedIds:snapshot.ids,exists:p=>{contained(repo,p);return source.exists(p);}});
+    validateDraftCandidate({source,drafts});
     if(resolveFeatureContext(contextArgs).source_digest!==context.source_digest) throw new Error('canonical sources changed during allocation; refresh before writing');
     validateAllocationSnapshot(snapshot,{repository:config.repository,baseline});
     markIntent({schema:'wf-speckit-draft-intent/v1',baseline,plan_digest:digest(plan),allocation_digest:digest(snapshot),drafts});

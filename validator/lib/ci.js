@@ -152,7 +152,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     const statusOk = ['Ready', 'Active'].includes(gate.status);
     const doneHere = gate.status === 'Done' && ['Ready', 'Active'].includes(baselineStatus);
     if (gate.outcome === OUTCOMES.ready) {
-      if (!statusOk && !doneHere) { findings.push(`task ${id} status is ${gate.status}; production changes need Ready or Active (or Done in this pull request)`); fail = true; }
+      if (!statusOk && !doneHere) { findings.push(`task status is ${gate.status} (${id}); production changes need Ready or Active (or Done in this pull request)`); fail = true; }
     } else if (gate.outcome === OUTCOMES.subset) {
       const outside = paths.filter(p => !gate.subset.some(s => within(p, s)));
       if (outside.length) { findings.push(`outside the ready subset [${gate.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }

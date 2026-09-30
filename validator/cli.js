@@ -93,7 +93,8 @@ async function main() {
         }
       }
     }
-    const result = renderBrief({ file, raw, subject, statusChanges });
+    const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', `${rev}:tests/acceptance-map.json`); try { return r.status === 0 ? JSON.parse(r.stdout) : []; } catch { return null; } } : null;
+    const result = renderBrief({ file, raw, subject, mapped, statusChanges });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;

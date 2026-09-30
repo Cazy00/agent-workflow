@@ -6,8 +6,8 @@
 // unchanged from X to R:
 //   governing path   a governing-change receipt at X listing it
 //   enforcement path a workflow-change receipt at X listing it
-//   production path  verification, review and integration receipts at X (the evidence `wf ci` requires), complete,
-//                    with every check and test passed and the approved profile's required checks among them
+//   production path  verification, review and integration receipts at X (the evidence `wf ci` requires), with the
+//                    content those gates accept (sound(), below)
 //   planning path    nothing, as for a planning-only change in `wf ci` and a records-only merge in enforced mode
 //   unclassified     never
 // and R's records validate. Classification uses A's config. Nothing is derived in enforced mode, where the fetched
@@ -40,12 +40,17 @@ function nearestReceipted(git, look, revision) {
   for (let i = 1; i < chain.length; i++) if (look('baseline', chain[i])) return { revision: chain[i], ahead: i };
   return null;
 }
-// A receipt counts toward a derivation only when the gates would accept its content, not merely its signature.
-const passed = p => (p.checks ?? []).every(c => c?.result === 'passed') && (p.execution?.tests ?? []).every(t => t?.status === 'passed');
-function sound(p, requiredChecks) {
+// A receipt counts toward a derivation only when the gates would accept its content, not merely its signature: the
+// fields its purpose needs (payloads.js), every check passed with the profile's required checks among them
+// (lifecycle.js), and for verification every test the revision's acceptance map names run exactly once and passed
+// (acceptance.js). Unmapped tests may be skipped, as the gates allow.
+function sound(p, requiredChecks, mapped) {
   if (!p || payloadProblems(p).length) return false;
   if (!['verification', 'integration'].includes(p.purpose)) return true;
-  return passed(p) && requiredChecks.every(name => p.checks.some(c => c?.name === name && c.result === 'passed'));
+  if (!p.checks.every(c => c?.result === 'passed') || !requiredChecks.every(name => p.checks.some(c => c?.name === name))) return false;
+  if (p.purpose !== 'verification') return true;
+  const runs = p.execution.tests;
+  return mapped(p.revision).every(m => { const r = runs.filter(t => t?.file === m.file && t?.name === m.name); return r.length === 1 && r[0].status === 'passed'; });
 }
 
 export function withDerivedBaselines(trust, repo) {
@@ -74,6 +79,11 @@ export function withDerivedBaselines(trust, repo) {
     const covering = (p, test) => later.find(({ x, after }) => !after.has(p) && test(x));
     let requiredChecks = [];
     try { requiredChecks = list(loadAll(gitSource(repo, from), config.records_dir ?? 'docs/workflow').profile?.data?.required_checks); } catch { /* no profile: nothing extra required */ }
+    const maps = new Map();
+    const mapped = x => {
+      if (!maps.has(x)) { try { const raw = gitSource(repo, x).read('tests/acceptance-map.json'); maps.set(x, raw == null ? [] : JSON.parse(raw)); } catch { maps.set(x, null); } }
+      return Array.isArray(maps.get(x)) ? maps.get(x) : [{ file: null, name: null }]; // an unreadable map satisfies nothing
+    };
     const covered = [];
     for (const c of classifyPaths(config, names(diff.out))) {
       if (c.category === 'planning') continue;
@@ -81,7 +91,7 @@ export function withDerivedBaselines(trust, repo) {
       const purposes = PURPOSE[c.category] ? [PURPOSE[c.category]] : EVIDENCE;
       const hit = covering(c.path, x => purposes.every(purpose => {
         const found = look(purpose, x);
-        return sound(found, requiredChecks) && (!PURPOSE[c.category] || found.paths.includes(c.path));
+        return sound(found, requiredChecks, mapped) && (!PURPOSE[c.category] || found.paths.includes(c.path));
       }));
       if (!hit) { reasons.push(`${c.category} path ${c.path} has no complete, passing ${purposes.join('/')} receipt at a revision where it already had its current content`); continue; }
       for (const purpose of purposes) take(purpose, hit.x);

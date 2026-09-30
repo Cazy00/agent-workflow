@@ -30,7 +30,8 @@ export function payloadProblems(p, { now = Date.now() } = {}) {
       if (p.execution?.revision !== p.revision || !Array.isArray(p.execution?.tests)) errors.push('execution must name this revision and list the tests run'); break;
     case 'integration': checkList(p, errors); break;
     case 'review':
-      for (const f of ['reviewer', 'implementer', 'separate_context', 'evidence']) if (!text(p[f])) errors.push(`${f} is missing`);
+      for (const f of ['reviewer', 'implementer', 'evidence']) if (!text(p[f])) errors.push(`${f} is missing`);
+      if (!p.separate_context) errors.push('separate_context is missing'); // lifecycle.js asks only that it be set
       if (text(p.reviewer) && p.reviewer === p.implementer) errors.push('reviewer and implementer are the same');
       for (const area of REVIEW_AREAS) if (!Array.isArray(p.coverage) || !p.coverage.includes(area)) errors.push(`review does not cover ${area}`);
       if (!Array.isArray(p.findings)) errors.push('findings are missing');

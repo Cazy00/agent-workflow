@@ -21,9 +21,9 @@ function attests(p) {
     case 'verification': {
       const tests = Array.isArray(p.execution?.tests) ? p.execution.tests : [];
       const passed = tests.filter(t => t?.status === 'passed').length;
-      return `checks ${(p.checks ?? []).map(c => `${code(c?.name)} ${esc(c?.result)}`).join(', ')}; ${passed} of ${plural(tests.length, 'mapped test')} passed; environment ${code(p.environment)}`;
+      return `checks ${(p.checks ?? []).map(c => `${code(clip(c?.name, 80))} ${esc(c?.result)}`).join(', ')}; ${passed} of ${plural(tests.length, 'test')} in the run passed; environment ${code(clip(p.environment, 100))}`;
     }
-    case 'integration': return `assembled-candidate checks ${(p.checks ?? []).map(c => `${code(c?.name)} ${esc(c?.result)}`).join(', ')}; environment ${code(p.environment)}`;
+    case 'integration': return `assembled-candidate checks ${(p.checks ?? []).map(c => `${code(clip(c?.name, 80))} ${esc(c?.result)}`).join(', ')}; environment ${code(clip(p.environment, 100))}`;
     case 'review': {
       const f = Array.isArray(p.findings) ? p.findings : [];
       const accepted = f.filter(x => x?.status === 'accepted').length;
@@ -35,9 +35,10 @@ function attests(p) {
   }
 }
 
-// subject(revision) gives a commit subject when a repository is at hand; statusChanges lists records that change
+// With a repository at hand, subject(revision) gives a commit subject and mapped(revision) the tests its acceptance
+// map names, which must run once and pass (unmapped tests may be skipped); statusChanges lists records that change
 // state in the round without a receipt of their own (planning paths), for the owner to see all the same.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, statusChanges = [] }) {
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, statusChanges = [] }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${esc(e.message)}. Do not sign it.\n` }; }
@@ -60,15 +61,24 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   payloads.forEach((p, i) => lines.push(`| ${i + 1} | ${esc(p?.purpose)} | ${short(p?.revision)} | ${subject(p?.revision) ? code(clip(subject(p.revision), 60)) : '—'} | ${attests(p ?? {})} |`));
   lines.push('');
   const judge = [];
+  // Accepted findings above a note one by one; accepted notes as one line, their resolutions folded away.
   for (const p of payloads.filter(p => p?.purpose === 'review')) {
-    for (const f of (Array.isArray(p.findings) ? p.findings : []).filter(f => f?.status === 'accepted')) {
-      judge.push(`- **Accepted, not fixed** at ${short(p.revision)}: ${code(f.id ?? '?')} ${esc(f.category ?? '')}${f.severity ? `, ${esc(f.severity)}` : ''}: ${clip(f.resolution, 300)}`);
-    }
+    const accepted = (Array.isArray(p.findings) ? p.findings : []).filter(f => f?.status === 'accepted');
+    const notes = accepted.filter(f => /^note\b/i.test(String(f.severity ?? '')));
+    for (const f of accepted.filter(f => !notes.includes(f))) judge.push(`- **Accepted, not fixed** at ${short(p.revision)}: ${code(f.id ?? '?')} ${esc(f.category ?? '')}${f.severity ? `, ${esc(f.severity)}` : ', severity not given'}: ${clip(f.resolution, 300)}`);
+    if (notes.length) judge.push(`- **${plural(notes.length, 'note')} accepted** at ${short(p.revision)}: ${notes.map(f => code(f.id ?? '?')).join(', ')}<details><summary>resolutions</summary>${notes.map(f => `<br>${code(f.id ?? '?')}: ${clip(f.resolution, 200)}`).join('')}</details>`);
   }
   for (const p of payloads.filter(p => ['verification', 'integration'].includes(p?.purpose))) {
     for (const c of (Array.isArray(p.checks) ? p.checks : []).filter(c => c?.result !== 'passed')) judge.push(`- **Check not passed** at ${short(p.revision)}: ${code(c?.name)} is ${esc(c?.result)}`);
-    const bad = (Array.isArray(p.execution?.tests) ? p.execution.tests : []).filter(t => t?.status !== 'passed');
-    if (bad.length) judge.push(`- **Tests not passed** at ${short(p.revision)}: ${bad.slice(0, 10).map(t => code(`${t?.file} / ${t?.name}: ${t?.status}`)).join(', ')}${bad.length > 10 ? ` and ${bad.length - 10} more` : ''}`);
+    const tests = Array.isArray(p.execution?.tests) ? p.execution.tests : [];
+    const required = p.purpose === 'verification' && mapped ? mapped(p.revision) : null;
+    const isMapped = t => (required ?? []).some(m => m?.file === t?.file && m?.name === t?.name);
+    for (const m of required ?? []) {
+      const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
+      if (runs.length !== 1 || runs[0].status !== 'passed') problems.push(`verification at ${p.revision}: mapped test ${m?.file} / ${m?.name} ran ${runs.length} time(s)${runs.length === 1 ? `, ${runs[0].status}` : ''}; it must run once and pass`);
+    }
+    const other = tests.filter(t => t?.status !== 'passed' && !isMapped(t));
+    if (other.length) judge.push(`- **${plural(other.length, 'test')} not passed** at ${short(p.revision)}${required ? ', none mapped to acceptance' : '; with `--repo` the brief checks whether any is mapped'}: ${other.slice(0, 5).map(t => code(`${t?.name}: ${t?.status}`)).join(', ')}${other.length > 5 ? ` and ${other.length - 5} more` : ''}`);
   }
   for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${esc(p.purpose)}): ${(p.paths ?? []).map(code).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(p.scenarios ?? []).map(code).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);

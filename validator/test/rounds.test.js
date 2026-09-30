@@ -18,7 +18,7 @@ const REVIEW = ['scope', 'correctness', 'maintainability', 'security', 'regressi
 
 // main holds the approved baseline B; the task works on its own branch: candidate C (src/a.js) with its receipts, then
 // D, the records-only commit that marks T-0001 Done.
-function round(t, { derived = true } = {}) {
+function round(t, { derived = true, mapped = false } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-rounds-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
@@ -28,6 +28,11 @@ function round(t, { derived = true } = {}) {
   const commit = message => { git('add', '-A'); git('commit', '-qm', message); return git('rev-parse', 'HEAD'); };
   git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
   edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) } }, null, 2); });
+  if (mapped) {
+    edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
+    write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/feature.js', name: 'required scenario' }]));
+    write('tests/feature.js', 'actual test file\n');
+  }
   const initial = commit('initial');
   edit(taskPath, x => x.replaceAll('fixture-rev', initial));
   const B = commit('authorised baseline');
@@ -41,7 +46,7 @@ function round(t, { derived = true } = {}) {
   const key = path.join(temp, 'owner.pem'); fs.writeFileSync(key, keys.publicKey.export({ type: 'spki', format: 'pem' }));
   const check = { environment: 'isolated', checks: [{ name: 'unit', result: 'passed', evidence: 'evidence/log.txt' }] };
   const evidence = rev => [
-    { purpose: 'verification', revision: rev, ...check, execution: { revision: rev, tests: [] } },
+    { purpose: 'verification', revision: rev, ...check, execution: { revision: rev, tests: [{ file: 'tests/feature.js', name: 'required scenario', status: 'passed' }] } },
     { purpose: 'integration', revision: rev, ...check },
     { purpose: 'review', revision: rev, reviewer: 'independent', implementer: 'agent', separate_context: 'fresh', evidence: 'evidence/log.txt', coverage: REVIEW, findings: [] },
   ];
@@ -218,7 +223,7 @@ test('the signing brief is rendered from the payload file, flags what needs judg
   if (digest) assert.ok(r.stdout.includes(digest));
   assert.match(r.stdout, /## What you are signing/);
   assert.match(r.stdout, /T-0001: candidate/);
-  assert.match(r.stdout, /Accepted, not fixed.*R-1/);
+  assert.match(r.stdout, /1 note accepted.*R-1/);
   assert.match(r.stdout, /Protected paths.*docs\/specs\/feature\.md/);
   assert.match(r.stdout, /T-0001 Ready → Done/);
   assert.ok(!r.stdout.includes('<script>'), 'payload text cannot open HTML');
@@ -243,14 +248,19 @@ test('the signing brief refuses a file the gates would reject', t => {
   assert.equal(json.ok, false); assert.equal(json.count, 4);
 });
 
-test('a receipt counts toward derivation only with passing checks, a sound review and the required checks', t => {
-  const p = round(t);
+test('a receipt counts toward derivation only with passing checks and mapped tests, a sound review and the required checks', t => {
+  const p = round(t, { mapped: true });
   const [verification, integration, review] = p.evidence(p.C);
   const base = { purpose: 'baseline', revision: p.B };
+  assert.equal(p.trustOf([base, verification, integration, review]).derivation(p.D).approved, true);
   const failed = { ...verification, checks: [{ name: 'unit', result: 'failed', evidence: 'evidence/log.txt' }] };
   assert.equal(p.trustOf([base, failed, integration, review]).derivation(p.D).approved, false);
-  const skipped = { ...verification, execution: { revision: p.C, tests: [{ file: 'tests/a.js', name: 'a', status: 'skipped' }] } };
-  assert.equal(p.trustOf([base, skipped, integration, review]).derivation(p.D).approved, false);
+  const run = tests => ({ ...verification, execution: { revision: p.C, tests } });
+  const mappedRun = status => ({ file: 'tests/feature.js', name: 'required scenario', status });
+  assert.equal(p.trustOf([base, run([mappedRun('skipped')]), integration, review]).derivation(p.D).approved, false, 'a mapped test must pass');
+  assert.equal(p.trustOf([base, run([]), integration, review]).derivation(p.D).approved, false, 'a mapped test must run');
+  assert.equal(p.trustOf([base, run([mappedRun('passed'), mappedRun('passed')]), integration, review]).derivation(p.D).approved, false, 'exactly once');
+  assert.equal(p.trustOf([base, run([mappedRun('passed'), { file: 'tests/x.js', name: 'placeholder', status: 'skipped' }]), integration, review]).derivation(p.D).approved, true, 'an unmapped test may be skipped, as the gate allows');
   const open = { ...review, findings: [{ id: 'R-1', status: 'open' }] };
   assert.equal(p.trustOf([base, verification, integration, open]).derivation(p.D).approved, false);
   const self = { ...review, reviewer: 'agent' };

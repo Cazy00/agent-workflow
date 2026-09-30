@@ -63,6 +63,21 @@ Record a session outcome using `templates/session.json` outside the checkout, th
 
 Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages; `status` prints a derived, read-only view for the owner (what is waiting on you, what is next for the agent, milestones and tasks with previewed blockers, open decisions, inbox and setup items) as Markdown, or as JSON with `--json`, and needs no baseline; given `--pull-requests` (`gh pr list` JSON) it also shows each task's claim; it never checks approval and grants nothing. On GitHub, the scaffold's `.github/workflows/wf-status.yml` posts the same view with the open pull requests to a *Project status* issue that the owner pins once, at the top of the Issues tab; each run replaces its text. All other commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
 
+## What each gate needs
+
+Read this instead of the validator source. In manual mode every receipt is owner-signed for the exact revision named; in enforced mode what a receipt would prove is listed as `unverified` for the pull request review.
+
+| Step | Command | From the approved baseline | Receipts at the candidate |
+|---|---|---|---|
+| Start a task | `readiness --task T` | baseline receipt (or derived); profile Ready with `required_checks`; milestone Authorised or Active; task fields recorded; prerequisites Done; decisions Resolved | none |
+| Planning-only change | `ci` | its config (classification) and valid records; no approval is checked | none |
+| Integrate a task | `ci --task T` | as for a task start | `verification` (checks, and every mapped test run once and passed), `review` (six areas, findings resolved or accepted), `integration`; `governing-change` / `workflow-change` listing each protected path changed |
+| Accept | `lifecycle --stage accept` | as for a task start, the milestone Authorised through Released | the above and `acceptance` naming the task's scenarios |
+| Release | `lifecycle --stage release` | as for acceptance | the above and `release` |
+| Close a signed round | `closeout` | the trusted branch's tip | each Done task's receipts at its `verified` revision; acceptance for each milestone accepted; the round's end approved |
+
+A dry run with `--unsigned-receipts` exits 3 when it relies on unsigned payloads; `wf brief` renders the owner's page for a round.
+
 ## Central reporting and assisted runtime
 
 After the owner-directed central mode is adopted, use [operations.md](procedures/operations.md) for `wf report`, `wf runtime` and `wf prepare-evidence`. Their configuration and private outbox live outside the product repository. Reporting works even when readiness blocks implementation; it cannot approve work. The evidence helper currently supports the included Node test reporter, produces unsigned drafts only, and does not imply compatibility with an uninspected product test runner.
@@ -72,6 +87,8 @@ Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit
 ## Fewer round trips and reliable closeout
 
 After explicit setup approval, optional local batches use `wf ci --tasks T-0001,T-0002`; every task still passes its gates. Routine integration can be delegated within narrow protected limits, using worker-posted evidence and exact-head GitHub owner approval for exceptions. Both are off by default; read `procedures/delivery.md` before activation.
+
+In manual mode a round of receipts is one file of unsigned payloads with the brief `wf brief` renders from it, staged outside the checkout; dry-run it with `--unsigned-receipts` (exit 3, never approval), and after signing run `wf closeout`, which re-runs the round's gates and prints the fast-forward. Derived baselines spare the baseline receipt for records-only commits; `signing: milestone` collects a milestone's receipts in one round (`procedures/approval-evidence.md`, *Signing rounds*).
 
 Prepare a fresh independent review with `wf review-packet --repo DIR --baseline BASE_SHA --candidate HEAD_SHA --task T-0001 --evidence /external/checks.log`. Give its canonical references to an explicitly empty review context and rerun the command afterwards to catch checkout changes. The packet does not launch or authenticate the reviewer.
 

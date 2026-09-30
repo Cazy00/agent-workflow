@@ -15,6 +15,7 @@ Read the repository `AGENTS.md` and current profile, milestone, task, and govern
 | Use approved local batches or routine integration delegation | `procedures/delivery.md` |
 | Review candidate and test fidelity | `procedures/review.md` |
 | Present, accept or release | `procedures/accept-release.md` |
+| Stage, dry-run or close a manual-mode signing round | `procedures/approval-evidence.md` |
 | Deploy, handle an incident, maintain or upgrade | `procedures/operate.md` |
 | Report or maintain workflow | `procedures/maintenance.md` and `procedures/operations.md` |
 

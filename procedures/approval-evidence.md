@@ -53,3 +53,25 @@ fs.writeFileSync('receipt.json', JSON.stringify({ payload, signature }, null, 2)
 ```
 
 The gate never calls this signing operation. Signing keys and candidate tests must not share a credential-bearing execution context. No live trust anchor or approval receipt was created by the conformance inspection; setup and owner adoption are separate recorded actions.
+
+### Signing rounds
+
+A round is one file of unsigned payloads, one per receipt, that the coordinator stages outside every checkout in the owner's inbox (`$WF_INBOX`, set by the trusted operator like `$WF_RECEIPTS`): `<round>-unsigned.json`, a JSON array, with a new round name each time. Beside it the coordinator writes the owner's brief, `wf brief --payloads FILE --repo DIR --baseline APPROVED_SHA > <round>-brief.md`, and sends one request naming both files, the revisions and anything the brief lists under *Needs your judgement*. The brief is rendered from the file and headed by its sha256; it says what each signature attests and approves nothing. `wf brief` exits 1 for a file the gates would reject: fix it before asking. The owner reads the brief, inspects what it points to, signs the file whose digest matches and adds the receipts to `$WF_RECEIPTS`.
+
+In manual mode a round also ends the coordinator's session: record the outcome and handoff naming the round file, and stop. A fresh session resumes after signing (`execute.md`, *Resume, limits and handoff*).
+
+### Unsigned dry runs
+
+Before staging a round, run the gates it must satisfy with `--unsigned-receipts FILE` beside the trust options. A signed receipt takes precedence over an unsigned payload of the same purpose and revision. A result that relies on an unsigned payload reports `authoritative: false`, lists the payloads it relied on and exits 3, which is never success: authoritative launchers and CI entries never pass the option, and no step treats exit 3 as approval. It replaces signing copies with a throwaway key.
+
+### Derived baselines
+
+With `approval.derived_baselines: true` in the approved baseline's `docs/workflow/config.json` (a workflow change, so the owner's receipt enables it; absent or `false` keeps every baseline explicit), a revision needs no baseline receipt of its own when every path that differs from its nearest first-parent ancestor with a baseline receipt is covered by a receipt at a revision where the path already had its current content: a `governing-change` or `workflow-change` receipt listing it, or `verification`, `review` and `integration` receipts for a production or generated path. Planning paths need none, as in a planning-only `wf ci` and a records-only merge in enforced mode. An unclassified path or records that fail validation prevent derivation; classification comes from that ancestor's config. The Done record after a signed candidate, and a milestone close with its governing-change receipt, then become baselines without another signature. The owner no longer signs planning records on their own, such as a task marked Done; `wf brief --baseline` lists them in the round they arrive with.
+
+### Milestone rounds
+
+A milestone whose authorised record sets `signing: milestone` collects its signatures in one round at its end instead of one per task. The coordinator works through its tasks on the milestone's branch, gating each with `--unsigned-receipts` holding the payloads staged for the tasks before it (exit 3 is expected), so every task still gets its verification, review and integration payloads and every governing change its own. The final round holds all of them with the acceptance and the close; `wf closeout` then re-runs every task's gate on the signed receipts before the trusted branch moves. The owner signs everything the per-task route signs, only later; the cost is reworking later tasks if an earlier one is refused. `signing: task`, the default, keeps a round per task.
+
+### Closeout
+
+After the owner signs a round, run `wf closeout --baseline TRUSTED_TIP --candidate ROUND_END` with the trust options. It re-runs `wf ci` for each task the round marks Done, at the `baseline_revision` and `verified` revisions its record names; requires, for each milestone the round marks Accepted, an acceptance receipt in the round naming every scenario; and requires the round's end to be an approved baseline, by receipt or derivation. It is read-only: when every step passes it prints the fast-forward of the trusted branch for the operator to run. It needs no model, so the owner or a fresh session can run it.

@@ -37,3 +37,9 @@ The runner is **not adopted** in this implementation. Unattended mode requires a
 ## Shared project
 
 When two or more people share the owner role, `shared.md` adds its setup steps.
+
+## Reuse an existing setup
+
+Start with `bin/wf-adopt --inspect --project /path/to/project`. Its bounded read-only inventory identifies existing manifests, CI hints, adoption and collisions without executing the project. Reuse adequate profile/design/identity/check/protection evidence after verifying its revision, configuration and applicability; do not reinstall or repeat an unchanged successful setup step. Record only gaps and changed controls. Inspection does not verify access, protections or check execution. Confirm actual CI job names and run the required checks before claiming readiness.
+
+For fewer owner interactions, prepare one concrete checklist for the account/protection actions that genuinely require the owner, complete all worker-accessible work first, and verify each control once. Keep planning unknowns from blocking unrelated setup. Existing authenticated operational routes should be checked before requesting credentials or moving backups manually; never print secrets or shift technical verification to the owner. Optional batching and agent-operated routine integration use `delivery.md`, with their own adverse approval-path tests before activation.

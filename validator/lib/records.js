@@ -25,12 +25,12 @@ const ENUMS = {
   decision: {
     status: ['Open', 'Proposed', 'Resolved'],
     type: ['decision', 'fact', 'technical', 'assumption', 'deferred'],
-    required_before: ['implement', 'verify', 'accept', 'release', 'none'],
+    required_before: ['implement', 'verify', 'integrate', 'accept', 'release', 'none'],
   },
   feedback: { status: ['Open', 'Classified', 'Closed'] },
 };
 const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
-export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|accept|release)$/;
+export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|integrate|accept|release)$/;
 
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
@@ -38,6 +38,13 @@ export function loadConfig(source) {
   try {
     const config = JSON.parse(text);
     planningEnforcement(config);
+    if (config.delegation !== undefined) {
+      const d = config.delegation;
+      if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||
+          !d.routine || typeof d.routine !== 'object' || Array.isArray(d.routine) || typeof d.routine.enabled !== 'boolean') {
+        throw new Error('delegation must contain routine with an explicit boolean enabled');
+      }
+    }
     return config;
   } catch (e) { throw new WfError(`docs/workflow/config.json: ${e.message}`); }
 }

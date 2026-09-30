@@ -92,11 +92,11 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
   for (const value of migratedFrom) if (migratedTo.has(value)) errors.push(`mapping migrations cannot chain or reverse mapping ${value}`);
   if (errors.length === manifestStart) for (const { from, label } of eligible) {
     allowedRemovals.add(from);
-    if (enforced) unverified.push(`${label}: renamed test execution and preserved coverage require code-owner review (enforced mode)`);
+    if (enforced) unverified.push(`${label}: renamed test execution and preserved coverage require technical review (unverified by this validator)`);
   }
   for (const m of Array.isArray(old) ? old : []) if (!seen.has(key(m)) && !allowedRemovals.has(key(m))) errors.push(`removed required mapping ${key(m)}`);
   for (const d of ids.values()) if (d.method === 'automated' && requiredIds.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
-  if (!execution && enforced) unverified.push('execution: no verification receipt; the required test runs are on the pull request and covered by its code-owner review (enforced mode)');
+  if (!execution && enforced) unverified.push('execution: no verification receipt; agents must substantiate the required test runs on the pull request; this validator has not authenticated them (enforced mode)');
   else {
     if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {

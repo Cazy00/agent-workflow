@@ -19,3 +19,5 @@ superseded_by:
 ## Proposed answer
 
 ## Accepted answer and evidence
+
+Use `required_before: integrate` for an approved condition that must hold before merge but need not block local implementation or verification. Represent the condition in this governing record; a Draft PR is not enforcement.

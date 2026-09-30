@@ -27,7 +27,8 @@
       ".agents/**",
       "procedures/**",
       "config.default.json",
-      "**/CODEOWNERS"
+      "**/CODEOWNERS",
+      ".claude/agents/**"
     ],
     "production": [
       "src/**",
@@ -77,5 +78,13 @@
   "execution": {
     "mode": "assisted",
     "runner_adopted": false
+  },
+  "delivery": {
+    "batching": null
+  },
+  "delegation": {
+    "routine": {
+      "enabled": false
+    }
   }
 }

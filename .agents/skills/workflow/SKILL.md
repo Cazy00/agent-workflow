@@ -12,6 +12,7 @@ Read the repository `AGENTS.md` and current profile, milestone, task, and govern
 | Discover, resolve or assess readiness | `procedures/readiness.md` |
 | Implement, checkpoint or recover | `procedures/execute.md` |
 | Work in a project with two or more owners | `procedures/shared.md`, with the procedure for the action |
+| Use approved local batches or routine integration delegation | `procedures/delivery.md` |
 | Review candidate and test fidelity | `procedures/review.md` |
 | Present, accept or release | `procedures/accept-release.md` |
 | Deploy, handle an incident, maintain or upgrade | `procedures/operate.md` |

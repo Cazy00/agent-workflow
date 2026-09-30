@@ -6,6 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { prepareReview } from '../lib/review-packet.js';
+// Each test file runs in its own process. Fixture cleanliness must not depend on
+// host-installed filters (for example Git LFS on CI runners); production still
+// checks the caller's real configuration. Explicit local/global filter cases follow.
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+process.env.GIT_CONFIG_GLOBAL = os.devNull;
+process.env.GIT_CONFIG_COUNT = '0';
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 function setup(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-review-'));
@@ -60,6 +66,17 @@ test('review preparation does not execute configured filters or filesystem monit
   p.git('config', 'filter.evil.clean', `touch '${marker}'`);
   assert.throws(() => p.run(), /clean\/process filters/);
   assert.equal(fs.existsSync(marker), false);
+});
+test('production review preparation also refuses inherited global filters without executing them', t => {
+  const p = setup(t), marker = path.join(path.dirname(p.repo), 'executed-global-filter');
+  const globalConfig = path.join(path.dirname(p.repo), 'gitconfig');
+  fs.writeFileSync(globalConfig, `[filter "global"]\n\tclean = touch '${marker}'\n`);
+  const previous = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    assert.throws(() => p.run(), /clean\/process filters/);
+    assert.equal(fs.existsSync(marker), false);
+  } finally { process.env.GIT_CONFIG_GLOBAL = previous; }
 });
 for (const flag of ['assume-unchanged', 'skip-worktree']) test(`hidden changes under ${flag} invalidate initial and repeated review packets`, t => {
   const p = setup(t);

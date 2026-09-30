@@ -13,16 +13,23 @@ import { readOwnerApproval, readDeliveryEvidence } from './lib/github-approval.j
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request'];
+import { trustedBranchState, withDerivedBaselines } from './lib/derived.js';
+import { evaluateCloseout } from './lib/closeout.js';
+import { readPayloads, renderBrief } from './lib/brief.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'closeout', 'brief', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request', 'unsigned-receipts', 'payloads'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
-  [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
+  [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
+  --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
+  closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
+  brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV]: the owner's signing brief as Markdown (--json for the check)
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
-  status [--baseline REV] [--candidate REV] [--pull-requests FILE]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
+  status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
+    with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: optional --delivery-evidence EXTERNAL_JSON and --pull-request NUMBER for an approved routine-delegation setup
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
@@ -58,6 +65,39 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
     return 0;
   }
+  if (cmd === 'brief') {
+    if (!o.payloads) throw new WfError('--payloads FILE is required');
+    const file = path.resolve(o.payloads);
+    const raw = fs.readFileSync(file, 'utf8');
+    const repo = o.repo ? path.resolve(o.repo) : null;
+    const sha = /^[0-9a-f]{40,64}$/;
+    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+    const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('log', '-1', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
+    const statusChanges = [];
+    if (repo && o.baseline) {
+      let payloads = [];
+      try { payloads = readPayloads(raw); } catch { /* reported by the brief */ }
+      const revisions = [...new Set(payloads.map(p => p?.revision).filter(r => sha.test(r ?? '')))];
+      const latest = revisions.find(r => revisions.every(x => x === r || run('merge-base', '--is-ancestor', x, r).status === 0));
+      if (latest) {
+        const base = gitSource(repo, o.baseline);
+        const rd = loadConfig(base).records_dir ?? 'docs/workflow';
+        const tip = gitSource(repo, latest);
+        const changed = run('diff', '--no-renames', '--name-only', '-z', base.name, tip.name, '--', `${rd}/tasks/`);
+        const before = loadAll(base, rd).tasks, after = loadAll(tip, rd).tasks;
+        for (const p of changed.stdout.split('\0').filter(Boolean)) {
+          const id = p.match(/(T-\d{4})\.md$/)?.[1];
+          if (!id) continue;
+          const was = before.get(id)?.data?.status ?? 'absent', now = after.get(id)?.data?.status ?? 'removed';
+          statusChanges.push(was === now ? `${id} (${now}) edited` : `${id} ${was} → ${now}`);
+        }
+      }
+    }
+    const result = renderBrief({ file, raw, subject, statusChanges });
+    if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
+    else process.stdout.write(result.markdown);
+    return result.ok ? 0 : 1;
+  }
   if (cmd === 'delivery-check') {
     const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
     console.log(JSON.stringify(result, null, 2));
@@ -86,28 +126,32 @@ async function main() {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
-  // The derived view runs before any trust is established: it checks no approval and grants nothing.
+  let trust = null;
+  if (o['unsigned-receipts'] && !o.receipts) throw new WfError('--unsigned-receipts is a dry run of a manual-mode round: it needs --trust-key, --receipts and --repository too');
+  if (o['trust-key'] || o.receipts || o.repository) {
+    if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
+    if (baseline.kind !== 'git' && cmd !== 'status') throw new WfError('approval requires an immutable Git baseline');
+    const keyPath = fs.realpathSync(o['trust-key']);
+    const relative = path.relative(fs.realpathSync(repo), keyPath);
+    if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('owner trust key must be provisioned outside the candidate repository');
+    const readArray = (file, what) => { const v = JSON.parse(fs.readFileSync(file, 'utf8')); if (!Array.isArray(v)) throw new WfError(`${what} must be an array`); return v; };
+    const envelopes = readArray(o.receipts, 'receipts');
+    const unsigned = o['unsigned-receipts'] ? readArray(o['unsigned-receipts'], 'unsigned receipts') : [];
+    // Derived baselines (lib/derived.js) apply only when the approved baseline's own config enables them.
+    trust = withDerivedBaselines(createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes, unsigned }), repo);
+    if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
+  }
+  // The derived view grants nothing. With the trust options it also reports a trusted branch that moved past approval.
   if (cmd === 'status') {
     let pullRequests = null;
     if (o['pull-requests']) {
       try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
       if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
     }
-    const view = evaluateStatus({ baseline, candidate, pullRequests });
+    const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
+    const view = evaluateStatus({ baseline, candidate, pullRequests, trustedBranch });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
     return 0;
-  }
-  let trust = null;
-  if (o['trust-key'] || o.receipts || o.repository) {
-    if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
-    if (baseline.kind !== 'git') throw new WfError('approval requires an immutable Git baseline');
-    const keyPath = fs.realpathSync(o['trust-key']);
-    const relative = path.relative(fs.realpathSync(repo), keyPath);
-    if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('owner trust key must be provisioned outside the candidate repository');
-    const envelopes = JSON.parse(fs.readFileSync(o.receipts, 'utf8'));
-    if (!Array.isArray(envelopes)) throw new WfError('receipts must be an array');
-    trust = createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes });
-    if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
   }
   // Enforced mode: the baseline's own config and profile (both code-owner protected) record that GitHub
   // enforcement was verified at setup; the immutable baseline is then the approved baseline. Candidate copies of
@@ -142,7 +186,12 @@ async function main() {
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;
-  if (cmd === 'records') result = validateRecords(candidate, rd);
+  if (cmd === 'closeout') {
+    if (!trust || trust.mode === 'enforced') throw new WfError('closeout is for manual mode and needs --trust-key, --receipts and --repository; in enforced mode merging the pull request is the approval');
+    if (candidate.kind !== 'git') throw new WfError('closeout needs a committed --candidate: the revision the signed round ends at');
+    result = evaluateCloseout({ repo, baseline, candidate, trust });
+  }
+  else if (cmd === 'records') result = validateRecords(candidate, rd);
   else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
   else if (cmd === 'ci') {
     const paths = changed();
@@ -174,6 +223,8 @@ async function main() {
     }
     result = evaluateCi({ baseline, candidate, ...(o.tasks ? { tasks: o.tasks.split(',') } : { task: taskId() }), trust, changed: paths, changedLines, deliveryEvidence, ownerApproved: ownerApproval?.approved === true });
     if (result.delegation) { result.delegation.owner_approval = ownerApproval; result.delegation.evidence_source = evidenceSource; }
+    const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
+    if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }
   else {
     const task = taskId();
@@ -202,9 +253,14 @@ async function main() {
     }
   }
   if (cmd === 'ci' && trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
+  // A result that relied on an unsigned payload says so and exits 3: it is never satisfied, whatever it found.
+  const provisional = trust?.provisional?.() ?? [];
+  if (provisional.length) Object.assign(result, { authoritative: false, provisional });
   emit(result);
-  if (result.verdict) return result.verdict === 'pass' ? 0 : 1;
-  if (result.outcome && cmd === 'readiness') return result.outcome === 'Needs discovery or resolution' ? 1 : 0;
-  return result.ok ? 0 : 1;
+  let code;
+  if (result.verdict) code = result.verdict === 'pass' ? 0 : 1;
+  else if (result.outcome && cmd === 'readiness') code = result.outcome === 'Needs discovery or resolution' ? 1 : 0;
+  else code = result.ok ? 0 : 1;
+  return code === 0 && provisional.length ? 3 : code;
 }
 try { process.exitCode = await main(); } catch (e) { console.error(`wf: ${e.message}`); process.exitCode = 2; }

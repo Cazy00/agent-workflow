@@ -6,15 +6,17 @@
 // unchanged from X to R:
 //   governing path   a governing-change receipt at X listing it
 //   enforcement path a workflow-change receipt at X listing it
-//   production path  verification, review and integration receipts at X (the evidence `wf ci` requires)
+//   production path  verification, review and integration receipts at X (the evidence `wf ci` requires), complete,
+//                    with every check and test passed and the approved profile's required checks among them
 //   planning path    nothing, as for a planning-only change in `wf ci` and a records-only merge in enforced mode
 //   unclassified     never
 // and R's records validate. Classification uses A's config. Nothing is derived in enforced mode, where the fetched
 // branch is already the approved baseline. A derivation that relied on an unsigned payload is provisional.
 import { spawnSync } from 'node:child_process';
 import { gitSource } from './sources.js';
-import { loadConfig, validateRecords } from './records.js';
+import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths } from './paths.js';
+import { payloadProblems } from './payloads.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 export const MAX_WALK = 1000;
@@ -30,25 +32,34 @@ export function gitIn(repo) {
 const names = out => out.split('\0').filter(Boolean);
 
 // The nearest first-parent ancestor of revision (itself excluded) whose baseline approval is a receipt, and the
-// number of commits between them.
-function nearestReceipted(git, trust, revision) {
+// number of commits between them. `look(purpose, revision)` returns a usable payload or null.
+function nearestReceipted(git, look, revision) {
   const walk = git('rev-list', '--first-parent', `--max-count=${MAX_WALK}`, revision);
   if (!walk.ok) return null;
   const chain = walk.out.split('\n').filter(Boolean);
-  for (let i = 1; i < chain.length; i++) if (trust.peek?.('baseline', chain[i])) return { revision: chain[i], ahead: i };
+  for (let i = 1; i < chain.length; i++) if (look('baseline', chain[i])) return { revision: chain[i], ahead: i };
   return null;
+}
+// A receipt counts toward a derivation only when the gates would accept its content, not merely its signature.
+const passed = p => (p.checks ?? []).every(c => c?.result === 'passed') && (p.execution?.tests ?? []).every(t => t?.status === 'passed');
+function sound(p, requiredChecks) {
+  if (!p || payloadProblems(p).length) return false;
+  if (!['verification', 'integration'].includes(p.purpose)) return true;
+  return passed(p) && requiredChecks.every(name => p.checks.some(c => c?.name === name && c.result === 'passed'));
 }
 
 export function withDerivedBaselines(trust, repo) {
   if (!trust || trust.mode === 'enforced' || typeof trust.peek !== 'function') return trust;
   const git = gitIn(repo);
   const ancestor = (older, newer) => git('merge-base', '--is-ancestor', older, newer).ok;
-  // Explains, and with `record` claims the receipts it used (so an unsigned one marks the gate provisional).
-  const explain = (revision, { record = true } = {}) => {
-    const take = (purpose, rev) => (record ? trust.claim(purpose, rev) : trust.peek(purpose, rev)?.payload ?? null);
+  // Explains, and with `record` claims the receipts it used (so an unsigned one marks the gate provisional). With
+  // `signedOnly` unsigned payloads count for nothing, as for the trusted-branch report.
+  const explain = (revision, { record = true, signedOnly = false } = {}) => {
+    const look = (purpose, rev) => { const f = trust.peek(purpose, rev); return f && (!signedOnly || f.level === 'signed') ? f.payload : null; };
+    const take = (purpose, rev) => (look(purpose, rev) && record ? trust.claim(purpose, rev) : look(purpose, rev));
     if (!SHA.test(revision ?? '')) return { approved: false, via: null, reasons: ['not an immutable revision'] };
     if (take('baseline', revision)) return { approved: true, via: 'receipt', revision };
-    const base = nearestReceipted(git, trust, revision);
+    const base = nearestReceipted(git, look, revision);
     if (!base) return { approved: false, via: null, revision, reasons: [`no baseline receipt on this revision or its last ${MAX_WALK} first-parent ancestors`] };
     const from = base.revision;
     const reasons = [];
@@ -61,16 +72,18 @@ export function withDerivedBaselines(trust, repo) {
     const later = [...trust.revisions()].filter(x => SHA.test(x) && x !== from && ancestor(from, x) && ancestor(x, revision))
       .map(x => ({ x, after: new Set(names(git('diff', '--no-renames', '--name-only', '-z', x, revision, '--').out)) }));
     const covering = (p, test) => later.find(({ x, after }) => !after.has(p) && test(x));
+    let requiredChecks = [];
+    try { requiredChecks = list(loadAll(gitSource(repo, from), config.records_dir ?? 'docs/workflow').profile?.data?.required_checks); } catch { /* no profile: nothing extra required */ }
     const covered = [];
     for (const c of classifyPaths(config, names(diff.out))) {
       if (c.category === 'planning') continue;
       if (c.category === 'unclassified') { reasons.push(`${c.path} is unclassified`); continue; }
       const purposes = PURPOSE[c.category] ? [PURPOSE[c.category]] : EVIDENCE;
       const hit = covering(c.path, x => purposes.every(purpose => {
-        const found = trust.peek(purpose, x)?.payload;
-        return found && (!PURPOSE[c.category] || (Array.isArray(found.paths) && found.paths.includes(c.path)));
+        const found = look(purpose, x);
+        return sound(found, requiredChecks) && (!PURPOSE[c.category] || found.paths.includes(c.path));
       }));
-      if (!hit) { reasons.push(`${c.category} path ${c.path} has no ${purposes.join('/')} receipt at a revision where it already had its current content`); continue; }
+      if (!hit) { reasons.push(`${c.category} path ${c.path} has no complete, passing ${purposes.join('/')} receipt at a revision where it already had its current content`); continue; }
       for (const purpose of purposes) take(purpose, hit.x);
       covered.push({ path: c.path, category: c.category, receipt: hit.x });
     }
@@ -98,8 +111,9 @@ export function trustedBranchState({ repo, branch, trust }) {
   const tip = git('rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`);
   if (!tip.ok) return null;
   const revision = tip.out.trim();
-  const approved = trust.derivation ? trust.derivation(revision, { record: false }).approved : !!trust.peek?.('baseline', revision);
+  const signed = (purpose, rev) => (trust.peek?.(purpose, rev)?.level === 'signed' ? trust.peek(purpose, rev).payload : null);
+  const approved = trust.derivation ? trust.derivation(revision, { record: false, signedOnly: true }).approved : !!signed('baseline', revision);
   if (approved) return { branch, tip: revision, approved: true, ahead: 0, newest_receipt: revision };
-  const base = nearestReceipted(git, trust, revision);
+  const base = nearestReceipted(git, signed, revision);
   return { branch, tip: revision, approved: false, ahead: base?.ahead ?? null, newest_receipt: base?.revision ?? null };
 }

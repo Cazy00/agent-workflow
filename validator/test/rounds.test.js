@@ -242,3 +242,39 @@ test('the signing brief refuses a file the gates would reject', t => {
   const json = JSON.parse(spawnSync(process.execPath, [cli, 'brief', '--payloads', p.file('bad.json', bad), '--json'], { encoding: 'utf8' }).stdout);
   assert.equal(json.ok, false); assert.equal(json.count, 4);
 });
+
+test('a receipt counts toward derivation only with passing checks, a sound review and the required checks', t => {
+  const p = round(t);
+  const [verification, integration, review] = p.evidence(p.C);
+  const base = { purpose: 'baseline', revision: p.B };
+  const failed = { ...verification, checks: [{ name: 'unit', result: 'failed', evidence: 'evidence/log.txt' }] };
+  assert.equal(p.trustOf([base, failed, integration, review]).derivation(p.D).approved, false);
+  const skipped = { ...verification, execution: { revision: p.C, tests: [{ file: 'tests/a.js', name: 'a', status: 'skipped' }] } };
+  assert.equal(p.trustOf([base, skipped, integration, review]).derivation(p.D).approved, false);
+  const open = { ...review, findings: [{ id: 'R-1', status: 'open' }] };
+  assert.equal(p.trustOf([base, verification, integration, open]).derivation(p.D).approved, false);
+  const self = { ...review, reviewer: 'agent' };
+  assert.equal(p.trustOf([base, verification, integration, self]).derivation(p.D).approved, false);
+  const other = c => ({ ...c, checks: [{ name: 'lint', result: 'passed', evidence: 'evidence/log.txt' }] });
+  assert.equal(p.trustOf([base, other(verification), other(integration), review]).derivation(p.D).approved, false, 'the profile requires unit');
+});
+
+test('unsigned payloads never make the trusted branch look approved', t => {
+  const p = round(t, { derived: false });
+  p.receipts([{ purpose: 'baseline', revision: p.B }]);
+  p.git('update-ref', 'refs/heads/main', p.D);
+  const draft = p.unsigned([...p.evidence(p.C), { purpose: 'baseline', revision: p.D }]);
+  const r = spawnSync(process.execPath, [cli, 'status', '--repo', p.repo, '--baseline', p.B, '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository, '--unsigned-receipts', draft, '--json'], { encoding: 'utf8' });
+  const view = JSON.parse(r.stdout);
+  assert.equal(view.trusted_branch.approved, false);
+  assert.equal(view.trusted_branch.newest_receipt, p.B);
+});
+
+test('the brief keeps a hostile revision inside a code span', t => {
+  const p = round(t);
+  const r = spawnSync(process.execPath, [cli, 'brief', '--payloads', p.file('odd.json', [p.payload({ purpose: 'baseline', revision: 'a|b`<i>' })])], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  const row = r.stdout.split('\n').find(l => l.startsWith('| 1 |'));
+  assert.equal(row.split(' | ').length, 5, row);
+  assert.ok(!r.stdout.includes('<i>'));
+});

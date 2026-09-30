@@ -1,9 +1,13 @@
 import { safePath } from './sources.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
-export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], enforced = false }) {
+export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false }) {
   const errors = [];
   const unverified = [];
+  // Mapping preservation is global to the candidate, but a migration grant belongs
+  // to one selected task and that task must require the migrated acceptance ID.
+  const requirements = new Map(taskRequirements ?? [[task, requiredIds]]);
+  const requiredAcceptance = [...new Set([...requirements.values()].flat())];
   const read = (source, path, fallback) => {
     try { const raw = source.read(path); if (raw === null) throw new Error('missing'); return JSON.parse(raw); }
     catch (e) { errors.push(`${path}: ${e.message}`); return fallback; }
@@ -25,7 +29,7 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     try { if (!baseline.exists(safePath(d.requirement))) errors.push(`acceptance ${d.id}: governing requirement missing`); } catch { errors.push(`acceptance ${d.id}: invalid requirement path`); }
     ids.set(d.id, d);
   }
-  for (const id of requiredIds) if (!ids.has(id)) errors.push(`unknown acceptance ${id} required by task`);
+  for (const id of requiredAcceptance) if (!ids.has(id)) errors.push(`unknown acceptance ${id} required by task`);
   const seen = new Set();
   for (const m of Array.isArray(maps) ? maps : []) {
     if (!ids.has(m.acceptance)) errors.push(`unknown acceptance ${m.acceptance}`);
@@ -78,11 +82,11 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     }
     // Both on the baseline: the grant removes nothing. Only its own task, trying to drop the source, is told why.
     if (oldKeys.has(to)) {
-      if (migration.task === task && !seen.has(from)) errors.push(`${label}: destination is already mapped on the baseline`);
+      if (requirements.has(migration.task) && !seen.has(from)) errors.push(`${label}: destination is already mapped on the baseline`);
       continue;
     }
-    if (migration.task !== task || seen.has(from)) continue;
-    if (!requiredIds.includes(migration.from.acceptance)) {
+    if (!requirements.has(migration.task) || seen.has(from)) continue;
+    if (!requirements.get(migration.task).includes(migration.from.acceptance)) {
       errors.push(`${label}: migrated acceptance is not required by the current task`);
       continue;
     }
@@ -95,7 +99,7 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     if (enforced) unverified.push(`${label}: renamed test execution and preserved coverage require technical review (unverified by this validator)`);
   }
   for (const m of Array.isArray(old) ? old : []) if (!seen.has(key(m)) && !allowedRemovals.has(key(m))) errors.push(`removed required mapping ${key(m)}`);
-  for (const d of ids.values()) if (d.method === 'automated' && requiredIds.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
+  for (const d of ids.values()) if (d.method === 'automated' && requiredAcceptance.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
   if (!execution && enforced) unverified.push('execution: no verification receipt; agents must substantiate the required test runs on the pull request; this validator has not authenticated them (enforced mode)');
   else {
     if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');

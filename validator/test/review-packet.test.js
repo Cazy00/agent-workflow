@@ -61,3 +61,30 @@ test('review preparation does not execute configured filters or filesystem monit
   assert.throws(() => p.run(), /clean\/process filters/);
   assert.equal(fs.existsSync(marker), false);
 });
+for (const flag of ['assume-unchanged', 'skip-worktree']) test(`hidden changes under ${flag} invalidate initial and repeated review packets`, t => {
+  const p = setup(t);
+  const original = p.run();
+  p.git('update-index', `--${flag}`, 'src/a.js');
+  fs.writeFileSync(path.join(p.repo, 'src/a.js'), 'export const answer = "unreviewed";\n');
+  assert.equal(p.git('status', '--porcelain'), '', 'ordinary status hides this change');
+  assert.equal(p.git('rev-parse', 'HEAD'), original.candidate);
+  assert.throws(() => p.run(), /assume-unchanged or skip-worktree/);
+  assert.throws(() => p.run(), /assume-unchanged or skip-worktree/, 'a repeated check must not bless it');
+  assert.match(p.git('ls-files', '-v', 'src/a.js'), flag === 'assume-unchanged' ? /^h / : /^S /, 'inspection must not clear the flag');
+});
+test('custom record directories retain the fixed baseline acceptance definitions; missing definitions fail', t => {
+  const p = setup(t);
+  fs.mkdirSync(path.join(p.repo, 'records'));
+  for (const name of ['profile.md', 'tasks', 'milestones', 'decisions']) fs.renameSync(path.join(p.repo, 'docs/workflow', name), path.join(p.repo, 'records', name));
+  const configPath = path.join(p.repo, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.records_dir = 'records'; fs.writeFileSync(configPath, JSON.stringify(config));
+  p.git('add', '.'); p.git('commit', '-qm', 'custom records location');
+  const revision = p.git('rev-parse', 'HEAD');
+  const packet = p.run({ baseline: revision, candidate: revision });
+  assert.ok(packet.canonical_sources.some(s => s.path === 'docs/workflow/acceptance.json' && s.revision === revision));
+  assert.ok(packet.canonical_sources.some(s => s.path === 'records/tasks/T-0001.md'));
+  p.git('rm', 'docs/workflow/acceptance.json'); p.git('commit', '-qm', 'missing definitions');
+  const missing = p.git('rev-parse', 'HEAD');
+  assert.throws(() => p.run({ baseline: missing, candidate: missing }), /canonical acceptance source is missing/);
+});

@@ -160,10 +160,15 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     } else fail = true;
     const t = candidateRecords.tasks.get(id)?.data ?? {};
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(baselineRecords.profile?.data?.required_checks), trust, stage: 'integrate' });
+    for (const error of lifecycle.errors) { findings.push(error); fail = true; }
+    for (const item of lifecycle.unverified ?? []) findings.push(`unverified: ${item}`);
+  }
+  if (selected.length && (production.length || batch)) {
     const execution = trust?.claim('verification', candidate.name)?.execution;
-    const acceptance = evaluateAcceptance({ baseline, candidate, task: id, execution, requiredIds: list(t.acceptance), enforced: trust?.mode === 'enforced' });
-    for (const error of [...lifecycle.errors, ...acceptance.errors]) { findings.push(error); fail = true; }
-    for (const item of [...(lifecycle.unverified ?? []), ...(acceptance.unverified ?? [])]) findings.push(`unverified: ${item}`);
+    const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: trust?.mode === 'enforced' });
+    for (const error of acceptance.errors) { findings.push(error); fail = true; }
+    for (const item of acceptance.unverified ?? []) findings.push(`unverified: ${item}`);
   }
   const delegation = evaluateDelegation({ config,
     baselineTasks: [...baselineRecords.tasks.values()].map(r => r.data), tasks: [...candidateRecords.tasks.values()].map(r => r.data),

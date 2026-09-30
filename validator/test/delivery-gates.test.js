@@ -88,3 +88,36 @@ test('batch cannot borrow review of one task, exceed its limit, or cross impleme
   assert.equal(p.run({ tasks: ['T-0001', 'T-0002', 'T-0003', 'T-0004'] }).verdict, 'fail');
   assert.throws(() => p.run({ tasks: ['T-0001', 'T-0001'] }), /distinct/);
 });
+function migrationBatch(t) {
+  const p = batch(t);
+  p.both('docs/workflow/config.json', x => { const c = JSON.parse(x); c.paths.production.push('tests/**'); return JSON.stringify(c); });
+  p.both(task, x => x.replace('scope: [src/a.js]', 'scope: [src/a.js, tests]'));
+  p.both('docs/workflow/milestones/M-0001.md', x => x.replace('scope: [src, docs/workflow/tasks]', 'scope: [src, tests, docs/workflow/tasks]'));
+  p.both('tests/example.test.js', () => 'mapped test fixture');
+  const from = { acceptance: 'AC-001-1', file: 'tests/example.test.js', name: 'old test' }, to = { ...from, name: 'new test' };
+  p.both('docs/workflow/acceptance.json', () => JSON.stringify({ examples: [{ id: 'AC-001-1', method: 'automated', requirement: 'docs/specs/feature.md' }], mapping_migrations: [{ task: 'T-0001', from, to, requirement: 'docs/specs/feature.md' }] }));
+  p.edit('baseline', 'tests/acceptance-map.json', () => JSON.stringify([from]));
+  p.edit('candidate', 'tests/acceptance-map.json', () => JSON.stringify([to]));
+  p.check = () => p.run({ changed: ['src/a.js', 'src/b.js', 'tests/example.test.js', 'tests/acceptance-map.json'], trust: fixtureTrust(p.baseline, p.candidate, integrationClaims(p.candidate).map(c => c.purpose === 'review' ? { ...c, tasks: ['T-0001', 'T-0002'] } : c.purpose === 'verification' ? { ...c, execution: { revision: p.candidate.name, tests: [{ ...to, status: 'passed' }] } } : c)) });
+  return p;
+}
+test('a batch honors each selected task mapping grant without globally rejecting another task\'s authorized rename', t => {
+  const p = migrationBatch(t), result = p.check();
+  assert.equal(result.verdict, 'pass', result.findings.join('\n'));
+  p.edit('candidate', 'tests/acceptance-map.json', () => '[]');
+  assert.equal(p.check().verdict, 'fail', 'every selected task still needs its mapped coverage');
+});
+test('batch mapping grants cannot come from an unselected task or candidate-only approval', t => {
+  const p = migrationBatch(t);
+  p.edit('baseline', 'docs/workflow/acceptance.json', x => x.replace('T-0001', 'T-0003'));
+  assert.match(p.check().findings.join('\n'), /removed required mapping/);
+  p.edit('baseline', 'docs/workflow/acceptance.json', x => { const a = JSON.parse(x); delete a.mapping_migrations; return JSON.stringify(a); });
+  assert.match(p.check().findings.join('\n'), /removed required mapping/);
+});
+test('a batch cannot borrow another task\'s acceptance ID to authorize a mapping grant', t => {
+  const p = migrationBatch(t);
+  p.both(task, x => x.replace('acceptance: [AC-001-1]', 'acceptance: []'));
+  const result = p.check();
+  assert.equal(result.verdict, 'fail');
+  assert.match(result.findings.join('\n'), /migrated acceptance is not required by the current task/);
+});

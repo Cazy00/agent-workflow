@@ -4,7 +4,7 @@ import { governingChanged } from './freshness.js';
 import { overlaps } from './scope.js';
 export { overlaps } from './scope.js';
 
-export const STAGES = ['implement', 'verify', 'accept', 'release'];
+export const STAGES = ['implement', 'verify', 'integrate', 'accept', 'release'];
 export const OUTCOMES = {
   ready: 'Ready',
   subset: 'Ready for a bounded subset',

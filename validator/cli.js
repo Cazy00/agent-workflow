@@ -9,16 +9,22 @@ import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
+import { readOwnerApproval, readDeliveryEvidence } from './lib/github-approval.js';
+import { prepareReview } from './lib/review-packet.js';
+import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
-  [--task T-0001] [--stage implement|verify|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
+  [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO] [--json]
+  review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
+  delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
   status [--baseline REV] [--candidate REV] [--pull-requests FILE]: derived owner view as Markdown (--json for data); checks no approval and grants nothing
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
+  ci: optional --delivery-evidence EXTERNAL_JSON and --pull-request NUMBER for an approved routine-delegation setup
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
@@ -38,12 +44,25 @@ async function main() {
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
       const value = argv[++i];
       if (name === 'changed') o.changed.push(value);
+      else if (['required-check', 'evidence'].includes(name)) (o[name] ??= []).push(value);
       else if (o[name] !== undefined) throw new WfError(`duplicate option: ${a}`);
       else o[name] = value;
     } else if (!cmd) cmd = a;
     else throw new WfError(`unexpected argument: ${a}`);
   }
+  if ((o['delivery-evidence'] || o['pull-request']) && cmd !== 'ci') throw new WfError('--delivery-evidence and --pull-request are only for ci');
+  if (o.tasks && (!['ci', 'review-packet'].includes(cmd) || o.task)) throw new WfError('--tasks is only for ci/review-packet and cannot be combined with --task');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
+  if (cmd === 'review-packet') {
+    const result = prepareReview({ repo: path.resolve(o.repo ?? process.cwd()), baseline: o.baseline, candidate: o.candidate, tasks: o.tasks?.split(',') ?? (o.task ? [o.task] : []), evidence: o.evidence });
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+  if (cmd === 'delivery-check') {
+    const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
   if (cmd === 'prepare-evidence') {
     if (!o['raw-log']) throw new WfError('--raw-log is required');
     const result = prepareNodeEvidence({raw:fs.readFileSync(o['raw-log'],'utf8'),revision:o.candidate,repository:o.repository,environment:o.environment,checkName:o['check-name'],expiresAt:o['expires-at'],projectRoot:fs.realpathSync(o.repo ?? process.cwd())});
@@ -125,11 +144,41 @@ async function main() {
   let result;
   if (cmd === 'records') result = validateRecords(candidate, rd);
   else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
-  else if (cmd === 'ci') result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: changed() });
+  else if (cmd === 'ci') {
+    const paths = changed();
+    let changedLines = null, deliveryEvidence = null, ownerApproval = null, evidenceSource = null;
+    if (config.delegation?.routine?.enabled === true) {
+      if (candidate.kind !== 'git' || baseline.kind !== 'git') throw new WfError('routine delegation requires committed baseline and candidate');
+      const stats = git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
+      changedLines = 0;
+      for (const line of stats) {
+        const m = line.match(/^(\d+|-)\t(\d+|-)\t/s);
+        if (!m || m[1] === '-' || m[2] === '-') { changedLines = null; break; }
+        changedLines += Number(m[1]) + Number(m[2]);
+      }
+      if (o['delivery-evidence']) {
+        const file = fs.realpathSync(o['delivery-evidence']);
+        const relative = path.relative(fs.realpathSync(repo), file);
+        if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
+        if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
+        deliveryEvidence = JSON.parse(fs.readFileSync(file, 'utf8')); evidenceSource = file;
+      }
+      if (o['pull-request']) {
+        ownerApproval = readOwnerApproval({ repository: config.repository, pullRequest: o['pull-request'], revision: candidate.name, baseline: baseline.name, branch: config.trusted_branch, approver: config.approval?.approver, worker: config.approval?.agent_identity });
+        if (!ownerApproval.candidate_matches) throw new WfError(ownerApproval.reason);
+        if (!o['delivery-evidence'] && !ownerApproval.approved) {
+          const collected = readDeliveryEvidence({ repository: config.repository, pullRequest: o['pull-request'], worker: config.approval?.agent_identity });
+          deliveryEvidence = collected.evidence; evidenceSource = collected.source;
+        }
+      }
+    }
+    result = evaluateCi({ baseline, candidate, ...(o.tasks ? { tasks: o.tasks.split(',') } : { task: taskId() }), trust, changed: paths, changedLines, deliveryEvidence, ownerApproved: ownerApproval?.approved === true });
+    if (result.delegation) { result.delegation.owner_approval = ownerApproval; result.delegation.evidence_source = evidenceSource; }
+  }
   else {
     const task = taskId();
     if (!task) throw new WfError('--task T-0001 or a matching branch is required');
-    const readiness = evaluateReadiness({ baseline, candidate, task, trust, stage: o.stage === 'integrate' ? 'verify' : o.stage });
+    const readiness = evaluateReadiness({ baseline, candidate, task, trust, stage: o.stage });
     if (cmd === 'readiness') result = readiness;
     else {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
@@ -141,7 +190,7 @@ async function main() {
       if (cmd === 'acceptance') result = coverage;
       if (cmd === 'lifecycle') {
         const stage = o.stage ?? 'verify';
-        const gate = evaluateReadiness({ baseline, candidate, task, trust, stage: stage === 'integrate' ? 'verify' : stage });
+        const gate = evaluateReadiness({ baseline, candidate, task, trust, stage });
         result = { ...lifecycle, ok: lifecycle.ok && gate.outcome === 'Ready', readiness: gate };
       }
       if (cmd === 'session') {

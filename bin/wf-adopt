@@ -14,6 +14,9 @@ const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo',
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
   [--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python]
+       wf-adopt --inspect --project DIR [--workflow-repo DIR] [--rev TAG_OR_FULL_HASH] [--production GLOB]... [--json]
+  --inspect reports on a repository without changing it: existing adoption, Git state, tracked manifests and CI jobs
+  (untrusted hints, never run), suggested production globs, unclassified tracked paths and collisions. It grants nothing.
   Spec Kit is experimental and opt-in; use an authorised non-production pilot until certified release/adoption.
   --owner, given once for each person (two or more), sets up a shared project: the profile's owners and their setup steps.
   The project always starts in manual approval mode; the switch to enforced is a code-owner-reviewed pull request after setup steps 5 and 9.
@@ -24,17 +27,19 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
 const fail = (message, code = 2) => { console.error(`wf-adopt: ${message}`); process.exit(code); };
 
 function parse(argv) {
-  const o = { production: [], owner: [], lane: 'new' };
+  const o = { production: [], owner: [], lane: 'new', given: new Set() };
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') { o.json = true; continue; }
+    if (a === '--inspect') { o.inspect = true; continue; }
     if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
     if (!a.startsWith('--')) fail(`unexpected argument: ${a}\n${USAGE}`);
     const name = a.slice(2);
     const value = argv[i + 1];
     if (!OPTIONS.includes(name) || value == null || value.startsWith('--')) fail(`invalid option or missing value: ${a}\n${USAGE}`);
     i++;
+    o.given.add(name);
     if (name === 'production' || name === 'owner') o[name].push(value);
     else if (seen.has(name)) fail(`duplicate option: ${a}`);
     else { seen.add(name); o[name] = value; }
@@ -49,6 +54,19 @@ function git(repo, args, { allowFailure = false } = {}) {
 }
 
 const o = parse(process.argv.slice(2));
+// Read-only inspection: its own small set of options, and nothing below (no writes, no clone) runs.
+if (o.inspect) {
+  const unused = [...o.given].filter(k => !['project', 'workflow-repo', 'rev', 'production'].includes(k));
+  if (unused.length) fail(`--inspect does not take ${unused.map(k => `--${k}`).join(', ')}\n${USAGE}`);
+  if (!o.project) fail(`--project is required\n${USAGE}`);
+  const { inspectProject, renderText } = await import(new URL('../adapters/inspect.mjs', import.meta.url).href);
+  let report;
+  try { report = await inspectProject({ project: path.resolve(o.project), workflowRepo: path.resolve(o['workflow-repo'] ?? path.join(HERE, '..')), rev: o.rev ?? 'HEAD', production: o.production }); }
+  catch (error) { fail(error.message); }
+  // Wait for the write: exiting at once would cut a piped report short.
+  await new Promise(resolve => process.stdout.write(`${o.json ? JSON.stringify(report, null, 2) : renderText(report)}\n`, resolve));
+  process.exit(0);
+}
 for (const k of ['project', 'repository', 'rev', 'coordinator']) if (!o[k]) fail(`--${k} is required\n${USAGE}`);
 if (!/^[\w.-]+\/[\w.-]+$/.test(o.repository)) fail('--repository must be OWNER/REPOSITORY');
 if (!['new', 'existing'].includes(o.lane)) fail('--lane must be new or existing');

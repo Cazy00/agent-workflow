@@ -6,7 +6,8 @@ Task / milestone:
 Candidate revision and diff base:
 Governing requirements, acceptance IDs and design:
 Implementer identity (tool and model):
-Reviewer identity (tool and model) and separate context reference:
+Reviewer identity (tool and model), separate context reference and actual harness launch options/metadata (no inherited conversation):
+Candidate HEAD/tree and worktree unchanged after review:
 Evidence collected through:
 
 ## Scope, correctness and maintainability

@@ -1,0 +1,38 @@
+{
+  "schema": "agent-workflow/delivery-evidence@1",
+  "candidate": "<full commit hash of the pull request head being merged>",
+  "assurance": "agent-attested",
+  "tasks": ["<T-NNNN of every task this candidate delivers>"],
+  "verification": {
+    "revision": "<the same full commit hash>",
+    "environment": "<where the implementer checks ran: runner, OS, runtime versions>",
+    "checks": [
+      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed>", "reference": "<https link to the CI run or log for this commit>" }
+    ]
+  },
+  "integration": {
+    "revision": "<the same full commit hash, assembled with the current trusted branch>",
+    "environment": "<where the assembled-candidate checks ran>",
+    "checks": [
+      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed>", "reference": "<https link to the CI run for this commit>" }
+    ]
+  },
+  "review": {
+    "reviewer": "<reviewer identity, different from the implementer>",
+    "implementer": "<the tasks' owner, as recorded in the task records>",
+    "separate_context": null,
+    "context": {
+      "provider": "<harness that launched the review, e.g. the tool and its subagent feature>",
+      "context_id": "<the harness's session or subagent identifier>",
+      "inherited_context": null,
+      "candidate": "<the same full commit hash the reviewer inspected>",
+      "launch_evidence": "<https link to where the launch prompt and context identifier are posted>"
+    },
+    "coverage": ["<each area reviewed: scope, correctness, maintainability, security, regression, test-fidelity>"],
+    "findings": [
+      { "id": "<finding id>", "severity": "<severity>", "status": "<resolved | accepted | open>", "resolution": "<how it was resolved, with the commit>" }
+    ],
+    "tasks": ["<T-NNNN of every task the review covered>"],
+    "report": "<https link to the posted review report (templates/review.md)>"
+  }
+}

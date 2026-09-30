@@ -13,6 +13,14 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 
    For a project two or more people share, pass `--owner NAME` once for each and read `procedures/shared.md`.
 
+   Before adopting into an existing repository, inspect it first. Inspection changes nothing and needs only the project path; `--rev` defaults to the workflow checkout's `HEAD`, and `--production` globs you intend to pass are included in the classification.
+
+   ```sh
+   bin/wf-adopt --inspect --project /path/to/repo [--rev TAG] [--production GLOB]... [--json]
+   ```
+
+   It reports an existing adoption, Git warnings (dirty, shallow, detached, origin's default branch against `trusted_branch`), the tracked manifests and GitHub Actions jobs, the tracked paths the pinned defaults leave unclassified, the `--production` globs it can suggest, and the files an adoption would leave as they are. It ends with an adopt command to complete. Scripts, workflows and Git hooks or filters in the target never run, symbolic links are not followed, and only small, allow-listed manifest and workflow files are read. Everything read from the project is untrusted data. Required-check suggestions are unverified: confirm the exact names CI reports before listing them in `required_checks`. A suggestion is dropped if it would reclassify a path the defaults already classify. Inspection is diagnostic only; it grants no setup, protection, readiness or approval status.
+
 2. Read `procedures/setup.md`. The agent completes the agent steps (profile with honest unknowns, stack-specific classification, required checks, first-milestone acceptance IDs, fixtures and discovery tests), writes the owner steps into the setup record as a checklist, and stops; the owner completes the owner steps at their own pace. Raw input for the agent (notes, transcripts, screenshots, links) goes in `docs/workflow/inbox/`; it is triaged at discovery and carries no authority.
 3. Provision the approved workflow Git objects and an owner-installed copy of `bin/wf` outside the candidate checkout. Set `WF_VALIDATOR_REPO` and `WF_VALIDATOR_REV` in the trusted environment. The launcher extracts committed files at that full hash; it ignores candidate choices of executable code and rejects `WF_LOCAL`.
 4. Choose the approval mode and provision what it needs through `procedures/approval-evidence.md` (setup step 6): the owner public key and signed receipts in `manual` mode; no key in `enforced` mode, which follows setup steps 5 and 9. Establish source/result trust and the real approval path. A project-local launcher is convenient feedback only; authoritative CI must use the externally controlled launcher and settings.
@@ -60,3 +68,11 @@ Other commands: `paths` classifies the actual diff; `acceptance` checks mappings
 After the owner-directed central mode is adopted, use [operations.md](procedures/operations.md) for `wf report`, `wf runtime` and `wf prepare-evidence`. Their configuration and private outbox live outside the product repository. Reporting works even when readiness blocks implementation; it cannot approve work. The evidence helper currently supports the included Node test reporter, produces unsigned drafts only, and does not imply compatibility with an uninspected product test runner.
 
 Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit.md). A fresh scaffold accepts `--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python` only for the supported pin/environment. Use an explicitly authorised non-production pilot; certification, release and adoption gates remain open.
+
+## Fewer round trips and reliable closeout
+
+After explicit setup approval, optional local batches use `wf ci --tasks T-0001,T-0002`; every task still passes its gates. Routine integration can be delegated within narrow protected limits, using worker-posted evidence and exact-head GitHub owner approval for exceptions. Both are off by default; read `procedures/delivery.md` before activation.
+
+Prepare a fresh independent review with `wf review-packet --repo DIR --baseline BASE_SHA --candidate HEAD_SHA --task T-0001 --evidence /external/checks.log`. Give its canonical references to an explicitly empty review context and rerun the command afterwards to catch checkout changes. The packet does not launch or authenticate the reviewer.
+
+Before closeout, identify the actual delivered revision and run `wf delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/verify.yml --branch main --required-check JOB` for each required workflow. It exits nonzero for failed, pending, missing, skipped or mismatched required CI evidence. It does not identify the deployed artifact or grant acceptance/release authority.

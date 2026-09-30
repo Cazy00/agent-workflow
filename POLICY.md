@@ -361,11 +361,19 @@ Protect:
 - Validators, runner code, and enforcement configuration.
 - CI configuration and `CODEOWNERS` itself.
 
-Use required owner review and required checks on the authoritative branch. Apply restrictions to administrators, invalidate stale approvals when relevant changes occur, and prevent the worker from bypassing them. GitHub documents these controls and the need to protect `CODEOWNERS` itself. [Protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+Use required owner review for protected material and required checks on the authoritative branch. Apply restrictions to administrators, invalidate stale approvals when relevant changes occur, and prevent the worker from bypassing them. GitHub documents these controls and the need to protect `CODEOWNERS` itself. [Protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
 
 A reserved decision change goes through its own focused approval before dependent implementation. The proposal should explain the behavioural difference in plain language.
 
 Worker-authored pull requests allow the owner to supply the required approval. Arrange human-authored contributions so the required review can also be obtained without falsifying attribution.
+
+### Optional delegation of routine integration
+
+The owner may authorise agents to merge routine production changes within an already authorised milestone, without approving each pull request. This is an explicit policy choice in the protected profile, configuration and GitHub setup; it is off by default. Define narrow eligible paths, consequential exclusions, candidate size limits and the evidence assurance accepted by the owner. Requirements, reserved decisions, workflow controls, product acceptance and release authority remain protected.
+
+The agent still verifies the committed candidate, obtains independent review without inherited conversation, resolves findings, and verifies the assembled result. Missing or stale evidence blocks routine integration. An ineligible candidate requires authenticated owner approval for its exact revision; neither a candidate field nor an agent-produced evidence file supplies that approval. Existing readiness and test-fidelity gates continue to apply.
+
+The optional assisted mode accepts explicitly labelled agent-attested technical evidence. Mechanical checks validate its completeness and revision, not the truth or independence of the reported work. The owner must knowingly select that assurance level; it is not a claim of secure unattended enforcement. Stop further delegated merges when a required main-branch check fails, and obtain an explicit disposition before continuing. Never turn an integration delegation into permission to deploy, release or change approved behaviour.
 
 ### Approval evidence
 

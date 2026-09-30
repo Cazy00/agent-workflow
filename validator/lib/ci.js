@@ -6,6 +6,7 @@ import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance } from './acceptance.js';
+import { evaluateDelegation } from './delegation.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
@@ -74,7 +75,7 @@ function recordReferences({ baseline, candidate, rd, changed }) {
   return errors;
 }
 
-export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null }) {
+export function evaluateCi({ baseline, candidate = baseline, task, tasks, changed = [], trust = null, changedLines = null, deliveryEvidence = null, ownerApproved = false }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -106,36 +107,77 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   }
 
   const production = classes.filter((c) => ['production', 'generated'].includes(c.category)).map((c) => c.path);
+  const selected = tasks ?? (task ? [task] : []);
+  if (!Array.isArray(selected) || selected.some(id => !/^T-\d{4}$/.test(id)) || new Set(selected).size !== selected.length) {
+    throw new WfError('tasks must be distinct T-NNNN IDs');
+  }
+  if (task && tasks) throw new WfError('use task or tasks, not both');
+  const batch = selected.length > 1;
+  const candidateRecords = loadAll(candidate, rd);
+  const baselineRecords = loadAll(baseline, rd);
+  const readinessByTask = {};
   let readiness = null;
-  if (production.length) {
-    if (!task) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
-    else {
-      readiness = evaluateReadiness({ baseline, candidate, task, trust, changed: production, stage: 'verify' });
-      findings.push(`readiness ${task}: ${readiness.outcome}`);
-      for (const r of readiness.reasons) findings.push(`  ${r}`);
-      // A task may be marked Done in its own pull request: the candidate says Done while the baseline still has it Ready
-      // or Active (IDEA-18). A task already Done on the baseline takes no further production change.
-      const baselineStatus = loadAll(baseline, rd).tasks.get(task)?.data?.status;
-      const statusOk = ['Ready', 'Active'].includes(readiness.status);
-      const doneHere = readiness.status === 'Done' && ['Ready', 'Active'].includes(baselineStatus);
-      if (readiness.outcome === OUTCOMES.ready) {
-        if (!statusOk && !doneHere) { findings.push(`task status is ${readiness.status}; production changes need Ready or Active (or Done in this pull request)`); fail = true; }
-      } else if (readiness.outcome === OUTCOMES.subset) {
-        const outside = production.filter((p) => !readiness.subset.some((s) => within(p, s)));
-        if (outside.length) { findings.push(`outside the ready subset [${readiness.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }
-        if (!statusOk) { findings.push(`task status is ${readiness.status}; production changes need Ready or Active; a task Ready only for a subset cannot be marked Done`); fail = true; }
-      } else fail = true;
+  const assigned = new Map(selected.map(id => [id, []]));
+  if (batch) {
+    const policy = config.delivery?.batching;
+    if (!policy || !Number.isInteger(policy.max_tasks) || policy.max_tasks < selected.length || policy.max_tasks > 20 ||
+        typeof policy.environment !== 'string' || !policy.environment.trim() || typeof policy.rollback !== 'string' || !policy.rollback.trim()) {
+      findings.push('batch integration needs approved baseline delivery.batching: max_tasks (2..20), environment and rollback'); fail = true;
+    }
+    const records = selected.map(id => candidateRecords.tasks.get(id)?.data);
+    if (records.some(r => !r) || new Set(records.map(r => r?.milestone)).size !== 1 || new Set(records.map(r => r?.owner)).size !== 1) {
+      findings.push('a batch requires existing tasks in one milestone with one implementing owner'); fail = true;
+    }
+    if (trust?.mode !== 'enforced') {
+      const reviewed = trust?.claim('review', candidate.name)?.tasks;
+      if (!Array.isArray(reviewed) || selected.some(id => !reviewed.includes(id))) { findings.push('the candidate review receipt must cover every task in the batch'); fail = true; }
     }
   }
-
-  if (production.length && task) {
-    const t = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
-    const profile = loadAll(baseline, rd).profile?.data;
-    const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(profile?.required_checks), trust, stage: 'integrate' });
+  for (const p of production) {
+    const owners = batch ? selected.filter(id => list(candidateRecords.tasks.get(id)?.data?.scope).some(s => within(p, s))) : selected;
+    if (owners.length !== 1) { findings.push(`production path ${p} must belong to exactly one selected task (found ${owners.length})`); fail = true; }
+    else assigned.get(owners[0]).push(p);
+  }
+  if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task/--tasks)'); fail = true; }
+  for (const id of selected) {
+    const paths = assigned.get(id);
+    if (!production.length && !batch) continue;
+    if (batch && !paths.length) { findings.push(`batch task ${id} owns no changed production paths; omit it`); fail = true; }
+    const gate = evaluateReadiness({ baseline, candidate, task: id, trust, changed: paths, stage: 'integrate' });
+    readinessByTask[id] = gate;
+    if (!batch) readiness = gate;
+    findings.push(`readiness ${id}: ${gate.outcome}`);
+    for (const r of gate.reasons) findings.push(`  ${r}`);
+    const baselineStatus = baselineRecords.tasks.get(id)?.data?.status;
+    const statusOk = ['Ready', 'Active'].includes(gate.status);
+    const doneHere = gate.status === 'Done' && ['Ready', 'Active'].includes(baselineStatus);
+    if (gate.outcome === OUTCOMES.ready) {
+      if (!statusOk && !doneHere) { findings.push(`task status is ${gate.status} (${id}); production changes need Ready or Active (or Done in this pull request)`); fail = true; }
+    } else if (gate.outcome === OUTCOMES.subset) {
+      const outside = paths.filter(p => !gate.subset.some(s => within(p, s)));
+      if (outside.length) { findings.push(`outside the ready subset [${gate.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }
+      if (!statusOk) { findings.push(`task status is ${gate.status}; production changes need Ready or Active; a task Ready only for a subset cannot be marked Done`); fail = true; }
+    } else fail = true;
+    const t = candidateRecords.tasks.get(id)?.data ?? {};
+    const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(baselineRecords.profile?.data?.required_checks), trust, stage: 'integrate' });
+    for (const error of lifecycle.errors) { findings.push(error); fail = true; }
+    for (const item of lifecycle.unverified ?? []) findings.push(`unverified: ${item}`);
+  }
+  if (selected.length && (production.length || batch)) {
     const execution = trust?.claim('verification', candidate.name)?.execution;
-    const acceptance = evaluateAcceptance({ baseline, candidate, task, execution, requiredIds: list(t.acceptance), enforced: trust?.mode === 'enforced' });
-    for (const error of [...lifecycle.errors, ...acceptance.errors]) { findings.push(error); fail = true; }
-    for (const item of [...(lifecycle.unverified ?? []), ...(acceptance.unverified ?? [])]) findings.push(`unverified: ${item}`);
+    const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: trust?.mode === 'enforced' });
+    for (const error of acceptance.errors) { findings.push(error); fail = true; }
+    for (const item of acceptance.unverified ?? []) findings.push(`unverified: ${item}`);
+  }
+  const delegation = evaluateDelegation({ config,
+    baselineTasks: [...baselineRecords.tasks.values()].map(r => r.data), tasks: [...candidateRecords.tasks.values()].map(r => r.data),
+    taskIds: selected, classes, revision: candidate.name, changedLines, evidence: deliveryEvidence,
+    requiredChecks: list(baselineRecords.profile?.data?.required_checks), ownerApproved });
+  if (delegation.enabled) {
+    if (trust?.mode !== 'enforced') { findings.push('agent-operated routine delegation requires verified enforced-mode setup'); fail = true; }
+    if (!delegation.ok) fail = true;
+    findings.push(...delegation.errors, ...delegation.unverified.map(x => `unverified: ${x}`));
   }
   for (const category of ['governing', 'enforcement']) {
     const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
@@ -152,5 +194,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, records: records.counts };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(delegation.enabled ? { delegation } : {}), ...(batch ? { tasks: selected, readinessByTask } : {}), records: records.counts };
 }

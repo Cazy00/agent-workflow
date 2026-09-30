@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createTrust } from '../lib/trust.js';
-import { withDerivedBaselines } from '../lib/derived.js';
+import { quote, withDerivedBaselines } from '../lib/derived.js';
+import { fakeExecutable } from './helpers.js';
 
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
@@ -69,7 +70,7 @@ test('a records-only commit on a fully receipted candidate is a derived baseline
   const d = trust.derivation(p.D);
   assert.equal(d.approved, true, JSON.stringify(d));
   assert.equal(d.via, 'derived'); assert.equal(d.from, p.B);
-  assert.deepEqual(d.covered.map(c => [c.path, c.receipt]), [['src/a.js', p.C]]);
+  assert.deepEqual(d.covered.map(c => [c.path, c.receipt]), [['src/a.js', p.C], ['(assembled production content)', p.C]]);
   assert.equal(trust.allows('baseline', p.D), true);
   assert.deepEqual(trust.provisional(), []);
 });
@@ -156,7 +157,7 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.ok(r.json.steps.every(s => s.ok));
   assert.ok(r.json.steps.some(s => /wf ci for T-0001/.test(s.name)));
   assert.ok(r.json.steps.some(s => /approved baseline \(derived\)/.test(s.name)));
-  assert.match(r.json.fast_forward, new RegExp(`update-ref refs/heads/main ${p.D} ${p.B}$`));
+  assert.equal(r.json.fast_forward, `git -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
@@ -184,14 +185,22 @@ test('closeout of an unsigned round is provisional; a milestone accepted in the 
   p.receipts([{ purpose: 'baseline', revision: p.B }]);
   const dry = p.run(['closeout', '--baseline', p.B, '--candidate', p.D], { unsignedFile: p.unsigned(p.evidence(p.C)) });
   assert.equal(dry.status, 3, dry.stdout + dry.stderr); assert.equal(dry.json.authoritative, false);
+  assert.equal(dry.json.fast_forward, null, 'a dry run prints nothing to run');
   p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted'));
   const M = p.commit('close M-0001');
   p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
   const unaccepted = p.run(['closeout', '--baseline', p.B, '--candidate', M]);
   assert.equal(unaccepted.status, 1); assert.ok(unaccepted.json.steps.some(s => !s.ok && /M-0001 acceptance/.test(s.name)));
-  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'acceptance', revision: p.C, decision: 'accepted', scenarios: ['AC-001-1'] }]);
+  const close = { purpose: 'governing-change', revision: M, paths: ['docs/workflow/milestones/M-0001.md'] };
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), close, { purpose: 'acceptance', revision: p.C, decision: 'accepted', scenarios: ['AC-001-1'] }]);
   const accepted = p.run(['closeout', '--baseline', p.B, '--candidate', M]);
   assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Accepted', 'status: Released'));
+  const Rl = p.commit('release M-0001');
+  const releaseClose = { purpose: 'governing-change', revision: Rl, paths: ['docs/workflow/milestones/M-0001.md'] };
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), releaseClose, { purpose: 'acceptance', revision: p.C, decision: 'accepted', scenarios: ['AC-001-1'] }]);
+  const unreleased = p.run(['closeout', '--baseline', p.B, '--candidate', Rl]);
+  assert.equal(unreleased.status, 1); assert.ok(unreleased.json.steps.some(s => !s.ok && /release authority/.test(s.name)));
 });
 
 test('status and ci report a trusted branch that moved past approval', t => {
@@ -224,10 +233,11 @@ test('the signing brief is rendered from the payload file, flags what needs judg
   assert.match(r.stdout, /## What you are signing/);
   assert.match(r.stdout, /T-0001: candidate/);
   assert.match(r.stdout, /1 note accepted.*R-1/);
+  const outsideCode = r.stdout.replace(/`[^`\n]*`/g, '');
+  assert.ok(!/<script|\]\(|!\[/.test(outsideCode), 'payload text renders only inside code spans');
   assert.match(r.stdout, /Protected paths.*docs\/specs\/feature\.md/);
   assert.match(r.stdout, /T-0001 Ready → Done/);
-  assert.ok(!r.stdout.includes('<script>'), 'payload text cannot open HTML');
-  assert.ok(r.stdout.includes('kept \\| &lt;script>'));
+  assert.ok(r.stdout.includes('`kept \\| <script>alert(1)</script>`'));
 });
 
 test('the signing brief refuses a file the gates would reject', t => {
@@ -243,7 +253,7 @@ test('the signing brief refuses a file the gates would reject', t => {
   assert.match(r.stdout, /review does not cover correctness/);
   assert.match(r.stdout, /repeats #2/);
   assert.match(r.stdout, /expires_at has passed/);
-  assert.match(r.stdout, /Check not passed/);
+  assert.match(r.stdout, /check unit is failed; every check must pass/);
   const json = JSON.parse(spawnSync(process.execPath, [cli, 'brief', '--payloads', p.file('bad.json', bad), '--json'], { encoding: 'utf8' }).stdout);
   assert.equal(json.ok, false); assert.equal(json.count, 4);
 });
@@ -286,5 +296,142 @@ test('the brief keeps a hostile revision inside a code span', t => {
   assert.equal(r.status, 1);
   const row = r.stdout.split('\n').find(l => l.startsWith('| 1 |'));
   assert.equal(row.split(' | ').length, 5, row);
-  assert.ok(!r.stdout.includes('<i>'));
+  assert.ok(!r.stdout.replace(/`[^`\n]*`/g, '').includes('<i>'));
+});
+
+test('a path name with a backslash is never derived', t => {
+  const p = round(t);
+  p.write('tests\\evil.test.js', 'x\n');
+  const E = p.commit('odd name');
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(E);
+  assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /backslash/);
+});
+
+test('the newest approval in the whole history governs: a merge cannot bring back an older, looser one', t => {
+  const p = round(t);
+  // The owner, on main, makes docs/policy/** governing and signs that baseline, B1.
+  p.git('checkout', '-q', 'main');
+  p.edit('docs/workflow/config.json', text => { const c = JSON.parse(text); c.paths.governing.push('docs/policy/**'); return JSON.stringify(c, null, 2); });
+  p.write('docs/policy/rules.md', 'owner rules\n');
+  const B1 = p.commit('owner: govern docs/policy');
+  // The agent merges main into its task branch and edits the newly governed file.
+  p.git('checkout', '-q', 'T-0001-work');
+  p.git('merge', '-q', '--no-edit', 'main');
+  p.edit('docs/policy/rules.md', x => `${x}agent edit\n`);
+  const E = p.commit('agent edits a governed file');
+  const claims = [{ purpose: 'baseline', revision: p.B }, { purpose: 'baseline', revision: B1 }, { purpose: 'workflow-change', revision: B1, paths: ['docs/workflow/config.json'] }, ...p.evidence(p.C)];
+  const d = p.trustOf(claims).derivation(E);
+  assert.equal(d.approved, false, JSON.stringify(d)); assert.equal(d.from, B1);
+  assert.match(d.reasons.join(' '), /governing path docs\/policy\/rules\.md/);
+  // An ambiguous newest receipt refuses rather than falling back to B.
+  const twice = p.trustOf([...claims, { purpose: 'baseline', revision: B1 }]).derivation(E);
+  assert.equal(twice.approved, false); assert.match(twice.reasons.join(' '), /ambiguous/);
+});
+
+test('turning derived baselines off in a later config stops derivation', t => {
+  const p = round(t);
+  p.edit('docs/workflow/config.json', text => { const c = JSON.parse(text); c.approval.derived_baselines = false; return JSON.stringify(c, null, 2); });
+  const E = p.commit('owner turns derivation off');
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'workflow-change', revision: E, paths: ['docs/workflow/config.json'] }]).derivation(E);
+  assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /derived_baselines/);
+});
+
+test('a git failure never derives approval', t => {
+  const p = round(t);
+  p.write('src/a.js', 'export const result = 2;\n');
+  const E = p.commit('unreceipted change');
+  const bin = fs.mkdtempSync(path.join(p.temp, 'bin-'));
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  fakeExecutable(path.join(bin, 'git'), `const {spawnSync}=require('child_process');const a=process.argv.slice(2);if(a.includes('diff')&&a.includes(${JSON.stringify(p.C)}))process.exit(1);const r=spawnSync(${JSON.stringify(realGit)},a,{stdio:'inherit'});process.exit(r.status??1);\n`);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${saved}`;
+  try { assert.equal(p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(E).approved, false); }
+  finally { process.env.PATH = saved; }
+});
+
+test('closeout refuses production changes outside a gated task, a task gated behind the tip, and a moved branch', t => {
+  const p = round(t);
+  p.write('scripts/deploy.sh', 'echo deploy\n');
+  const X = p.commit('production change in no task');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const outside = p.run(['closeout', '--baseline', p.B, '--candidate', X]);
+  assert.equal(outside.status, 1);
+  assert.ok(outside.json.steps.some(s => !s.ok && /every production change/.test(s.name) && /scripts\/deploy\.sh/.test(s.detail.join(' '))));
+  // The owner signs a newer tip B1 on main after the task started from B: its gate is stale.
+  p.git('checkout', '-q', 'main'); p.write('docs/notes.md', 'owner note\n'); const B1 = p.commit('owner note'); p.git('checkout', '-q', 'T-0001-work');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, { purpose: 'baseline', revision: B1 }, ...p.evidence(p.C)]);
+  const stale = p.run(['closeout', '--baseline', B1, '--candidate', p.D]);
+  assert.equal(stale.status, 1);
+  assert.ok(stale.json.steps.some(s => !s.ok && /descends from the baseline|chain/.test(s.name)));
+  // Merging the new tip in does not refresh a gate taken against the old one.
+  p.git('merge', '-q', '--no-edit', 'main'); const Mg = p.git('rev-parse', 'HEAD');
+  const merged = p.run(['closeout', '--baseline', B1, '--candidate', Mg]);
+  assert.equal(merged.status, 1); assert.ok(merged.json.steps.some(s => !s.ok && /chain/.test(s.name)), JSON.stringify(merged.json.steps));
+  p.git('update-ref', 'refs/heads/main', p.C);
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const moved = p.run(['closeout', '--baseline', p.B, '--candidate', p.D]);
+  assert.equal(moved.status, 1); assert.ok(moved.json.steps.some(s => !s.ok && /local main is at the baseline/.test(s.name)));
+});
+
+test('the printed fast-forward is quoted for a POSIX shell', () => {
+  assert.equal(quote(`/tmp/a b'$(touch x)\`y\``), `'/tmp/a b'\\''$(touch x)\`y\`'`);
+});
+
+test('status with the trust options reads the trusted branch from an approved revision', t => {
+  const p = round(t);
+  p.receipts([{ purpose: 'baseline', revision: p.B }]);
+  const r = spawnSync(process.execPath, [cli, 'status', '--repo', p.repo, '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository], { encoding: 'utf8' });
+  assert.equal(r.status, 2); assert.match(r.stderr, /needs --baseline/);
+});
+
+test('the brief checks required checks and lists every path no payload covers', t => {
+  const p = round(t);
+  p.write('docs/guide.md', 'unreviewed guide\n');
+  const E = p.commit('T-0001: guide after the candidate');
+  const other = c => ({ ...c, checks: [{ name: 'lint', result: 'passed', evidence: 'evidence/log.txt' }] });
+  const [verification, integration, review] = p.evidence(p.C);
+  const f = p.file('round.json', [other(verification), other(integration), review, { purpose: 'baseline', revision: E }].map(p.payload));
+  const r = spawnSync(process.execPath, [cli, 'brief', '--payloads', f, '--repo', p.repo, '--baseline', p.B], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /required check unit is missing/);
+  assert.match(r.stdout, /Changed with no payload covering it.*docs\/guide\.md/);
+  assert.match(r.stdout, /T-0001 Ready → Done/);
+});
+
+test('a milestone round gates each task on the unsigned work before it, and closes once signed', t => {
+  const p = round(t);
+  const t2 = 'docs/workflow/tasks/T-0002.md';
+  p.write(t2, fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Ready')
+    .replace(/^(start_revision|governing_baseline_revision|baseline_revision):.*$/gm, `$1: ${p.D}`).replace(/^implemented:.*\n^verified:.*$/m, 'implemented:').replace('prerequisites: []', 'prerequisites: [T-0001]'));
+  const E = p.commit('T-0002: claim the task on top of T-0001');
+  p.write('src/b.js', 'export const b = 2;\n');
+  const C2 = p.commit('T-0002: candidate');
+  p.edit(t2, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C2}\nverified: ${C2}`));
+  const D2 = p.commit('T-0002: record done');
+  p.receipts([{ purpose: 'baseline', revision: p.B }]);
+  // Nothing of the round is signed: T-0002's gate runs on T-0001's staged payloads and is provisional.
+  const draft = p.unsigned([...p.evidence(p.C), ...p.evidence(C2)]);
+  const dry = p.run(['ci', '--baseline', p.D, '--candidate', C2, '--task', 'T-0002'], { unsignedFile: draft });
+  assert.equal(dry.status, 3, dry.stdout + dry.stderr); assert.equal(dry.json.verdict, 'pass');
+  assert.equal(p.run(['closeout', '--baseline', p.B, '--candidate', D2], { unsignedFile: draft }).status, 3);
+  // One signed round closes the milestone's work; the claim commit E sits inside T-0002's own gated range.
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), ...p.evidence(C2)]);
+  const closed = p.run(['closeout', '--baseline', p.B, '--candidate', D2]);
+  assert.equal(closed.status, 0, closed.stdout + closed.stderr);
+  assert.ok(closed.json.steps.some(s => /wf ci for T-0001/.test(s.name)) && closed.json.steps.some(s => /wf ci for T-0002/.test(s.name)));
+  assert.ok(E);
+});
+
+test('two separately receipted branches merged together derive nothing until the assembled whole is verified', t => {
+  const p = round(t);
+  p.git('checkout', '-q', '-b', 'other', p.B);
+  p.write('src/c.js', 'export const c = 3;\n');
+  const C2 = p.commit('T-0001: parallel candidate');
+  p.git('checkout', '-q', 'T-0001-work');
+  p.git('merge', '-q', '--no-edit', 'other');
+  const M = p.git('rev-parse', 'HEAD');
+  const both = [{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), ...p.evidence(C2)];
+  const d = p.trustOf(both).derivation(M);
+  assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /assembled/);
+  assert.equal(p.trustOf([...both, ...p.evidence(M)]).derivation(M).approved, true);
 });

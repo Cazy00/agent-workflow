@@ -36,10 +36,17 @@ export function createTrust({ publicKey, repository, envelopes = [], unsigned = 
     if (found?.level === 'provisional') used.set(`${purpose}@${revision}`, { purpose, revision });
     return found?.payload ?? null;
   };
+  // Two receipts, or two unsigned payloads, for one purpose and revision supply nothing; a derivation must not step
+  // around such a revision to an older approval, so it asks.
+  const ambiguous = (purpose, revision) => {
+    const signed = find(valid, purpose, revision);
+    return signed.length > 1 || (signed.length === 0 && find(pending, purpose, revision).length > 1);
+  };
   return Object.freeze({
     claim,
     allows: (purpose, revision) => claim(purpose, revision) !== null,
     peek,
+    ambiguous,
     revisions: () => new Set([...valid, ...pending].map(s => JSON.parse(s).revision)),
     provisional: () => [...used.values()],
   });
@@ -52,5 +59,5 @@ export function createTrust({ publicKey, repository, envelopes = [], unsigned = 
 // gate instead; there is no hybrid. Only an immutable Git revision can carry this trust.
 export function createEnforcedTrust({ baseline }) {
   if (!/^[0-9a-f]{40,64}$/.test(baseline ?? '')) throw new Error('enforced trust needs an immutable baseline revision');
-  return Object.freeze({ mode: 'enforced', claim: () => null, allows: (purpose, revision) => purpose === 'baseline' && revision === baseline, peek: () => null, revisions: () => new Set(), provisional: () => [] });
+  return Object.freeze({ mode: 'enforced', claim: () => null, allows: (purpose, revision) => purpose === 'baseline' && revision === baseline, peek: () => null, ambiguous: () => false, revisions: () => new Set(), provisional: () => [] });
 }

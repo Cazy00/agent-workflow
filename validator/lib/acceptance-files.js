@@ -18,7 +18,8 @@ export function validateAcceptanceFiles(source) {
     if (raw == null) return { missing: true };
     try { return { value: JSON.parse(raw) }; } catch (e) { errors.push(`${path}: invalid JSON (${e.message})`); return { invalid: true }; }
   };
-  const exists = path => { try { return source.exists(safePath(path)); } catch { return false; } };
+  // A file, not a directory: git's `cat-file -e` and fs.existsSync accept both.
+  const exists = path => { try { safePath(path); return source.isFile ? source.isFile(path) : source.exists(path); } catch { return false; } };
   const ids = new Set();
   const definitions = read(ACCEPTANCE);
   if (definitions.value !== undefined) {

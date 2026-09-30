@@ -23,6 +23,7 @@ export function dirSource(root) {
     kind: 'dir', name: root,
     read(rel) { const p = resolve(rel); try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'EISDIR') return null; throw e; } },
     exists(rel) { return fs.existsSync(resolve(rel)); },
+    isFile(rel) { const p = resolve(rel); return fs.existsSync(p) && fs.statSync(p).isFile(); },
     list(relDir) {
       const dir = resolve(relDir);
       if (!fs.existsSync(dir)) return [];
@@ -48,6 +49,7 @@ export function gitSource(repo, revision) {
     atRevision(commit) { return gitSource(repo, commit); },
     read(rel) { safePath(rel); const r = git('show', `${rev}:${rel}`); return r.status === 0 ? r.stdout : null; },
     exists(rel) { safePath(rel); return git('cat-file', '-e', `${rev}:${rel}`).status === 0; },
+    isFile(rel) { safePath(rel); const r = git('cat-file', '-t', `${rev}:${rel}`); return r.status === 0 && r.stdout.trim() === 'blob'; },
     list(relDir) {
       safePath(relDir);
       const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);

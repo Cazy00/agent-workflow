@@ -71,30 +71,48 @@ async function main() {
     const raw = fs.readFileSync(file, 'utf8');
     const repo = o.repo ? path.resolve(o.repo) : null;
     const sha = /^[0-9a-f]{40,64}$/;
-    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('log', '-1', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
-    const statusChanges = [];
+    const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
+    let requiredChecks = null, changes = null;
     if (repo && o.baseline) {
+      // Everything the round changes from the approved baseline to its latest revision, and what covers each path.
+      const base = gitSource(repo, o.baseline);
+      const baseConfig = loadConfig(base);
+      const rd = baseConfig.records_dir ?? 'docs/workflow';
+      requiredChecks = list(loadAll(base, rd).profile?.data?.required_checks);
       let payloads = [];
       try { payloads = readPayloads(raw); } catch { /* reported by the brief */ }
       const revisions = [...new Set(payloads.map(p => p?.revision).filter(r => sha.test(r ?? '')))];
-      const latest = revisions.find(r => revisions.every(x => x === r || run('merge-base', '--is-ancestor', x, r).status === 0));
-      if (latest) {
-        const base = gitSource(repo, o.baseline);
-        const rd = loadConfig(base).records_dir ?? 'docs/workflow';
-        const tip = gitSource(repo, latest);
-        const changed = run('diff', '--no-renames', '--name-only', '-z', base.name, tip.name, '--', `${rd}/tasks/`);
-        const before = loadAll(base, rd).tasks, after = loadAll(tip, rd).tasks;
-        for (const p of changed.stdout.split('\0').filter(Boolean)) {
-          const id = p.match(/(T-\d{4})\.md$/)?.[1];
-          if (!id) continue;
-          const was = before.get(id)?.data?.status ?? 'absent', now = after.get(id)?.data?.status ?? 'removed';
-          statusChanges.push(was === now ? `${id} (${now}) edited` : `${id} ${was} → ${now}`);
+      const contains = (older, newer) => older === newer || run('merge-base', '--is-ancestor', older, newer).status === 0;
+      const latest = revisions.filter(r => revisions.every(x => contains(x, r)));
+      if (latest.length !== 1 || !contains(base.name, latest[0])) changes = { unknown: 'the payload revisions do not form one line from the baseline' };
+      else {
+        const tip = gitSource(repo, latest[0]);
+        const diff = (from, to) => { const r = run('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null; };
+        const all = diff(base.name, tip.name);
+        if (!all) changes = { unknown: 'git diff failed' };
+        else {
+          const after = new Map(revisions.map(x => [x, new Set(diff(x, tip.name) ?? all)]));
+          const evidence = payloads.filter(p => p?.purpose === 'verification').map(p => p.revision);
+          const listing = payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose) && Array.isArray(p.paths));
+          const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
+          changes = { records: [], uncovered: [] };
+          for (const f of all) {
+            const record = f.match(new RegExp(`^${rd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(tasks|feedback/inbox)/([^/]+)\\.md$`));
+            if (record) {
+              const id = record[2];
+              const was = record[1] === 'tasks' ? before.get(id)?.data?.status ?? 'absent' : null, is = record[1] === 'tasks' ? now.get(id)?.data?.status ?? 'removed' : null;
+              changes.records.push(record[1] === 'tasks' ? (was === is ? `${id} (${is}) edited` : `${id} ${was} → ${is}`) : `${f} changed`);
+              continue;
+            }
+            const covered = evidence.some(x => !after.get(x)?.has(f)) || listing.some(p => p.paths.includes(f) && !after.get(p.revision)?.has(f));
+            if (!covered) changes.uncovered.push(f);
+          }
         }
       }
     }
-    const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', `${rev}:tests/acceptance-map.json`); try { return r.status === 0 ? JSON.parse(r.stdout) : []; } catch { return null; } } : null;
-    const result = renderBrief({ file, raw, subject, mapped, statusChanges });
+    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;
@@ -131,7 +149,7 @@ async function main() {
   if (o['unsigned-receipts'] && !o.receipts) throw new WfError('--unsigned-receipts is a dry run of a manual-mode round: it needs --trust-key, --receipts and --repository too');
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
-    if (baseline.kind !== 'git' && cmd !== 'status') throw new WfError('approval requires an immutable Git baseline');
+    if (baseline.kind !== 'git') throw new WfError(cmd === 'status' ? 'with the trust options, status needs --baseline at an approved revision: the trusted branch is named by approved config, not the working tree' : 'approval requires an immutable Git baseline');
     const keyPath = fs.realpathSync(o['trust-key']);
     const relative = path.relative(fs.realpathSync(repo), keyPath);
     if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('owner trust key must be provisioned outside the candidate repository');

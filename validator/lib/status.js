@@ -6,6 +6,7 @@
 // as authorised (`tasks`), the tasks discovered since, and until acceptance what the plan leaves unserved (IDEA-14).
 import { TASK_BRANCH, list, listedOwners, loadAll, loadConfig, ownerErrors } from './records.js';
 import { evaluateReadiness } from './readiness.js';
+import { validateAcceptanceFiles } from './acceptance-files.js';
 
 const preview = Object.freeze({ mode: 'preview', claim: () => null, allows: purpose => purpose === 'baseline' });
 const OWNER_DECISION_TYPES = ['decision', 'deferred'];
@@ -39,11 +40,11 @@ export function readPullRequests(input) {
   }).sort((a, b) => a.number - b.number);
 }
 
-export function evaluateStatus({ baseline, candidate = baseline, pullRequests = null }) {
+export function evaluateStatus({ baseline, candidate = baseline, pullRequests = null, trustedBranch = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const all = loadAll(candidate, rd);
-  all.errors.push(...ownerErrors(all));
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(candidate));
   const profile = all.profile?.data ?? {};
   const owners = listedOwners(profile);
   const labels = [config.approval?.label ?? null, profile.approval_label ?? null];
@@ -154,6 +155,8 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     if (setupOpen.agent) waiting.push({ kind: 'setup', item: `${rd}/setup.md`, owner: 'agent', detail: `${setupOpen.agent} agent setup step(s) unchecked` });
   }
   const feedbackOpen = [...all.feedback.values()].filter(f => f.data?.status === 'Open').map(f => f.data.id);
+  // Only with the trust options (manual mode): unapproved commits on the trusted branch (procedures/execute.md).
+  if (trustedBranch && !trustedBranch.approved) waiting.push({ kind: 'trusted-branch', item: trustedBranch.branch, owner: 'owner', detail: `${trustedBranch.tip.slice(0, 12)} is ${trustedBranch.ahead ?? 'an unknown number of'} commit(s) past the newest baseline receipt${trustedBranch.newest_receipt ? ` (${trustedBranch.newest_receipt.slice(0, 12)})` : ''} and is not an approved baseline: unapproved work sits on the trusted branch; ask for it to move to a task branch, or sign or refuse the round it belongs to` });
 
   return {
     ok: true,
@@ -172,6 +175,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     inbox: { count: inboxItems.length, items: inboxItems },
     setup_open: setupOpen,
     feedback_open: feedbackOpen,
+    trusted_branch: trustedBranch,
     record_errors: all.errors,
     limitation: 'Derived, read-only view. It grants no authority and checks no approval; gates read the records directly. Readiness is previewed as if the baseline were approved. Usage and local claims: wf runtime --action status. Shared claims, latest handoffs and current activity: the task branches and pull requests.',
   };

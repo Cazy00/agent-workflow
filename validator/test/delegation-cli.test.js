@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { fakeExecutable } from './helpers.js';
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 function setup(t, { eligible = true, enabled = true, blocked = false } = {}) {
@@ -33,7 +34,7 @@ function setup(t, { eligible = true, enabled = true, blocked = false } = {}) {
   const state = { pr: { number: 1, state: 'open', draft: false, head: { sha: candidate, repo: { full_name: 'fixture/project' } }, base: { sha: baseline, ref: 'main', repo: { full_name: 'fixture/project' } }, updated_at: '2026-09-30T00:00:00Z' }, reviews: [], comments: [] };
   const saveGithub = () => fs.writeFileSync(stateFile, JSON.stringify(state)); saveGithub();
   const fakeGh = path.join(root, 'gh');
-  fs.writeFileSync(fakeGh, `#!${process.execPath}\nconst fs=require('fs');const s=JSON.parse(fs.readFileSync(process.env.WF_TEST_GITHUB));const e=process.argv.at(-1);process.stdout.write(JSON.stringify(e.includes('/reviews?')?s.reviews:e.includes('/comments?')?s.comments:s.pr));\n`, { mode: 0o755 });
+  fakeExecutable(fakeGh, `const fs=require('fs');const s=JSON.parse(fs.readFileSync(process.env.WF_TEST_GITHUB));const e=process.argv.at(-1);process.stdout.write(JSON.stringify(e.includes('/reviews?')?s.reviews:e.includes('/comments?')?s.comments:s.pr));\n`);
   const run = (args = []) => spawnSync(process.execPath, [cli, 'ci', '--repo', repo, '--baseline', baseline, '--candidate', git('rev-parse', 'HEAD'), '--task', 'T-0001', '--json', ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}`, WF_TEST_GITHUB: stateFile } });
   return { repo, root, git, edit, baseline, candidate, evidence, evidenceFile, saveEvidence, state, saveGithub, run };
 }

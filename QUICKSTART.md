@@ -28,9 +28,9 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 
 ## Start or resume a task
 
-Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
+Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision (in a milestone round the previous task's Done commit; after a rebase, the new base, with its checks rerun) and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
 
-The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, and `WF_RECEIPTS` were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
+The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, `WF_RECEIPTS` and, in manual mode, `WF_SIGNING_DIR` (the signing drop) were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
 
 Run from the target checkout, or pass `--repo "$WF_PROJECT"` once to select it explicitly. The launcher defaults to the current Git root (current directory outside Git); repeated `--repo` options and missing values remain errors.
 
@@ -61,7 +61,21 @@ Use `procedures/accept-release.md`. `wf lifecycle --stage accept` checks the tas
 
 Record a session outcome using `templates/session.json` outside the checkout, then validate it with `wf session --record PATH` and the same baseline/candidate/trust arguments. Post the outcome and handoff on the task's pull request (or issue): changes, verification revision, uncertainty, next action and **Workflow friction this session: none / report IDs**. Never commit logs or handoff files; the repository holds only what future work needs. Use `procedures/maintenance.md` for feedback and separately authorised repairs.
 
-Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages; `status` prints a derived, read-only view for the owner (what is waiting on you, what is next for the agent, milestones and tasks with previewed blockers, open decisions, inbox and setup items) as Markdown, or as JSON with `--json`, and needs no baseline; given `--pull-requests` (`gh pr list` JSON) it also shows each task's claim; it never checks approval and grants nothing. On GitHub, the scaffold's `.github/workflows/wf-status.yml` posts the same view with the open pull requests to a *Project status* issue that the owner pins once, at the top of the Issues tab; each run replaces its text. All other commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
+Other commands: `paths` classifies the actual diff; `acceptance` checks mappings/execution; `lifecycle --stage verify|integrate|accept|release` checks evidence stages; `status` prints a derived, read-only view for the owner (what is waiting on you, what is next for the agent, milestones and tasks with previewed blockers, open decisions, inbox and setup items) as Markdown, or as JSON with `--json`, and needs no baseline; given `--pull-requests` (`gh pr list` JSON) it also shows each task's claim; it never checks a task's approval and grants nothing, and only with the trust options and `--baseline` does it read receipts, to flag a trusted branch past approval. On GitHub, the scaffold's `.github/workflows/wf-status.yml` posts the same view with the open pull requests to a *Project status* issue that the owner pins once, at the top of the Issues tab; each run replaces its text. `brief` prints Markdown too; all other commands print structured JSON (`--json` remains accepted). Exit codes: 0 satisfied, 1 blocked/failed, 2 invalid inputs or execution error, 3 satisfied only by unsigned payloads, which is not satisfied. Directory inputs are for diagnostics and fixtures, not authoritative approvals.
+
+## What each gate needs
+
+Read this instead of the validator source. In manual mode every receipt is owner-signed for the exact revision named; in enforced mode what a receipt would prove is listed as `unverified` for the pull request review.
+
+| Step | Command | From the approved baseline | Receipts at the candidate |
+|---|---|---|---|
+| Start a task | `readiness --task T` | baseline receipt (or derived); profile Ready with `required_checks`; milestone Authorised or Active; task fields recorded; prerequisites Done; decisions Resolved; governing sources unchanged since `governing_baseline_revision` | none |
+| Planning-only change | `ci` | its config (classification) and valid records; no approval is checked | none |
+| Integrate a task | `ci --task T` | as for a task start | `verification` (checks passed, each with evidence that is a file in the candidate or a key of the receipt's `artifacts`, and every mapped test run once and passed), `review` (`implementer` equal to the task's `owner`, a different reviewer, six areas, findings resolved or accepted), `integration`; `governing-change` / `workflow-change` listing each protected path changed |
+| Accept | `lifecycle --stage accept` | as for a task start, the milestone Authorised, Active, Verified, Accepted or Released | the above and `acceptance` naming the task's scenarios |
+| Release | `lifecycle --stage release` | as for acceptance | the above and `release` |
+| Close a signed round | `closeout` | the trusted branch's tip, where the local branch must be | each Done task's gate at its `baseline_revision` and `implemented`, as one chain; no production change outside them; acceptance (and release) for each milestone accepted (released); the round's end approved |
+
 
 ## Central reporting and assisted runtime
 
@@ -73,6 +87,8 @@ Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit
 
 After explicit setup approval, optional local batches use `wf ci --tasks T-0001,T-0002`; every task still passes its gates. Routine integration can be delegated within narrow protected limits, using worker-posted evidence and exact-head GitHub owner approval for exceptions. Both are off by default; read `procedures/delivery.md` before activation.
 
+In manual mode a round of receipts is one file of unsigned payloads in the signing drop (`$WF_SIGNING_DIR`), with the brief `wf brief` renders from it; dry-run the round's gates with `--unsigned-receipts` (exit 3 instead of 0, never approval), and after signing run `wf closeout`, which re-runs them on the receipts and prints the fast-forward. Opt-in derived baselines spare the baseline receipt where the owner's other receipts already cover every change; `signing: milestone` collects a milestone's receipts in one round (`procedures/approval-evidence.md`, *Signing rounds*).
+
 Prepare a fresh independent review with `wf review-packet --repo DIR --baseline BASE_SHA --candidate HEAD_SHA --task T-0001 --evidence /external/checks.log`. Give its canonical references to an explicitly empty review context and rerun the command afterwards to catch checkout changes. The packet does not launch or authenticate the reviewer.
 
-Before closeout, identify the actual delivered revision and run `wf delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/verify.yml --branch main --required-check JOB` for each required workflow. It exits nonzero for failed, pending, missing, skipped or mismatched required CI evidence. It does not identify the deployed artifact or grant acceptance/release authority.
+Before declaring delivery complete, identify the actual delivered revision and run `wf delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/verify.yml --branch main --required-check JOB` for each required workflow. It exits nonzero for failed, pending, missing, skipped or mismatched required CI evidence. It does not identify the deployed artifact or grant acceptance/release authority.

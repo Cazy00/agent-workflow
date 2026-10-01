@@ -4,6 +4,7 @@ id: M-0000
 outcome:
 measure:
 status: Draft
+signing: task
 coordinator:
 owner:
 scope: []

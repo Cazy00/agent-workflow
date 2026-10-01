@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { collectAllocationSnapshot } from '../../adapters/speckit/allocation.mjs';
+import { fakeExecutable } from './helpers.js';
 
 function fixture(t,scenario='normal') {
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'wf-speckit-allocation-'));t.after(()=>fs.rmSync(temp,{recursive:true,force:true}));
@@ -22,12 +23,12 @@ function fixture(t,scenario='normal') {
  git(source,'remote','add','origin','https://github.com/fixture/project.git');
  const pulls=[{number:7,title:'T-0020 fixture',head:{sha:scenario==='head-moved'?'a'.repeat(40):head,ref:'codex/T-0020-fixture'},base:{repo:{full_name:'fixture/project'}}}];
  const count=path.join(temp,'requests');
- fs.writeFileSync(path.join(bin,'gh'),`#!${process.execPath}\nconst fs=require('fs');const args=process.argv.slice(2);const endpoint=args.at(-1);let value;
+ fakeExecutable(path.join(bin,'gh'),`const fs=require('fs');const args=process.argv.slice(2);const endpoint=args.at(-1);let value;
  if(endpoint==='user')value={login:'worker'};
  else if(endpoint==='repos/fixture/project')value={full_name:'fixture/project',owner:{type:'User',login:'fixture'}};
  else if(endpoint.startsWith('repos/fixture/project/pulls?')){let n=fs.existsSync(${JSON.stringify(count)})?+fs.readFileSync(${JSON.stringify(count)},'utf8'):0;fs.writeFileSync(${JSON.stringify(count)},String(n+1));value=${JSON.stringify(scenario==='incomplete'?[]:[pulls])};if(${JSON.stringify(scenario)}==='pull-moved'&&n>0)value[0][0].head.sha='b'.repeat(40);}
- else process.exit(91);process.stdout.write(JSON.stringify(value));\n`,{mode:0o755});
- fs.writeFileSync(path.join(bin,'git'),`#!${process.execPath}\nconst {spawnSync}=require('child_process');let args=process.argv.slice(2).map(x=>x==='https://github.com/fixture/project.git'?${JSON.stringify(source)}:x);if(args.some(x=>/^https?:/.test(x)))process.exit(92);let r=spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(r.status??93);\n`,{mode:0o755});
+ else process.exit(91);process.stdout.write(JSON.stringify(value));\n`);
+ fakeExecutable(path.join(bin,'git'),`const {spawnSync}=require('child_process');let args=process.argv.slice(2).map(x=>x==='https://github.com/fixture/project.git'?${JSON.stringify(source)}:x);if(args.some(x=>/^https?:/.test(x)))process.exit(92);let r=spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(r.status??93);\n`);
  const originalPath=process.env.PATH;process.env.PATH=bin+path.delimiter+originalPath;t.after(()=>{process.env.PATH=originalPath;});
  return {source,baseline,git,temp,collect:()=>collectAllocationSnapshot({repo:source,baseline,token:'synthetic-no-authority-token'})};
 }

@@ -1,7 +1,7 @@
 // Sources pin Git revisions once and never read through paths outside their root.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { gitRunner } from './git.js';
 
 export function safePath(rel) {
   if (typeof rel !== 'string' || !rel || rel.startsWith(':') || rel.includes('\\') || rel.includes('\0') || path.posix.isAbsolute(rel) || rel.split('/').some(p => p === '..' || p === '.' || p === '')) throw new Error(`invalid repository path: ${rel}`);
@@ -23,6 +23,7 @@ export function dirSource(root) {
     kind: 'dir', name: root,
     read(rel) { const p = resolve(rel); try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'EISDIR') return null; throw e; } },
     exists(rel) { return fs.existsSync(resolve(rel)); },
+    isFile(rel) { const p = resolve(rel); return fs.existsSync(p) && fs.statSync(p).isFile(); },
     list(relDir) {
       const dir = resolve(relDir);
       if (!fs.existsSync(dir)) return [];
@@ -39,7 +40,7 @@ export function dirSource(root) {
   };
 }
 export function gitSource(repo, revision) {
-  const git = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  const git = gitRunner(repo, { maxBuffer: 16 * 1024 * 1024 }); // lib/git.js: hostile clone config cannot change answers
   const resolved = git('rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`);
   if (resolved.status !== 0) throw new Error(`invalid git revision: ${revision}`);
   const rev = resolved.stdout.trim();
@@ -48,29 +49,30 @@ export function gitSource(repo, revision) {
     atRevision(commit) { return gitSource(repo, commit); },
     read(rel) { safePath(rel); const r = git('show', `${rev}:${rel}`); return r.status === 0 ? r.stdout : null; },
     exists(rel) { safePath(rel); return git('cat-file', '-e', `${rev}:${rel}`).status === 0; },
+    isFile(rel) { safePath(rel); const r = git('cat-file', '-t', `${rev}:${rel}`); return r.status === 0 && r.stdout.trim() === 'blob'; },
     list(relDir) {
       safePath(relDir);
-      const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
+      const r = git('ls-tree', '--full-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
       if (r.status !== 0) throw new Error(`cannot list ${relDir} at ${rev}`);
       return r.stdout.split('\0').filter(f => f.endsWith('.md') && path.posix.dirname(f) === relDir).sort();
     },
     listAll(relDir) {
       safePath(relDir);
-      const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
+      const r = git('ls-tree', '--full-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
       if (r.status !== 0) throw new Error(`cannot list ${relDir} at ${rev}`);
       return r.stdout.split('\0').filter(f => f && path.posix.dirname(f) === relDir).sort();
     },
     hasCommit(commit) { return /^[a-f0-9]{40,64}$/.test(commit ?? '') && git('cat-file', '-e', `${commit}^{commit}`).status === 0; },
     listTree(relDir) {
       safePath(relDir);
-      const r = git('ls-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
+      const r = git('ls-tree', '--full-tree', '-r', '-z', '--name-only', rev, '--', `${relDir}/`);
       if (r.status !== 0) throw new Error(`cannot enumerate ${relDir} at ${rev}`);
       return r.stdout.split('\0').filter(Boolean).sort();
     },
     isAncestor(commit) { if (!/^[a-f0-9]{40,64}$/.test(commit)) return false; return git('merge-base', '--is-ancestor', commit, rev).status === 0; },
     changedSince(commit, paths) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;
-      return git('diff', '--quiet', commit, rev, '--', ...paths).status !== 0;
+      return git('diff-tree', '--quiet', '-r', commit, rev, '--', ...paths).status !== 0;
     },
     // Every commit anywhere in this revision's history that added or modified rel, newest first. --full-history
     // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path

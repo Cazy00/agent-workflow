@@ -11,7 +11,8 @@
     "mechanism": "manual-signed-receipts",
     "label": "manual",
     "approver": "",
-    "agent_identity": ""
+    "agent_identity": "",
+    "derived_baselines": false
   },
   "setup_budget_days": 2,
   "paths": {

@@ -1,6 +1,7 @@
 // Record loading and schema checks. SCHEMA.md "Profile", "Task", "Decision", "Feedback".
 import { parseFrontMatter } from './frontmatter.js';
 import { planningEnforcement } from './planning.js';
+import { validateAcceptanceFiles } from './acceptance-files.js';
 
 export class WfError extends Error {}
 
@@ -19,7 +20,9 @@ const REQUIRED = {
   feedback: ['id', 'task', 'revision', 'workflow_version', 'rule', 'status'],
 };
 const ENUMS = {
-  milestone: { status: ['Draft', 'Authorised', 'Active', 'Blocked', 'Verified', 'Accepted', 'Released'] },
+  // `signing: milestone` lets the coordinator work ahead of the owner's signatures inside the milestone and collect
+  // them in one round at its end (procedures/approval-evidence.md *Milestone rounds*); `task` (the default) signs per task.
+  milestone: { status: ['Draft', 'Authorised', 'Active', 'Blocked', 'Verified', 'Accepted', 'Released'], signing: ['task', 'milestone'] },
   profile: { approval_label: ['enforced', 'manual'] },
   task: { status: ['Draft', 'Ready', 'Active', 'Blocked', 'Done'] },
   decision: {
@@ -117,7 +120,7 @@ export function ownerErrors(all) {
 
 export function validateRecords(source, recordsDir) {
   const all = loadAll(source, recordsDir);
-  all.errors.push(...ownerErrors(all));
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source));
   if (!all.profile) all.errors.unshift(`${recordsDir}/profile.md: missing`);
   return {
     ok: all.errors.length === 0,

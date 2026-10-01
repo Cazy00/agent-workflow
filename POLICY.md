@@ -383,6 +383,8 @@ A resolved record on that baseline is acceptable approval evidence only when the
 
 A free-text Git author field does not prove approval. A signature is relevant only when its identity and the specific content approved are established.
 
+In manual mode the owner may choose two economies that keep every stage and protected-path receipt. The protected configuration may let a baseline follow from receipts already given: a revision whose every difference from the newest explicitly approved baseline carries the owner's receipt for that exact content is itself approved; only task and feedback records, such as a task marked Done, carry no signature of their own, as a records-only merge needs no owner review in enforced mode. A milestone may also collect its signatures in one round at its end: work continues on unsigned evidence meanwhile, nothing reaches the trusted branch before the round is signed and its gates rerun, and a result that relies on unsigned evidence is never approval.
+
 Check repository-plan support during setup. GitHub’s documented availability differs for public and private repositories. If required enforcement is unavailable, record the limitation and use an explicit alternative; do not claim equivalent protection. [GitHub availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 
 ---

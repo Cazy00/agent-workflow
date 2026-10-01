@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
-import { gitRunner } from './lib/git.js';
+import { gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -69,7 +69,10 @@ async function main() {
     if (!o.payloads) throw new WfError('--payloads FILE is required');
     const file = path.resolve(o.payloads);
     const raw = fs.readFileSync(file, 'utf8');
-    const repo = o.repo ? path.resolve(o.repo) : null;
+    // With a repository, the brief reads a verified mirror of it (lib/git.js): not the clone's own objects or config.
+    const mirror = o.repo ? verifiedMirror(o.repo) : null;
+    try {
+    const repo = mirror?.path ?? null;
     const sha = /^[0-9a-f]{40,64}$/;
     const run = repo ? gitRunner(repo) : null;
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
@@ -101,6 +104,7 @@ async function main() {
         const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
+          if (unsafePath(f)) { changes.uncovered.push([f, 'could pass for another path; never derived']); continue; }
           const categories = new Set(configs.map(c => classifyPaths(c, [f])[0].category));
           const record = f.startsWith(`${rd}/`) && /^(tasks|feedback\/inbox)\/[^/]+\.md$/.test(f.slice(rd.length + 1)) && [...categories].every(c => c === 'planning');
           if (record) {
@@ -124,6 +128,7 @@ async function main() {
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;
+    } finally { mirror?.cleanup(); }
   }
   if (cmd === 'delivery-check') {
     const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
@@ -141,7 +146,7 @@ async function main() {
     console.log(JSON.stringify(result,null,2));
     return result.status && result.status !== 'delivered' ? 1 : ['exhausted','unknown'].includes(result.budget_status) ? 1 : 0;
   }
-  const repo = path.resolve(o.repo ?? process.cwd());
+  const repo = path.resolve(o.repo ?? process.cwd()); // Git calls find the real root themselves (lib/git.js)
   const source = spec => {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
@@ -153,7 +158,7 @@ async function main() {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
-  let trust = null;
+  let trust = null, baseTrust = null;
   if (o['unsigned-receipts'] && !o.receipts) throw new WfError('--unsigned-receipts is a dry run of a manual-mode round: it needs --trust-key, --receipts and --repository too');
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
@@ -165,7 +170,8 @@ async function main() {
     const envelopes = readArray(o.receipts, 'receipts');
     const unsigned = o['unsigned-receipts'] ? readArray(o['unsigned-receipts'], 'unsigned receipts') : [];
     // Derived baselines (lib/derived.js) apply only when the newest receipted baseline's config and the revision's own both enable them.
-    trust = withDerivedBaselines(createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes, unsigned }), repo);
+    baseTrust = createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes, unsigned });
+    trust = withDerivedBaselines(baseTrust, repo);
     if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
   }
   // The derived view grants nothing. With the trust options it also reports a trusted branch that moved past approval.
@@ -203,6 +209,9 @@ async function main() {
       if (!candidate.isAncestor(baseline.name)) throw new WfError('candidate must include the current authoritative baseline; assemble it before integration');
       return git(repo, 'diff-tree', '-r', '--no-renames', '--name-only', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
     }
+    // A working-tree comparison would run the clone's clean/process filters: refuse them, as review-packet does.
+    const filters = gitRunner(repo, { literal: false })('config', '-z', '--get-regexp', '^filter\\..*\\.(clean|process)$');
+    if (filters.status === 0 && filters.stdout) throw new WfError('the clone configures clean/process filters; compare a committed candidate instead');
     return [...new Set([...git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, '--').split('\0'), ...git(repo, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')].filter(Boolean))];
   };
   const taskId = () => {
@@ -216,11 +225,18 @@ async function main() {
   if (cmd === 'closeout') {
     if (!trust || trust.mode === 'enforced') throw new WfError('closeout is for manual mode and needs --trust-key, --receipts and --repository; in enforced mode merging the pull request is the approval');
     if (candidate.kind !== 'git') throw new WfError('closeout needs a committed --candidate: the revision the signed round ends at');
-    result = evaluateCloseout({ repo, baseline, candidate, trust });
+    // Closeout reads a verified mirror (lib/git.js): every object re-hashed, none of the clone's config, hooks or caches.
+    // The local trusted branch and the printed fast-forward are the clone's own.
+    const mirror = verifiedMirror(repo);
+    try {
+      const verified = withDerivedBaselines(baseTrust, mirror.path);
+      result = evaluateCloseout({ repo: mirror.path, origin: repo, baseline: gitSource(mirror.path, baseline.name), candidate: gitSource(mirror.path, candidate.name), trust: verified });
+    } finally { mirror.cleanup(); }
   }
   else if (cmd === 'records') result = validateRecords(candidate, rd);
   else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
   else if (cmd === 'ci') {
+    if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
     const paths = changed();
     let changedLines = null, deliveryEvidence = null, ownerApproval = null, evidenceSource = null;
     if (config.delegation?.routine?.enabled === true) {

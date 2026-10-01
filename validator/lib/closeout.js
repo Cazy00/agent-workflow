@@ -24,7 +24,7 @@ export function evaluateCloseout(args) {
   try { return closeout(args); }
   catch (e) { return { ok: false, baseline: args.baseline.name, candidate: args.candidate.name, steps: [{ name: 'closeout could read the history', ok: false, detail: [e.message] }], notes: [], fast_forward: null }; }
 }
-function closeout({ repo, baseline, candidate, trust }) {
+function closeout({ repo, origin = repo, baseline, candidate, trust }) {
   const steps = [];
   const step = (name, ok, detail = []) => { steps.push({ name, ok, ...(detail.length ? { detail } : {}) }); return ok; };
   const git = gitIn(repo);
@@ -40,7 +40,7 @@ function closeout({ repo, baseline, candidate, trust }) {
 
   const approvedBase = trust.allows('baseline', baseline.name);
   step('the baseline is approved', approvedBase, approvedBase ? [] : ['owner approval evidence for the baseline is missing or invalid']);
-  const state = trustedBranchState({ repo, branch, trust });
+  const state = trustedBranchState({ repo: origin, branch, trust });
   step(`the local ${branch} is at the baseline`, !!state && state.tip === baseline.name, !state ? [`there is no local branch ${branch} (or its name is not a valid branch)`] : state.tip === baseline.name ? [] : [`${branch} is at ${state.tip.slice(0, 12)}; run closeout against the trusted branch's actual tip`]);
   const descends = candidate.isAncestor(baseline.name);
   step('the candidate descends from the baseline', descends, descends ? [] : ['the trusted branch can only fast-forward; rebuild the round on the current baseline']);
@@ -120,9 +120,10 @@ function closeout({ repo, baseline, candidate, trust }) {
   const provisional = trust.provisional?.().length > 0;
   const ok = steps.every(s => s.ok);
   const notes = provisional ? ['a dry run on unsigned payloads: nothing may move until the owner signs and closeout passes on the receipts'] : [];
-  const current = git('branch', '--show-current').out.trim();
+  // The clone's own branch moves, with its hooks off: the command runs where the agent's config lives.
+  const current = gitIn(origin)('branch', '--show-current').out.trim();
   const fastForward = !ok || provisional ? null
-    : current === branch ? `git -C ${quote(repo)} merge --ff-only ${candidate.name}`
-    : `git -C ${quote(repo)} update-ref ${quote(`refs/heads/${branch}`)} ${candidate.name} ${baseline.name}`;
+    : current === branch ? `git -c core.hooksPath=/dev/null -C ${quote(origin)} merge --ff-only ${candidate.name}`
+    : `git -c core.hooksPath=/dev/null -C ${quote(origin)} update-ref ${quote(`refs/heads/${branch}`)} ${candidate.name} ${baseline.name}`;
   return { ok, baseline: baseline.name, candidate: candidate.name, branch, steps, notes, fast_forward: fastForward, limitation: 'Read-only. It re-runs the recorded gates on the signed receipts and prints the fast-forward; it moves no branch and publishes nothing.' };
 }

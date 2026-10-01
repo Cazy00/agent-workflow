@@ -6,7 +6,14 @@ set -euo pipefail
 : "${WF_VALIDATOR_REV:?set WF_VALIDATOR_REV to its approved full commit hash}"
 [[ "$WF_VALIDATOR_REV" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]] || { echo 'wf: validator revision must be an immutable full hash' >&2; exit 2; }
 [ -z "${WF_LOCAL:-}" ] || { echo 'wf: WF_LOCAL is not an enforcement override' >&2; exit 2; }
-WF_PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# The directory holding the `.git` entry at or above the current one (the current directory outside Git);
+# `rev-parse --show-toplevel` would follow a clone's core.worktree.
+WF_PROJECT_ROOT="$(pwd)"
+WF_DIR="$WF_PROJECT_ROOT"
+while [ "$WF_DIR" != "/" ]; do
+  if [ -e "$WF_DIR/.git" ]; then WF_PROJECT_ROOT="$WF_DIR"; break; fi
+  WF_DIR="$(dirname "$WF_DIR")"
+done
 WF_PINNED_REV="$(git -C "$WF_VALIDATOR_REPO" rev-parse --verify "$WF_VALIDATOR_REV^{commit}")"
 [ "$WF_PINNED_REV" = "$WF_VALIDATOR_REV" ] || exit 2
 WF_EXTRACT="$(mktemp -d)"

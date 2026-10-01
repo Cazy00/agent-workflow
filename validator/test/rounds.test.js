@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { createTrust } from '../lib/trust.js';
 import { quote, withDerivedBaselines } from '../lib/derived.js';
 import { fakeExecutable } from './helpers.js';
-import { safeEnv, showPath, unsafePath } from '../lib/git.js';
+import { repoLayout, safeEnv, showPath, unsafePath, verifiedMirror } from '../lib/git.js';
+import { gitSource } from '../lib/sources.js';
 
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
@@ -158,7 +159,7 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.ok(r.json.steps.every(s => s.ok));
   assert.ok(r.json.steps.some(s => /wf ci for T-0001/.test(s.name)));
   assert.ok(r.json.steps.some(s => /approved baseline \(derived\)/.test(s.name)));
-  assert.equal(r.json.fast_forward, `git -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
+  assert.equal(r.json.fast_forward, `git -c core.hooksPath=/dev/null -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
@@ -554,6 +555,7 @@ test('a round without production changes may drop a Draft task cut from the plan
   const B2 = p.commit('plan T-0002');
   fs.rmSync(path.join(p.repo, 'docs/workflow/tasks/T-0002.md'));
   const cut = p.commit('cut T-0002 from the plan');
+  p.git('branch', 'cut-plan', cut); // the round's end is on a branch, as closeout's verified mirror needs
   p.git('update-ref', 'refs/heads/main', B2);
   p.receipts([{ purpose: 'baseline', revision: B2 }]);
   const r = p.run(['closeout', '--baseline', B2, '--candidate', cut]);
@@ -593,4 +595,74 @@ test('the brief covers the round to its end, and recording implemented leaves th
   q.receipts([{ purpose: 'baseline', revision: B2 }, ...q.evidence(D2)]);
   const ci = q.run(['ci', '--baseline', B2, '--candidate', D2, '--task', 'T-0001']);
   assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+});
+
+test('a rewritten object file cannot pass closeout or the brief: both read a verified mirror', t => {
+  const p = round(t);
+  p.write('src/a.js', 'export const result = "evil";\n');
+  const E = p.commit('T-0001: unsigned change');
+  // Make E's src tree read as D's: overwrite its loose object file with D's src tree.
+  const object = sha => path.join(p.repo, '.git', 'objects', sha.slice(0, 2), sha.slice(2));
+  const [forged, real] = [p.git('rev-parse', `${E}:src`), p.git('rev-parse', `${p.D}:src`)];
+  fs.chmodSync(object(forged), 0o644); fs.copyFileSync(object(real), object(forged));
+  assert.equal(p.git('diff', '--name-only', p.D, E), '', 'the local object store now hides the change');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', E]);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /failed verification/);
+  const f = p.file('forged.json', p.evidence(p.C).map(p.payload));
+  const brief = spawnSync(process.execPath, [cli, 'brief', '--payloads', f, '--repo', p.repo, '--baseline', p.B, '--candidate', E], { encoding: 'utf8' });
+  assert.equal(brief.status, 2); assert.match(brief.stderr, /failed verification/);
+});
+
+test('a missing object in the approval history refuses derivation rather than finding an older approval', t => {
+  const p = round(t);
+  p.git('checkout', '-q', 'main');
+  p.write('docs/notes.md', 'owner note\n');
+  const B1 = p.commit('owner note');
+  p.git('checkout', '-q', 'T-0001-work'); p.git('merge', '-q', '--no-edit', 'main');
+  const E = p.git('rev-parse', 'HEAD');
+  const object = path.join(p.repo, '.git', 'objects', B1.slice(0, 2), B1.slice(2));
+  fs.chmodSync(object, 0o644); fs.rmSync(object);
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, { purpose: 'baseline', revision: B1 }, ...p.evidence(p.C)]).derivation(E);
+  assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /git|history/);
+});
+
+test('working-tree diagnostics refuse clean filters, and a trusted ci refuses a working-tree candidate before reading it', t => {
+  const p = round(t);
+  const marker = path.join(p.temp, 'filtered');
+  p.git('config', 'filter.x.clean', `touch '${marker}'; cat`);
+  fs.writeFileSync(path.join(p.repo, '.git', 'info', 'attributes'), '* filter=x\n');
+  p.write('src/a.js', 'export const result = 3;\n');
+  p.receipts([{ purpose: 'baseline', revision: p.B }]);
+  const ci = spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', p.B, '--task', 'T-0001', '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository], { encoding: 'utf8' });
+  assert.equal(ci.status, 2); assert.match(ci.stderr, /committed candidate/);
+  const paths = spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', p.B], { encoding: 'utf8' });
+  assert.equal(paths.status, 2); assert.match(paths.stderr, /filters/);
+  assert.equal(fs.existsSync(marker), false, 'no filter ran');
+});
+
+test('hostile log settings cannot hide where a record first appeared', t => {
+  const p = round(t);
+  p.git('config', 'log.showRoot', 'false'); p.git('config', 'log.follow', 'true');
+  assert.equal(gitSource(p.repo, p.B).versions(taskPath).length, 2, 'the root commit that added it counts');
+});
+
+test('the safe environment blocks transports, keeps the operator\'s own config and handles a bare mirror', t => {
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: '*', USERPROFILE: 'C:\\Users\\o', OWNER_SIGNING_KEY: '/secret' });
+    const env = safeEnv('/x');
+    assert.equal(env.GIT_ALLOW_PROTOCOL, 'none');
+    assert.equal(env.GIT_CONFIG_KEY_0, 'safe.directory');
+    assert.equal(env[`GIT_CONFIG_KEY_${Number(env.GIT_CONFIG_COUNT) - 1}`], 'advice.graftFileDeprecated');
+    assert.equal(env.USERPROFILE, 'C:\\Users\\o'); assert.equal(env.OWNER_SIGNING_KEY, undefined);
+  } finally { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
+  const p = round(t);
+  const mirror = verifiedMirror(p.repo);
+  try {
+    assert.deepEqual(repoLayout(mirror.path), { root: mirror.path, bare: true });
+    assert.equal(gitSource(mirror.path, p.D).read('src/a.js'), 'export const result = 1;\n');
+  } finally { mirror.cleanup(); }
+  assert.equal(showPath('a\\b`c'), 'a\\u{5c}b\\u{60}c');
+  assert.equal(unsafePath('blank\u2800name'), true);
 });

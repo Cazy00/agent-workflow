@@ -1,52 +1,80 @@
 // Git as the gates read it. The clone the validator reads may be one an agent can write, so nothing in it may change
 // what Git reports or make Git run a program:
-// - objects as committed: replace refs, grafts and the commit-graph cache are ignored, and a missing object is never
-//   fetched lazily from a promisor remote;
+// - objects as committed: replace refs, grafts and the commit-graph cache are ignored, and nothing is ever fetched
+//   (no lazy fetch, no transport protocol);
 // - paths from the work tree's real root: the root is where the `.git` entry is, whatever `core.worktree` says, and
-//   `diff.relative` is off;
-// - no program from config: signature display (which runs `gpg.program`) and fsmonitor are off;
+//   `diff.relative`, `log.showRoot` and `log.follow` are fixed;
+// - no program from config: hooks, signature display (which runs `gpg.program`) and fsmonitor are off;
 // - a minimal environment: Git sees no owner signing variables or other secrets of the process that runs the gate.
-// Callers also use plumbing (`diff-tree`, `ls-tree --full-tree`) where porcelain would read UI config.
+// Callers also use plumbing (`diff-tree`, `ls-tree --full-tree`) where porcelain would read UI config. A clone the
+// agent can write can still hold rewritten object files, which Git does not re-hash when reading locally; the
+// commands that decide what the owner signs and what the trusted branch becomes (`brief --repo`, `closeout`) read a
+// verified mirror instead (verifiedMirror), which Git builds by re-hashing every object it transfers.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 // The operator's own choice of global and system config stays (it is outside any clone); the repository's config is
-// read but overridden where it could change an answer.
-const KEEP = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TMP', 'TEMP', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'];
-const OVERRIDES = [['core.commitGraph', 'false'], ['diff.relative', 'false'], ['log.showSignature', 'false'], ['core.fsmonitor', 'false'], ['core.untrackedCache', 'false']];
+// read but overridden where it could change an answer or run a program.
+const KEEP = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TMP', 'TEMP', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'];
+const OVERRIDES = [['core.commitGraph', 'false'], ['diff.relative', 'false'], ['log.showSignature', 'false'], ['log.showRoot', 'true'], ['log.follow', 'false'], ['core.fsmonitor', 'false'], ['core.untrackedCache', 'false'], ['core.hooksPath', '/dev/null'], ['advice.graftFileDeprecated', 'false']];
 
-// The directory holding the `.git` entry at or above dir.
-export function workTreeRoot(dir) {
-  let d = path.resolve(dir);
-  for (;;) {
-    if (fs.existsSync(path.join(d, '.git'))) return d;
-    const up = path.dirname(d);
-    if (up === d) return path.resolve(dir);
-    d = up;
+const isBare = d => !fs.existsSync(path.join(d, '.git')) && ['HEAD', 'objects', 'refs'].every(f => fs.existsSync(path.join(d, f)));
+// The repository's layout: a bare repository is used as it is; otherwise the directory holding the `.git` entry at or
+// above dir is the work tree's root.
+export function repoLayout(dir) {
+  const start = path.resolve(dir);
+  if (isBare(start)) return { root: start, bare: true };
+  for (let d = start; ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return { root: d, bare: false };
+    if (path.dirname(d) === d) return { root: start, bare: false };
   }
 }
-export function safeEnv(root) {
+export const workTreeRoot = dir => repoLayout(dir).root;
+export function safeEnv(root, { bare = false, protocols = 'none' } = {}) {
   const env = {};
   for (const k of KEEP) if (process.env[k] !== undefined) env[k] = process.env[k];
-  Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0', GIT_WORK_TREE: root, GIT_CONFIG_COUNT: String(OVERRIDES.length) });
-  OVERRIDES.forEach(([key, value], i) => { env[`GIT_CONFIG_KEY_${i}`] = key; env[`GIT_CONFIG_VALUE_${i}`] = value; });
+  Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: protocols, GIT_TERMINAL_PROMPT: '0' });
+  if (!bare) env.GIT_WORK_TREE = root;
+  // The operator's own command-line config comes first; these overrides come after it, so they win.
+  const inherited = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+  const pairs = [];
+  for (let i = 0; i < inherited; i++) if (process.env[`GIT_CONFIG_KEY_${i}`] !== undefined) pairs.push([process.env[`GIT_CONFIG_KEY_${i}`], process.env[`GIT_CONFIG_VALUE_${i}`] ?? '']);
+  pairs.push(...OVERRIDES);
+  env.GIT_CONFIG_COUNT = String(pairs.length);
+  pairs.forEach(([key, value], i) => { env[`GIT_CONFIG_KEY_${i}`] = key; env[`GIT_CONFIG_VALUE_${i}`] = value; });
   return env;
 }
-// run(repo)(...args) -> spawnSync result, from the real root with the safe environment.
+// run(...args) -> spawnSync result, from the real root with the safe environment.
 export function gitRunner(repo, { timeout = 30000, maxBuffer = 64 * 1024 * 1024, literal = true } = {}) {
-  const root = workTreeRoot(repo);
-  const env = safeEnv(root);
+  const { root, bare } = repoLayout(repo);
+  const env = safeEnv(root, { bare });
   return (...args) => spawnSync('git', [...(literal ? ['--literal-pathspecs'] : []), '-C', root, ...args], { encoding: 'utf8', timeout, maxBuffer, env });
 }
 
-// One rule, shared by derivation (never derived) and the brief (shown escaped), for path names that can pass for
-// another path: a backslash, control, format or default-ignorable characters, and any whitespace other than a single
-// space between two other characters.
-export function unsafePath(p) {
-  return /\\/.test(p) || /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(p) || /\p{White_Space}/u.test(String(p).replace(/(?<=\S) (?=\S)/g, ''));
+// A bare mirror of the repository's refs in a new temporary directory, built through Git's transport so every object
+// is re-hashed and checked for connectivity; the mirror carries none of the clone's config, hooks or caches. Throws if
+// the clone fails, as it does for a rewritten object. `cleanup()` removes it.
+export function verifiedMirror(repo, { timeout = 600000 } = {}) {
+  const { root } = repoLayout(repo);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-verified-'));
+  const target = path.join(dir, 'mirror.git');
+  const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+  const r = spawnSync('git', ['clone', '--mirror', '--no-local', '--quiet', '--', root, target], { encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, env: safeEnv(dir, { bare: true, protocols: 'file' }) });
+  if (r.status !== 0) { cleanup(); throw new Error(`the repository failed verification while being mirrored: ${(r.stderr || r.error?.message || 'git clone failed').trim().split('\n').slice(-2).join(' ')}`); }
+  return { path: target, cleanup };
 }
-// A path as printable ASCII: anything else, and a space that is not a single space between two characters, is escaped.
+
+// One rule, shared by derivation (never derived) and the brief (flagged and shown escaped), for path names that can
+// pass for another path: a backslash, control, format or default-ignorable characters, blank-looking symbols, and any
+// whitespace other than a single space between two other characters.
+export function unsafePath(p) {
+  const s = String(p);
+  return /[\\⠀ㅤﾠ]/.test(s) || /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(s) || /\p{White_Space}/u.test(s.replace(/(?<=\S) (?=\S)/g, ''));
+}
+// A path as printable ASCII: a backslash, a backtick and anything outside printable ASCII are escaped, and so is any
+// space that is not a single space between two characters, so two different paths never look alike.
 export function showPath(p) {
-  return String(p).replace(/[^\x21-\x7e ]/gu, c => `\\u{${c.codePointAt(0).toString(16)}}`).replace(/^ | $| (?= )/g, '\\u{20}');
+  return String(p).replace(/[^\x21-\x5b\x5d-\x5f\x61-\x7e ]/gu, c => `\\u{${c.codePointAt(0).toString(16)}}`).replace(/^ | $| (?= )/g, '\\u{20}');
 }

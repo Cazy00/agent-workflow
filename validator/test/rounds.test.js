@@ -159,7 +159,7 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.ok(r.json.steps.every(s => s.ok));
   assert.ok(r.json.steps.some(s => /wf ci for T-0001/.test(s.name)));
   assert.ok(r.json.steps.some(s => /approved baseline \(derived\)/.test(s.name)));
-  assert.equal(r.json.fast_forward, `git -c core.hooksPath=/dev/null -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
+  assert.equal(r.json.fast_forward, `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
@@ -665,4 +665,53 @@ test('the safe environment blocks transports, keeps the operator\'s own config a
   } finally { mirror.cleanup(); }
   assert.equal(showPath('a\\b`c'), 'a\\u{5c}b\\u{60}c');
   assert.equal(unsafePath('blank\u2800name'), true);
+});
+
+test('operator settings that are theirs keep working: safe.bareRepository=explicit and a global git-lfs filter', t => {
+  const p = round(t);
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const global = path.join(p.temp, 'gitconfig');
+  fs.writeFileSync(global, '[safe]\n\tbareRepository = explicit\n[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tprocess = git-lfs filter-process\n');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: global };
+  const args = ['closeout', '--repo', p.repo, '--baseline', p.B, '--candidate', p.D, '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository, '--json'];
+  const closeout = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env });
+  assert.equal(closeout.status, 0, closeout.stdout + closeout.stderr);
+  const paths = spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', p.B, '--json'], { encoding: 'utf8', env });
+  assert.equal(paths.status, 0, paths.stdout + paths.stderr);
+});
+
+test('with the clone\'s own smudge filter the printed fast-forward moves the ref without a checkout', t => {
+  const p = round(t);
+  p.git('checkout', '-q', 'main');
+  p.git('config', 'filter.x.smudge', 'cat');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', p.D]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.json.fast_forward, /update-ref 'refs\/heads\/main'/);
+  assert.ok(r.json.notes.some(n => /without a checkout/.test(n)));
+});
+
+test('a round end on no branch is named as such, and a dirty submodule runs none of its filters', t => {
+  const p = round(t);
+  p.git('checkout', '-q', '--detach', p.D);
+  p.write('docs/notes.md', 'loose\n');
+  const loose = p.commit('a commit on no branch');
+  p.git('checkout', '-q', 'T-0001-work');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', loose]);
+  assert.equal(r.status, 2); assert.match(r.stderr, /on a branch/);
+  // A submodule whose own config names a clean filter, made dirty.
+  const sub = path.join(p.temp, 'sub');
+  fs.mkdirSync(sub);
+  const g = (cwd, ...args) => { const x = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }); assert.equal(x.status, 0, x.stderr); return x.stdout.trim(); };
+  g(sub, 'init', '-q', '-b', 'main'); fs.writeFileSync(path.join(sub, 'f.txt'), 'x\n'); g(sub, 'add', '.'); g(sub, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 's');
+  g(p.repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub');
+  p.git('commit', '-qm', 'add submodule');
+  const withSub = p.git('rev-parse', 'HEAD');
+  const marker = path.join(p.temp, 'submodule-filter-ran');
+  g(path.join(p.repo, 'vendor/sub'), 'config', 'filter.y.clean', `touch '${marker}'; cat`);
+  fs.writeFileSync(path.join(p.repo, '.git', 'modules', 'vendor', 'sub', 'info', 'attributes'), '* filter=y\n');
+  fs.writeFileSync(path.join(p.repo, 'vendor/sub/f.txt'), 'y\n'); // same size: Git must hash it, through the filter
+  spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', withSub, '--json'], { encoding: 'utf8' });
+  assert.equal(fs.existsSync(marker), false, 'the submodule filter must not run');
 });

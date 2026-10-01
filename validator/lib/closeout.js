@@ -16,6 +16,7 @@ import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths } from './paths.js';
 import { evaluateCi } from './ci.js';
 import { ancestorIn, gitIn, quote, trustedBranchState } from './derived.js';
+import { cloneFilters } from './git.js';
 import { payloadProblems } from './payloads.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
@@ -120,10 +121,17 @@ function closeout({ repo, origin = repo, baseline, candidate, trust }) {
   const provisional = trust.provisional?.().length > 0;
   const ok = steps.every(s => s.ok);
   const notes = provisional ? ['a dry run on unsigned payloads: nothing may move until the owner signs and closeout passes on the receipts'] : [];
-  // The clone's own branch moves, with its hooks off: the command runs where the agent's config lives.
+  // The clone's own branch moves, with its hooks and fsmonitor off: the command runs where the agent's config lives. A
+  // checkout would also run the clone's own smudge filters, so with any of those the ref moves alone and the work tree
+  // is left for the operator to refresh.
   const current = gitIn(origin)('branch', '--show-current').out.trim();
+  const filters = cloneFilters(origin);
+  const linked = gitIn(origin)('worktree', 'list', '--porcelain').out.split('\n\n').find(w => w.includes(`branch refs/heads/${branch}`) && !w.startsWith(`worktree ${origin}\n`));
+  if (linked && current !== branch) notes.push(`${branch} is checked out in another worktree (${linked.split('\n')[0].slice(9)}): run the fast-forward there as merge --ff-only, or its index will show the round reversed`);
+  if (ok && !provisional && current === branch && filters.length) notes.push(`the clone configures its own filters (${filters.join(', ')}), so the fast-forward moves the ref without a checkout; refresh the work tree yourself after checking them`);
+  const quiet = `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C ${quote(origin)}`;
   const fastForward = !ok || provisional ? null
-    : current === branch ? `git -c core.hooksPath=/dev/null -C ${quote(origin)} merge --ff-only ${candidate.name}`
-    : `git -c core.hooksPath=/dev/null -C ${quote(origin)} update-ref ${quote(`refs/heads/${branch}`)} ${candidate.name} ${baseline.name}`;
+    : current === branch && !filters.length ? `${quiet} merge --ff-only ${candidate.name}`
+    : `${quiet} update-ref ${quote(`refs/heads/${branch}`)} ${candidate.name} ${baseline.name}`;
   return { ok, baseline: baseline.name, candidate: candidate.name, branch, steps, notes, fast_forward: fastForward, limitation: 'Read-only. It re-runs the recorded gates on the signed receipts and prints the fast-forward; it moves no branch and publishes nothing.' };
 }

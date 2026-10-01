@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
-import { gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
+import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -108,9 +108,9 @@ async function main() {
           const categories = new Set(configs.map(c => classifyPaths(c, [f])[0].category));
           const record = f.startsWith(`${rd}/`) && /^(tasks|feedback\/inbox)\/[^/]+\.md$/.test(f.slice(rd.length + 1)) && [...categories].every(c => c === 'planning');
           if (record) {
-            const id = f.match(/(T-\d{4})\.md$/)?.[1];
+            const id = f.slice(rd.length + 1).match(/^tasks\/(T-\d{4})\.md$/)?.[1];
             const was = before.get(id)?.data?.status ?? 'absent', is = now.get(id)?.data?.status ?? 'removed';
-            changes.records.push(id ? (was === is ? `${id} (${is}) edited` : `${id} ${was} → ${is}`) : `${f} changed`);
+            changes.records.push(id ? (was === is ? `${id} (${is}) edited` : `${id} ${was} → ${is}`) : { path: f });
             continue;
           }
           for (const category of categories) {
@@ -210,9 +210,9 @@ async function main() {
       return git(repo, 'diff-tree', '-r', '--no-renames', '--name-only', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
     }
     // A working-tree comparison would run the clone's clean/process filters: refuse them, as review-packet does.
-    const filters = gitRunner(repo, { literal: false })('config', '-z', '--get-regexp', '^filter\\..*\\.(clean|process)$');
-    if (filters.status === 0 && filters.stdout) throw new WfError('the clone configures clean/process filters; compare a committed candidate instead');
-    return [...new Set([...git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, '--').split('\0'), ...git(repo, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')].filter(Boolean))];
+    const filters = cloneFilters(repo);
+    if (filters.length) throw new WfError(`the clone configures its own filters (${filters.join(', ')}); compare a committed candidate instead`);
+    return [...new Set([...git(repo, 'diff', '--no-renames', '--name-only', '-z', '--ignore-submodules=dirty', baseline.name, '--').split('\0'), ...git(repo, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')].filter(Boolean))];
   };
   const taskId = () => {
     if (o.task) { if (!/^T-\d{4}$/.test(o.task)) throw new WfError('invalid task id'); return o.task; }
@@ -230,7 +230,8 @@ async function main() {
     const mirror = verifiedMirror(repo);
     try {
       const verified = withDerivedBaselines(baseTrust, mirror.path);
-      result = evaluateCloseout({ repo: mirror.path, origin: repo, baseline: gitSource(mirror.path, baseline.name), candidate: gitSource(mirror.path, candidate.name), trust: verified });
+      const inMirror = rev => { try { return gitSource(mirror.path, rev); } catch { throw new WfError(`${rev.slice(0, 12)} is reachable from no branch or tag, so the verified mirror does not hold it: put the round's end on a branch`); } };
+      result = evaluateCloseout({ repo: mirror.path, origin: repo, baseline: inMirror(baseline.name), candidate: inMirror(candidate.name), trust: verified });
     } finally { mirror.cleanup(); }
   }
   else if (cmd === 'records') result = validateRecords(candidate, rd);

@@ -99,7 +99,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(Array.isArray(p.scenarios) ? p.scenarios : []).map(x => code(x)).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);
   if (changes?.unknown) judge.push(`- **Paths changed in the round** could not be listed: ${code(changes.unknown)}`);
-  for (const c of changes?.records ?? []) judge.push(`- **Record change with no receipt of its own:** ${code(c)}`);
+  for (const c of changes?.records ?? []) judge.push(`- **Record change with no receipt of its own:** ${typeof c === 'string' ? code(c) : whole(c.path)}`);
   if (changes?.uncovered?.length) judge.push(`- **Changed with no payload covering it** (a derived baseline refuses these; cover each or leave it out): ${changes.uncovered.map(([f, why]) => `${whole(f)} (${why})`).join(', ')}`);
   lines.push('## Needs your judgement', '', ...(judge.length ? judge : ['Nothing beyond the evidence counts above.']), '');
   if (problems.length) lines.push('## Problems: do not sign until fixed', '', ...problems.map(p => `- ${code(p, 400)}`), '');

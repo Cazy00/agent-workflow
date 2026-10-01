@@ -49,7 +49,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const records = loadAll(candidate, rd);
   const task = id => records.tasks.get(id)?.data ?? {};
 
-  if (status.record_errors.length) add({ kind: 'records', item: rd, do: 'Fix the record errors', why: status.record_errors.slice(0, 5).join('; ') + (status.record_errors.length > 5 ? `; and ${status.record_errors.length - 5} more` : ''), read: [PROCEDURE.records], run: ['wf records'] });
+  if (status.record_errors.length) add({ kind: 'records', item: rd, do: 'Fix the record errors', why: status.record_errors.slice(0, 5).join('; ') + (status.record_errors.length > 5 ? `; and ${status.record_errors.length - 5} more` : ''), read: [PROCEDURE.records], run: [`wf records${chosen}`] });
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'setup')) add({ kind: 'setup', item: w.item, do: 'Do the next unchecked agent step in the setup record, one per session', why: w.detail, read: [w.item, PROCEDURE.setup] });
 
   // Tasks Done in the candidate but not on the baseline: their work is finished and waits for the owner's round (manual

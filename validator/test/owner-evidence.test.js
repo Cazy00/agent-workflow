@@ -172,9 +172,10 @@ const NODE_CHECK = { name: 'unit', run: 'node --test --test-reporter="$WF_NODE_R
 function attestSetup(t, attest = { setup: ['echo preparing'], checks: [NODE_CHECK] }) {
   const p = project(t, { attest });
   const secret = path.join(p.temp, 'owner-secret.pem'); fs.writeFileSync(secret, 'PRIVATE KEY MATERIAL\n');
-  // A stand-in sandbox: it refuses any command that names the protected file, as a real one refuses to read it.
+  // A stand-in sandbox for the probe's flow: it answers a read of the protected file as cat does under sandbox-exec.
+  // It confines nothing else, so tests that need real confinement run on a real sandbox (procedures/approval-evidence.md).
   const sandbox = path.join(p.temp, 'sandbox.sh');
-  fs.writeFileSync(sandbox, `#!/bin/sh\nfor a in "$@"; do [ "$a" = '${secret}' ] && exit 1; done\nexec "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(sandbox, `#!/bin/sh\nfor a in "$@"; do [ "$a" = '${secret}' ] && { echo "cat: $a: Operation not permitted" >&2; exit 1; }; done\nexec "$@"\n`, { mode: 0o755 });
   const leaky = path.join(p.temp, 'leaky.sh'); fs.writeFileSync(leaky, '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
   const attestRun = (extra, { candidate = p.C, env = {} } = {}) => {
     const out = path.join(p.temp, `attest-${Math.random().toString(16).slice(2)}.json`);
@@ -477,11 +478,36 @@ test('wf next keeps a selected candidate in the commands it prints', t => {
   assert.equal(printed.status, 0, printed.stdout + printed.stderr);
 });
 
-test('a governing path whose name classification normalised is refused, with or without acceptance tests configured', t => {
+test('a governing path whose name classification normalised is refused in a project without acceptance tests configured', t => {
   const p = project(t, { acceptanceTests: null });
   const clean = 'docs/specs/feature/extra.md', literal = 'docs/specs/feature\\extra.md';
   p.write(literal, 'new protected content\n');
   const E = p.commit('a governing file with a backslash in its name');
   const r = p.run(ci(p, E), { claims: [{ purpose: 'baseline', revision: p.B }, ...p.evidence(E), { purpose: 'governing-change', revision: E, paths: [clean] }] });
   assert.equal(r.status, 1, r.stdout); assert.match(r.json.findings.join('\n'), /could pass for another path/);
+});
+
+// --- Regressions from the third review round (Codex, GPT-6) ---
+
+test('B1: a launcher error that exits normally is not a refusal: cat itself must report the denied file', t => {
+  const p = attestSetup(t);
+  const faulty = path.join(p.temp, 'faulty.sh');
+  fs.writeFileSync(faulty, `#!/bin/sh\ncase "$3" in '${p.secret}') echo 'launcher: helper not found' >&2; exit 127;; esac\nexec "$@"\n`, { mode: 0o755 });
+  const r = p.attestRun(['--sandbox', faulty, '--protect', p.secret]);
+  assert.equal(r.status, 2); assert.match(r.stderr, /failed without cat reporting it \(exit 127\)/); assert.equal(r.payloads, null);
+  const quiet = path.join(p.temp, 'quiet.sh');
+  fs.writeFileSync(quiet, `#!/bin/sh\ncase "$3" in '${p.secret}') exit 1;; esac\nexec "$@"\n`, { mode: 0o755 });
+  assert.match(p.attestRun(['--sandbox', quiet, '--protect', p.secret]).stderr, /failed without cat reporting it \(exit 1\)/);
+});
+
+test('S1: the records command keeps a selected candidate', t => {
+  const p = project(t);
+  p.edit(taskPath, x => x.replace('status: Done', 'status: NotAStatus'));
+  const C2 = p.commit('an invalid record');
+  p.git('checkout', '-q', p.B);
+  const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: gitSource(p.repo, C2) });
+  assert.equal(next.next.kind, 'records');
+  assert.deepEqual(next.next.run, [`wf records --candidate ${C2}`]);
+  const r = spawnSync(process.execPath, [cli, 'records', '--candidate', C2, '--repo', p.repo, '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout);
 });

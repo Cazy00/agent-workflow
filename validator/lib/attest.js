@@ -148,11 +148,14 @@ export function probeSandbox({ sandbox, protect, env }) {
     const read = f => spawnSync(sandbox, ['/bin/cat', '--', f], { env, encoding: 'utf8', timeout: 30000 });
     const c = read(control);
     if (c.error || c.status !== 0 || c.stdout !== token) return [`the launcher did not run /bin/cat on an ordinary file (${c.error?.message ?? `exit ${c.status ?? c.signal}`}), so a refused read would prove nothing`];
-    // A refusal is cat ending normally with an error and no output; a signal, a timeout or a launcher error is not.
+    // A refusal is cat itself failing on that file: exit status 1, no output, and cat's own error naming the file
+    // ("cat: FILE: Operation not permitted" under sandbox-exec, "No such file or directory" when bwrap hides it). A
+    // signal, a timeout, a launcher error or any other status shows only that cat did not get to try.
     for (const [f] of files) {
       const r = read(f);
       if (r.status === 0 || r.stdout) failures.push(`${f} is readable inside the sandbox`);
       else if (r.error || r.signal || r.status === null) failures.push(`the read of ${f} ended abnormally (${r.error?.message ?? r.signal ?? 'no exit status'}), which proves nothing`);
+      else if (r.status !== 1 || !String(r.stderr ?? '').split('\n').some(line => line.startsWith('cat:') && line.includes(f))) failures.push(`the read of ${f} failed without cat reporting it (exit ${r.status}), which proves nothing`);
     }
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   return failures;

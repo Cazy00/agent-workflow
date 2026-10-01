@@ -304,7 +304,7 @@ export async function inspectProject({ project, workflowRepo, rev = 'HEAD', prod
 
   for (const rel of ADOPTION_PATHS) {
     const kind = existence(project, rel);
-    if (kind) report.collisions.push({ path: rel, exists: kind, effect: rel === 'docs/workflow/config.json' ? 'adoption refused' : kind === 'symbolic link' ? 'left as it is; a symbolic link is not followed' : 'left as it is; add the workflow pointer yourself if it is an adapter' });
+    if (kind) report.collisions.push({ path: rel, exists: kind, effect: rel === 'docs/workflow/config.json' ? 'adoption refused' : kind === 'symbolic link' ? 'left as it is; a symbolic link is not followed' : rel === 'CLAUDE.md' ? 'left as it is; add the workflow pointer and the section in templates/claude/compact-instructions.md yourself' : 'left as it is; add the workflow pointer yourself if it is an adapter' });
   }
   const gitignore = safeRead(project, '.gitignore');
   if (gitignore.text !== undefined && !gitignore.text.split(/\r?\n/).some(l => ['.cache/', '.cache'].includes(l.trim()))) report.collisions.push({ path: '.gitignore', exists: 'file', effect: '.cache/ is appended' });

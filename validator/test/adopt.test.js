@@ -50,11 +50,11 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.match(setup, /0 required approvals and approval of the most recent push off, `CODEOWNERS` `\* @OWNER` then `\/docs\/workflow\/tasks\/` and `\/docs\/workflow\/feedback\/` unowned, and \*Allow auto-merge\* on/, 'a single owner gets the records carve-out');
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /turn it on as you open the pull request/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /session \| status \| brief \| closeout`/);
-  // MAINT-0006: auto-compaction follows the project's Compact Instructions, and the agent rechecks the records after it.
+  // MAINT-0006: the scaffold's CLAUDE.md carries the section in templates/claude/compact-instructions.md.
   const claude = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
   assert.match(claude, /^## Compact Instructions$/m);
   assert.match(claude, /Mark as unverified any claim of work done, tested, reviewed or approved/);
-  assert.match(claude, /run `scripts\/wf next` and check `git status` and `git log`/);
+  assert.match(claude, /run `scripts\/wf next` \(with the trust options when you have them\) and check `git status` and `git log`/);
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-status.yml']).status === 0) {
     const workflow = fs.readFileSync(path.join(dir, '.github/workflows/wf-status.yml'), 'utf8');
     assert.match(workflow, /branches: \[main\]/); assert.match(workflow, /refs\/heads\/main'/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
@@ -73,9 +73,12 @@ test('wf-adopt never overwrites an existing file and refuses a second adoption',
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
   const dir = project(t);
   fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'existing guide\n');
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'existing adapter\n');
   fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/');
   const first = adopt(dir);
   assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), 'existing adapter\n');
+  assert.match(first.stdout, /copy \.cache\/agent-workflow\/templates\/claude\/compact-instructions\.md into CLAUDE\.md/);
   assert.equal(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), 'existing guide\n');
   assert.match(first.stdout, /Left as they were[\s\S]*AGENTS\.md/);
   assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), 'node_modules/\n.cache/\n');

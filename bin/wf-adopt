@@ -98,7 +98,7 @@ const show = rel => {
 };
 // Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
 const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
-const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml') };
+const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml'), compact: optional('templates/claude/compact-instructions.md') };
 if (shared && !/^owners:/m.test(pinned.profile)) fail(`the workflow revision ${revision} has no shared-project support (its profile template lacks owners); pin a later release or omit --owner`);
 
 const created = [], appended = [], skipped = [];
@@ -259,11 +259,7 @@ ${shared ? `\nSeveral people share the owner role (\`owners\` in the profile): w
 write('CLAUDE.md', `# Shared repository instructions
 
 Read \`AGENTS.md\`, then \`.cache/agent-workflow/.agents/skills/workflow/SKILL.md\` and the relevant procedure it identifies. They are the shared workflow for this repository. Tool-specific defaults do not grant additional authority. Check the current baseline and task records before continuing.
-
-## Compact Instructions
-
-When the conversation is compacted, keep: the milestone and task IDs and the task record's path; the branch, commits and pull request; decisions with their reasons, and owner instructions given only in conversation, quoted exactly; anything unfinished, failing, skipped or promised. Drop file contents and tool output; they can be read again. Mark as unverified any claim of work done, tested, reviewed or approved that no commit, record or command output shows. After a compaction, run \`scripts/wf next\` and check \`git status\` and \`git log\` before continuing, and trust them over the summary.
-`);
+${pinned.compact !== null ? `\n${pinned.compact}` : ''}`);
 
 // Claude Code's independent-reviewer subagent: the separate review context of procedures/review.md.
 if (pinned.reviewer !== null) write('.claude/agents/independent-reviewer.md', pinned.reviewer);
@@ -293,7 +289,7 @@ else {
   if (created.length) console.log(`\nCreated:\n  ${created.join('\n  ')}`);
   if (appended.length) console.log(`\nAppended:\n  ${appended.join('\n  ')}`);
   if (skipped.length) console.log(`\nLeft as they were (already present):\n  ${skipped.join('\n  ')}`);
-  if (skipped.some(s => s === 'AGENTS.md' || s === 'CLAUDE.md')) console.log('\nAn adapter already existed: add a pointer to .cache/agent-workflow/.agents/skills/workflow/SKILL.md and docs/workflow/ to it yourself.');
+  if (skipped.some(s => s === 'AGENTS.md' || s === 'CLAUDE.md')) console.log('\nAn adapter already existed: add a pointer to .cache/agent-workflow/.agents/skills/workflow/SKILL.md and docs/workflow/ to it yourself, and copy .cache/agent-workflow/templates/claude/compact-instructions.md into CLAUDE.md.');
   if (version === 'UNRELEASED') console.log('\nNote: the pin is not a released tag; recorded as UNRELEASED.');
   console.log('\nNext: read docs/workflow/setup.md. It holds the owner steps and the agent steps.');
   console.log(checklist);

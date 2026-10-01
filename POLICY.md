@@ -405,7 +405,7 @@ Within an authorised milestone:
 7. Resolve findings and preserve evidence.
 8. Update progress and continue with the next eligible task.
 
-Steps 1 to 3 are computed: `wf next` reads the records and names the next action, what to read for it and what to run. A session starts from that output in a fresh context and ends at a checkpoint, a signing round or a stop, so no session carries the milestone's history. The coordinator is a role that the records and `wf next` hold between sessions, not one long-running session; a session that carries every earlier step re-reads them all on each new step.
+Steps 1 to 3 are computed: `wf next` reads the records and names the next action, what to read for it and what to run. A session starts from that output in a fresh context and ends at a signing round or a stop. Within it, each task goes to a fresh helper, so the coordinator carries the results of its round's tasks, never their full working history, and no session carries the milestone beyond its round. The coordinator is a role that the records and `wf next` hold between sessions, not one long-running session; a session that carries every earlier step re-reads them all on each new step.
 
 Use separate worktrees for concurrent changes. Agree shared contracts before dependent work diverges.
 

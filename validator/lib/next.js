@@ -43,6 +43,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const base = baseline.kind === 'git' ? baseline.name : 'TRUSTED_TIP';
   const head = candidate.kind === 'git' ? candidate.name : 'HEAD';
   const trustOptions = manual ? ' --trust-key … --receipts … --repository …' : '';
+  const chosen = candidate.kind === 'git' ? ` --candidate ${head}` : ''; // a selected revision, kept in every command
   const actions = [];
   const add = a => actions.push({ read: [], run: [], ...a });
   const records = loadAll(candidate, rd);
@@ -72,10 +73,15 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const drafts = milestones.filter(m => m.status === 'Draft');
   const live = milestones.filter(m => !drafts.includes(m));
   const open = [...live.flatMap(m => m.tasks.map(t => ({ ...t, milestone: m.id }))), ...status.unassigned_tasks].filter(t => t.status !== 'Done' && t.status !== 'Blocked');
-  // Priority is the authorised plan's order: milestones by ID, then the order of each milestone's `tasks:`, then tasks
+  // Priority is the authorised plan's order, read from the baseline: milestones by ID, then the order of each
+  // milestone's `tasks:` as approved (the candidate's own order for a milestone not yet on the baseline), then tasks
   // discovered since, by ID.
+  const approvedPlan = loadAll(baseline, rd).milestones;
   const rank = new Map();
-  [...live].sort(byId).forEach((m, mi) => m.tasks.forEach(t => { const pi = m.plan.planned.indexOf(t.id); rank.set(t.id, [mi, pi === -1 ? Infinity : pi]); }));
+  [...live].sort(byId).forEach((m, mi) => {
+    const planned = approvedPlan.has(m.id) ? list(approvedPlan.get(m.id)?.data?.tasks) : m.plan.planned;
+    m.tasks.forEach(t => { const pi = planned.indexOf(t.id); rank.set(t.id, [mi, pi === -1 ? Infinity : pi]); });
+  });
   const byPriority = (a, b) => { const [am, ap] = rank.get(a.id) ?? [Infinity, Infinity]; const [bm, bp] = rank.get(b.id) ?? [Infinity, Infinity]; return am - bm || ap - bp || byId(a, b); };
   // With pull requests supplied, a task with an open pull request or a claim branch is someone's work already.
   const claimed = t => (t.pull_requests ?? []).length > 0 || t.claim_branch === true;
@@ -83,9 +89,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const held = [];
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [`wf readiness --baseline ${base} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : ''}  (when its candidate is committed)`] });
+    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : ''}  (when its candidate is committed)`] });
   };
-  const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base} --task ${t.id}${trustOptions}`] });
+  const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.
   for (const t of open.filter(t => t.status === 'Active').sort(byPriority)) {
     if (t.readiness === OUTCOMES.ready) taskAction(t, 'continue', 'Continue', 'Active, and its readiness passes');
@@ -95,7 +101,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   }
   for (const t of open.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.ready).sort(byPriority)) taskAction(t, 'start', 'Claim and start', 'Ready, and its readiness passes');
   for (const t of open.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.subset).sort(byPriority)) taskAction(t, 'start', 'Claim and start the ready subset of', `ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
-  for (const t of open.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base} --task ${t.id}${trustOptions}`] });
+  for (const t of open.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   for (const t of open.filter(t => ['Ready', 'Draft'].includes(t.status) && t.readiness === OUTCOMES.needs).sort(byPriority)) {
     if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);

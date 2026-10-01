@@ -108,18 +108,19 @@ function checkEnv(names, reportDir) {
 // shows that the launcher runs `/bin/cat` on an ordinary file, then that the same command fails on each protected file:
 // a read that fails for another reason (a missing tool, a launcher that runs nothing) proves nothing. Without one,
 // candidate code runs as this process, so this process itself must be refused each protected file (an account that
-// cannot read the key, as POLICY § 7 recommends for strong isolation).
+// cannot read the key and does not own it, as POLICY § 7 recommends for strong isolation).
 const PROBE_LIMIT = 500;
 export function probeSandbox({ sandbox, protect, env }) {
   const failures = [];
   const files = [];
+  const statOf = f => { try { return fs.statSync(f); } catch { return null; } };
   for (const p of protect) {
     let stat;
     try { stat = fs.statSync(p); } catch (e) { failures.push(`${p} cannot be found (${e.code ?? e.message}), so the probe would prove nothing`); continue; }
-    if (stat.isFile()) { files.push(p); continue; }
+    if (stat.isFile()) { files.push([p, stat]); continue; }
     if (!stat.isDirectory()) { failures.push(`${p} is neither a file nor a directory`); continue; }
     let found;
-    try { found = fs.readdirSync(p, { recursive: true }).map(f => path.join(p, String(f))).filter(f => { try { return fs.statSync(f).isFile(); } catch { return false; } }); }
+    try { found = fs.readdirSync(p, { recursive: true }).map(f => path.join(p, String(f))).map(f => [f, statOf(f)]).filter(([, st]) => st?.isFile()); }
     catch (e) { failures.push(`${p} cannot be listed by this process (${e.code ?? e.message}); name the files under it with --protect instead`); continue; }
     if (!found.length) failures.push(`${p} holds no files to probe`);
     else if (found.length > PROBE_LIMIT) failures.push(`${p} holds more than ${PROBE_LIMIT} files; name the key files themselves`);
@@ -127,7 +128,13 @@ export function probeSandbox({ sandbox, protect, env }) {
   }
   if (failures.length) return failures;
   if (!sandbox) {
-    for (const f of files) {
+    // Candidate code runs as this account, which can change the mode of any file it owns: the protected files must
+    // belong to another account and refuse this one.
+    const uid = process.getuid?.();
+    if (uid === undefined) return ['--unsandboxed needs a system with account IDs'];
+    if (uid === 0) return ['this account is root, which can read every file; run --unsandboxed as an ordinary account'];
+    for (const [f, stat] of files) {
+      if (stat.uid === uid) { failures.push(`${f} belongs to this account, which could make it readable again; run --unsandboxed only in an account that does not own the protected files`); continue; }
       try { fs.closeSync(fs.openSync(f, 'r')); failures.push(`${f} is readable by this account, and without --sandbox candidate code runs as this account`); }
       catch (e) { if (!['EACCES', 'EPERM'].includes(e.code)) failures.push(`${f} could not be opened for a reason other than a refusal (${e.code ?? e.message})`); }
     }
@@ -140,10 +147,12 @@ export function probeSandbox({ sandbox, protect, env }) {
     fs.writeFileSync(control, token);
     const read = f => spawnSync(sandbox, ['/bin/cat', '--', f], { env, encoding: 'utf8', timeout: 30000 });
     const c = read(control);
-    if (c.error || c.status !== 0 || c.stdout !== token) return [`the launcher did not run /bin/cat on an ordinary file (${c.error?.message ?? `exit ${c.status}`}), so a refused read would prove nothing`];
-    for (const f of files) {
+    if (c.error || c.status !== 0 || c.stdout !== token) return [`the launcher did not run /bin/cat on an ordinary file (${c.error?.message ?? `exit ${c.status ?? c.signal}`}), so a refused read would prove nothing`];
+    // A refusal is cat ending normally with an error and no output; a signal, a timeout or a launcher error is not.
+    for (const [f] of files) {
       const r = read(f);
       if (r.status === 0 || r.stdout) failures.push(`${f} is readable inside the sandbox`);
+      else if (r.error || r.signal || r.status === null) failures.push(`the read of ${f} ended abnormally (${r.error?.message ?? r.signal ?? 'no exit status'}), which proves nothing`);
     }
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   return failures;

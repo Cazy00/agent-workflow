@@ -222,16 +222,30 @@ test('attest refuses a sandbox that does not hide the protected path', t => {
   assert.equal(r.status, 2); assert.match(r.stderr, /did not run \/bin\/cat on an ordinary file/);
 });
 
-test('without a sandbox, attest runs only in an account that cannot read the protected paths', { skip: process.getuid?.() === 0 && 'root can read every file' }, t => {
+test('without a sandbox, attest runs only in an account that neither owns nor can read the protected files', { skip: process.getuid?.() === 0 && 'root can read every file' }, t => {
   const p = attestSetup(t);
   assert.match(p.attestRun(['--unsandboxed']).stderr, /--protect/);
   const readable = p.attestRun(['--unsandboxed', '--protect', p.secret]);
-  assert.equal(readable.status, 2); assert.match(readable.stderr, /readable by this account/);
-  const elsewhere = path.join(p.temp, 'another-account-key.pem'); fs.writeFileSync(elsewhere, 'KEY\n'); fs.chmodSync(elsewhere, 0o000);
-  const ok = p.attestRun(['--unsandboxed', '--protect', elsewhere]);
+  assert.equal(readable.status, 2); assert.match(readable.stderr, /belongs to this account/);
+  // A file this account owns can be made readable again by candidate code, whatever its mode now.
+  const own = path.join(p.temp, 'own-key.pem'); fs.writeFileSync(own, 'KEY\n'); fs.chmodSync(own, 0o000);
+  const owned = p.attestRun(['--unsandboxed', '--protect', own]);
+  assert.equal(owned.status, 2); assert.match(owned.stderr, /belongs to this account, which could make it readable again/);
+  // Another account's file that refuses this one, as a key kept by a separate operating-system user would.
+  const other = ['/etc/sudoers', '/etc/shadow', '/etc/master.passwd'].find(f => { try { const st = fs.statSync(f); if (st.uid === process.getuid()) return false; fs.closeSync(fs.openSync(f, 'r')); return false; } catch (e) { return e.code === 'EACCES'; } });
+  if (!other) return t.diagnostic('no file of another account that refuses this one; the passing case was not exercised');
+  const ok = p.attestRun(['--unsandboxed', '--protect', other]);
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.payloads[0].environment, /unsandboxed, in an account refused 1 protected path/);
   assert.equal(ok.payloads[0].attested.sandbox, null); assert.equal(ok.payloads[0].attested.protected, 1);
+});
+
+test('a protected read that ends in a signal is not a refusal', t => {
+  const p = attestSetup(t);
+  const killer = path.join(p.temp, 'killer.sh');
+  fs.writeFileSync(killer, `#!/bin/sh\ncase "$3" in '${p.secret}') kill -9 $$;; esac\nexec "$@"\n`, { mode: 0o755 });
+  const r = p.attestRun(['--sandbox', killer, '--protect', p.secret]);
+  assert.equal(r.status, 2); assert.match(r.stderr, /ended abnormally/); assert.equal(r.payloads, null);
 });
 
 test('checks get a minimal environment: no signing or workflow variables reach candidate code', t => {
@@ -439,12 +453,35 @@ test('wf next reads pull-request claims: a duplicate claim comes first, and a cl
   assert.ok(![once.next, ...once.also].some(a => a.kind === 'start' && a.item === 'T-0001'), JSON.stringify(once.next));
 });
 
-test('wf next starts tasks in the order the milestone plan lists them, not by ID', t => {
+test('wf next starts tasks in the order the approved milestone plan lists them, not by ID or an unapproved reorder', t => {
   const p = project(t);
   p.git('checkout', '-q', 'main');
   p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002'));
   p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Authorised\ntasks: [T-0002, T-0001]'));
-  const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
+  const V = p.commit('authorised priority');
+  for (const f of [taskPath, 'docs/workflow/tasks/T-0002.md']) p.edit(f, x => x.replace(/^governing_baseline_revision:.*$/m, `governing_baseline_revision: ${V}`));
+  const B = p.commit('current source references');
+  const next = evaluateNext({ baseline: gitSource(p.repo, B), candidate: dirSource(p.repo) });
   assert.equal(next.next.item, 'T-0002');
   assert.equal(next.also.find(a => a.kind === 'start')?.item, 'T-0001');
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('[T-0002, T-0001]', '[T-0001, T-0002]'));
+  assert.equal(evaluateNext({ baseline: gitSource(p.repo, B), candidate: dirSource(p.repo) }).next.item, 'T-0002');
+});
+
+test('wf next keeps a selected candidate in the commands it prints', t => {
+  const p = project(t);
+  const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: gitSource(p.repo, p.C) });
+  assert.equal(next.next.kind, 'start');
+  assert.match(next.next.run[0], new RegExp(`^wf readiness --baseline ${p.B} --candidate ${p.C} --task T-0001 --trust-key`));
+  const printed = p.run(['readiness', '--baseline', p.B, '--candidate', p.C, '--task', 'T-0001'], { claims: [{ purpose: 'baseline', revision: p.B }] });
+  assert.equal(printed.status, 0, printed.stdout + printed.stderr);
+});
+
+test('a governing path whose name classification normalised is refused, with or without acceptance tests configured', t => {
+  const p = project(t, { acceptanceTests: null });
+  const clean = 'docs/specs/feature/extra.md', literal = 'docs/specs/feature\\extra.md';
+  p.write(literal, 'new protected content\n');
+  const E = p.commit('a governing file with a backslash in its name');
+  const r = p.run(ci(p, E), { claims: [{ purpose: 'baseline', revision: p.B }, ...p.evidence(E), { purpose: 'governing-change', revision: E, paths: [clean] }] });
+  assert.equal(r.status, 1, r.stdout); assert.match(r.json.findings.join('\n'), /could pass for another path/);
 });

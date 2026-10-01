@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { createTrust } from '../lib/trust.js';
 import { quote, withDerivedBaselines } from '../lib/derived.js';
 import { fakeExecutable } from './helpers.js';
+import { safeEnv, showPath, unsafePath } from '../lib/git.js';
 
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
@@ -477,7 +478,7 @@ test('Done records are removed after closeout, in a records-only round that need
   const gone = p.commit('remove T-0001 in the round that completes it');
   p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
   const early = p.run(['closeout', '--baseline', p.B, '--candidate', gone]);
-  assert.equal(early.status, 1); assert.ok(early.json.steps.some(s => !s.ok && /removed in the round/.test(s.name)));
+  assert.equal(early.status, 1); assert.ok(early.json.steps.some(s => !s.ok && /removed in a round that changes production/.test(s.name)));
   // After the round closes at D, removing the Done record is a records-only round of its own.
   p.git('reset', '-q', '--hard', p.D);
   p.git('update-ref', 'refs/heads/main', p.D);
@@ -513,4 +514,83 @@ test('a review whose implementer owns no task, or a release for another revision
   p.receipts([...base, release(p.C)]);
   const ok = p.run(['closeout', '--baseline', p.B, '--candidate', Rl]);
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+});
+
+test('hostile config in the clone cannot hide changes from derivation, closeout or the brief', t => {
+  const p = round(t);
+  p.write('src/a.js', 'export const result = "evil";\n');
+  const E = p.commit('T-0001: unsigned change');
+  p.git('config', 'core.worktree', '../..'); p.git('config', 'diff.relative', 'true');
+  const trust = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  assert.equal(trust.derivation(E).approved, false);
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  assert.equal(p.run(['closeout', '--baseline', p.B, '--candidate', E]).status, 1);
+  const f = p.file('hostile.json', p.evidence(p.C).map(p.payload));
+  const brief = spawnSync(process.execPath, [cli, 'brief', '--payloads', f, '--repo', p.repo, '--baseline', p.B, '--candidate', E], { encoding: 'utf8' });
+  assert.match(brief.stdout, /Changed with no payload covering it.*src\/a\.js/);
+});
+
+test('rendering the brief never runs a program the clone configures', t => {
+  const p = round(t);
+  const marker = path.join(p.temp, 'ran');
+  const gpg = path.join(p.temp, 'fake-gpg');
+  fs.writeFileSync(gpg, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+  p.git('config', 'log.showSignature', 'true'); p.git('config', 'gpg.program', gpg);
+  const raw = p.git('cat-file', 'commit', p.C).replace('\n\n', '\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\n');
+  const signedCommit = spawnSync('git', ['-C', p.repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: raw, encoding: 'utf8' }).stdout.trim();
+  const f = p.file('signed.json', [p.payload({ purpose: 'baseline', revision: signedCommit })]);
+  const r = spawnSync(process.execPath, [cli, 'brief', '--payloads', f, '--repo', p.repo], { encoding: 'utf8', env: { ...process.env, OWNER_SIGNING_PASSPHRASE: 'secret' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(fs.existsSync(marker), false, 'gpg.program must not run');
+  const env = safeEnv('/x');
+  assert.equal(env.OWNER_SIGNING_PASSPHRASE, undefined);
+  for (const key of ['core.commitGraph', 'log.showSignature', 'diff.relative']) assert.ok(Object.entries(env).some(([k, v]) => k.startsWith('GIT_CONFIG_KEY_') && v === key), key);
+});
+
+test('a round without production changes may drop a Draft task cut from the plan', t => {
+  const p = round(t);
+  p.git('checkout', '-q', 'main');
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Ready', 'status: Draft'));
+  const B2 = p.commit('plan T-0002');
+  fs.rmSync(path.join(p.repo, 'docs/workflow/tasks/T-0002.md'));
+  const cut = p.commit('cut T-0002 from the plan');
+  p.git('update-ref', 'refs/heads/main', B2);
+  p.receipts([{ purpose: 'baseline', revision: B2 }]);
+  const r = p.run(['closeout', '--baseline', B2, '--candidate', cut]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+test('a receipt for a commit missing from the clone does not block derivation', t => {
+  const p = round(t);
+  const absent = 'f'.repeat(40);
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'baseline', revision: absent }, ...p.evidence(absent)]).derivation(p.D);
+  assert.equal(d.approved, true, JSON.stringify(d));
+});
+
+test('paths that can pass for another are never derived and are shown exactly', () => {
+  for (const bad of ['docs/specs/feature.md ', 'docs/specs/feature md', 'a  b', ' a', 'x‮y', 'tag\u{e0041}', 'a\\b', 'x͏y']) assert.equal(unsafePath(bad), true, JSON.stringify(bad));
+  for (const good of ['src/a.js', 'docs/My Notes.md', 'résumé.md']) assert.equal(unsafePath(good), false, good);
+  assert.equal(showPath('docs/specs/feature.md '), 'docs/specs/feature.md\\u{20}');
+  assert.equal(showPath('a b'), 'a\\u{a0}b');
+});
+
+test('the brief covers the round to its end, and recording implemented leaves the gate at integrate', t => {
+  const p = round(t);
+  p.write('src/late.js', 'export const late = 1;\n');
+  const L = p.commit('T-0001: production after the receipted candidate');
+  const f = p.file('round.json', p.evidence(p.C).map(p.payload));
+  const r = spawnSync(process.execPath, [cli, 'brief', '--payloads', f, '--repo', p.repo, '--baseline', p.B, '--candidate', L], { encoding: 'utf8' });
+  assert.match(r.stdout, /T-0001 Ready → Done/);
+  assert.match(r.stdout, /Changed with no payload covering it.*src\/late\.js/);
+  // An Open decision required before accept does not block the Done commit's own ci, because implemented maps below integrate.
+  const q = round(t);
+  q.git('checkout', '-q', 'main');
+  q.write('docs/workflow/decisions/D-0002.md', fs.readFileSync(path.join(q.repo, 'docs/workflow/decisions/D-0001.md'), 'utf8').replaceAll('D-0001', 'D-0002').replace('status: Resolved', 'status: Open').replace(/required_before: \w+/, 'required_before: accept'));
+  const B2 = q.commit('owner: open D-0002 before acceptance');
+  q.git('checkout', '-q', 'T-0001-work'); q.git('merge', '-q', '--no-edit', 'main');
+  q.edit(taskPath, x => x.replace(/^start_revision:.*$/m, `start_revision: ${B2}`).replace(/^baseline_revision:.*$/m, `baseline_revision: ${B2}`).replace(/^governing_baseline_revision:.*$/m, `governing_baseline_revision: ${B2}`));
+  const D2 = q.commit('T-0001: record done against the new tip');
+  q.receipts([{ purpose: 'baseline', revision: B2 }, ...q.evidence(D2)]);
+  const ci = q.run(['ci', '--baseline', B2, '--candidate', D2, '--task', 'T-0001']);
+  assert.equal(ci.status, 0, ci.stdout + ci.stderr);
 });

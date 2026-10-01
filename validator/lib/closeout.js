@@ -31,7 +31,7 @@ function closeout({ repo, baseline, candidate, trust }) {
   const ancestor = ancestorIn(git);
   const shallow = git('rev-parse', '--is-shallow-repository');
   if (!shallow.ok || shallow.out.trim() !== 'false') throw new Error('the clone is shallow or unreadable: closeout needs the full history');
-  const changed = (from, to) => { const d = git('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? d.out.split('\0').filter(Boolean) : null; };
+  const changed = (from, to) => { const d = git('diff-tree', '-r', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? d.out.split('\0').filter(Boolean) : null; };
   const config = loadConfig(baseline);
   const endConfig = (() => { try { return loadConfig(candidate); } catch { return config; } })();
   const rd = config.records_dir ?? 'docs/workflow';
@@ -51,9 +51,13 @@ function closeout({ repo, baseline, candidate, trust }) {
   const before = loadAll(baseline, rd);
   const after = loadAll(candidate, rd);
   const finished = [...after.tasks.values()].map(r => r.data).filter(t => t?.id && t.status === 'Done' && before.tasks.get(t.id)?.data?.status !== 'Done');
-  // A record removed in the round that completes it would take its gate with it: remove Done records afterwards.
+  // A record removed in a round that changes production content could take its gate with it: such a round keeps the
+  // records of tasks not Done at the tip; a round without production changes may drop them (a Draft cut from the plan).
   const removed = [...before.tasks.values()].map(r => r.data).filter(t => t?.id && !after.tasks.has(t.id) && t.status !== 'Done').map(t => t.id);
-  let chained = step('no task record is removed in the round that completes it', !removed.length, removed.length ? [`${removed.join(', ')} ${removed.length > 1 ? 'are' : 'is'} not Done at the trusted tip and gone at the round's end; remove Done records in a later records-only round, after closeout`] : []);
+  const roundPaths = changed(baseline.name, candidate.name);
+  if (!roundPaths) throw new Error('cannot compute the round\'s changes');
+  const productionInRound = roundPaths.some(productionLike);
+  let chained = step('no task record is removed in a round that changes production content', !(removed.length && productionInRound), removed.length && productionInRound ? [`${removed.join(', ')} ${removed.length > 1 ? 'are' : 'is'} not Done at the trusted tip and gone at the round's end; remove Done records in a later records-only round, after closeout`] : []);
   const groups = new Map();
   for (const t of finished) {
     if (!SHA.test(t.baseline_revision ?? '') || !SHA.test(t.implemented ?? '')) { chained = step(`${t.id} records the revisions it was gated at`, false, ['a Done task records baseline_revision (the approved baseline its wf ci ran against) and implemented (the candidate its receipts name)']) && chained; continue; }

@@ -28,7 +28,7 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 
 ## Start or resume a task
 
-Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
+Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision (in a milestone round the previous task's Done commit; after a rebase, the new base, with its checks rerun) and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
 
 The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, `WF_RECEIPTS` and, in manual mode, `WF_SIGNING_DIR` (the signing drop) were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
 

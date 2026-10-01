@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
-import { gitEnv } from './lib/sources.js';
+import { gitRunner } from './lib/git.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -36,7 +35,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024, env: gitEnv() });
+  const r = gitRunner(repo, { maxBuffer: 16 * 1024 * 1024, literal: false })(...args);
   if (r.status !== 0) throw new WfError(`git ${args[0]} failed: ${r.error?.message ?? r.stderr.trim()}`);
   return r.stdout;
 };
@@ -72,8 +71,8 @@ async function main() {
     const raw = fs.readFileSync(file, 'utf8');
     const repo = o.repo ? path.resolve(o.repo) : null;
     const sha = /^[0-9a-f]{40,64}$/;
-    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
-    const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('log', '-1', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
+    const run = repo ? gitRunner(repo) : null;
+    const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
     let requiredChecks = null, changes = null;
     if (repo && o.baseline) {
@@ -94,7 +93,7 @@ async function main() {
       else {
         const tip = gitSource(repo, end);
         try { configs.push(loadConfig(tip)); } catch { /* the base config alone */ }
-        const diff = (from, to) => { const r = run('diff', '--no-renames', '--name-only', '-z', from, to, '--'); if (r.status !== 0) throw new WfError('git diff failed'); return r.stdout.split('\0').filter(Boolean); };
+        const diff = (from, to) => { const r = run('diff-tree', '-r', '--no-renames', '--name-only', '-z', from, to, '--'); if (r.status !== 0) throw new WfError('git diff-tree failed'); return r.stdout.split('\0').filter(Boolean); };
         const after = new Map(revisions.map(x => [x, new Set(diff(x, end))]));
         const unchangedAt = (f, test) => revisions.some(x => !after.get(x).has(f) && test(x));
         const evidence = x => ['verification', 'review', 'integration'].every(purpose => at(purpose, x).length === 1);
@@ -202,7 +201,7 @@ async function main() {
     if (baseline.kind !== 'git') throw new WfError('directory diagnostics require --changed PATH');
     if (candidate.kind === 'git') {
       if (!candidate.isAncestor(baseline.name)) throw new WfError('candidate must include the current authoritative baseline; assemble it before integration');
-      return git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
+      return git(repo, 'diff-tree', '-r', '--no-renames', '--name-only', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
     }
     return [...new Set([...git(repo, 'diff', '--no-renames', '--name-only', '-z', baseline.name, '--').split('\0'), ...git(repo, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')].filter(Boolean))];
   };
@@ -226,7 +225,7 @@ async function main() {
     let changedLines = null, deliveryEvidence = null, ownerApproval = null, evidenceSource = null;
     if (config.delegation?.routine?.enabled === true) {
       if (candidate.kind !== 'git' || baseline.kind !== 'git') throw new WfError('routine delegation requires committed baseline and candidate');
-      const stats = git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
+      const stats = git(repo, 'diff-tree', '-r', '--no-renames', '--numstat', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
       changedLines = 0;
       for (const line of stats) {
         const m = line.match(/^(\d+|-)\t(\d+|-)\t/s);

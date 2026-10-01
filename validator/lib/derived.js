@@ -13,14 +13,14 @@
 //     governing / enforcement path     a governing-change / workflow-change receipt listing it
 //     production / generated path      a complete evidence set (verification, review, integration) the gates accept
 //   where "covered at X" means the receipt is at a revision X after A and no later than R, and the path is unchanged
-//   from X to R. A path name with a backslash, a control character or an invisible format character is never derived.
+//   from X to R. A path name that could pass for another (git.js unsafePath) is never derived.
 // - When production content changed, one evidence set at a revision X has R's production content exactly, so the
 //   assembled whole, not only its parts, was verified and integrated.
 // - R's records validate.
-// Git failures and shallow clones fail closed; replace refs and grafts are ignored (sources.js gitEnv). A derivation
+// Git failures and shallow clones fail closed; Git reads are hardened against the clone's own config (git.js). A derivation
 // that relied on an unsigned payload is provisional (never exit 0).
-import { spawnSync } from 'node:child_process';
-import { gitEnv, gitSource } from './sources.js';
+import { gitSource } from './sources.js';
+import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths } from './paths.js';
 import { payloadProblems } from './payloads.js';
@@ -31,10 +31,8 @@ const EVIDENCE = ['verification', 'review', 'integration'];
 const REVIEW_OWNED = ['Ready', 'Active', 'Done'];
 
 export function gitIn(repo) {
-  return (...args) => {
-    const r = spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
-    return { ok: r.status === 0, status: r.status, out: r.stdout ?? '' };
-  };
+  const run = gitRunner(repo); // lib/git.js: hostile clone config cannot change answers or run programs
+  return (...args) => { const r = run(...args); return { ok: r.status === 0, status: r.status, out: r.stdout ?? '' }; };
 }
 // `merge-base --is-ancestor` exits 1 for "no"; anything else is an error, never an answer.
 export function ancestorIn(git) {
@@ -46,9 +44,6 @@ export function ancestorIn(git) {
   };
 }
 const names = out => out.split('\0').filter(Boolean);
-// Never derived: a backslash, control characters, and invisible or direction-changing format characters, which can
-// make a path display as another one in the brief or a review.
-export const UNSAFE_PATH = /[\\\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]/;
 export const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 export function withDerivedBaselines(trust, repo) {
@@ -58,7 +53,10 @@ export function withDerivedBaselines(trust, repo) {
   const remember = (key, fn) => { if (!memo.has(key)) memo.set(key, fn()); return memo.get(key); };
   const isAncestor = ancestorIn(git);
   const ancestor = (older, newer) => remember(`a ${older} ${newer}`, () => isAncestor(older, newer));
-  const changedBetween = (from, to) => remember(`d ${from} ${to}`, () => { const d = git('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? new Set(names(d.out)) : null; });
+  const changedBetween = (from, to) => remember(`d ${from} ${to}`, () => { const d = git('diff-tree', '-r', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? new Set(names(d.out)) : null; });
+  // Every commit in a revision's history, from one walk that fails if any of them is missing: a receipt for a commit
+  // outside it (rebased away, pruned, never fetched) is simply not in that history.
+  const historyOf = rev => remember(`h ${rev}`, () => { const r = git('rev-list', rev); if (!r.ok) throw new Error(`cannot walk the history of ${rev.slice(0, 12)}`); return new Set(r.out.split('\n').filter(Boolean)); });
   const source = rev => remember(`s ${rev}`, () => gitSource(repo, rev));
   const configAt = rev => remember(`c ${rev}`, () => { try { return loadConfig(source(rev)); } catch { return null; } });
 
@@ -76,7 +74,8 @@ export function withDerivedBaselines(trust, repo) {
     if (trust.ambiguous('baseline', revision)) return refuse(['the baseline receipts for this revision are ambiguous']);
     if (take('baseline', revision)) return { result: { approved: true, via: 'receipt', revision }, used };
 
-    const approvals = [...trust.revisions()].filter(x => SHA.test(x) && x !== revision && (look('baseline', x) || trust.ambiguous('baseline', x)) && ancestor(x, revision));
+    const history = historyOf(revision);
+    const approvals = [...trust.revisions()].filter(x => SHA.test(x) && x !== revision && history.has(x) && (look('baseline', x) || trust.ambiguous('baseline', x)));
     if (!approvals.length) return refuse(['no baseline receipt in this revision\'s history']);
     const newest = approvals.filter(a => approvals.every(b => ancestor(b, a)));
     if (newest.length !== 1) return refuse(['the baseline receipts in this history do not form one line; the owner signs a baseline for the merge']);
@@ -92,7 +91,7 @@ export function withDerivedBaselines(trust, repo) {
     const isRecord = p => [...records].some(dir => p.startsWith(dir) && !p.slice(dir.length).includes('/') && p.endsWith('.md'));
     const requiredChecks = [...new Set(configs.flatMap((c, i) => { try { return list(loadAll(source(i ? revision : from), c.records_dir ?? 'docs/workflow').profile?.data?.required_checks); } catch { return []; } }))];
     // Revisions after the approved baseline, no later than R, holding receipts; and what changed from each to R.
-    const later = [...trust.revisions()].filter(x => SHA.test(x) && x !== from && ancestor(from, x) && ancestor(x, revision))
+    const later = [...trust.revisions()].filter(x => SHA.test(x) && x !== from && history.has(x) && ancestor(from, x))
       .map(x => ({ x, after: changedBetween(x, revision) })).filter(l => l.after !== null);
     const evidenceAt = x => remember(`e ${x} ${signedOnly} ${JSON.stringify(requiredChecks)}`, () => EVIDENCE.every(purpose => sound(look(purpose, x), x)));
     function sound(p, x) {
@@ -121,7 +120,7 @@ export function withDerivedBaselines(trust, repo) {
     const covered = [];
     let production = false;
     for (const p of diff) {
-      if (UNSAFE_PATH.test(p)) { reasons.push(`path ${JSON.stringify(p)} has a backslash, control or invisible character and is never derived`); continue; }
+      if (unsafePath(p)) { reasons.push(`path ${JSON.stringify(p)} could pass for another (a backslash, a control, format or invisible character, or unusual whitespace) and is never derived`); continue; }
       const categories = new Set(configs.map(c => classifyPaths(c, [p])[0].category));
       if (categories.has('unclassified')) { reasons.push(`${p} is unclassified`); continue; }
       for (const category of categories) {

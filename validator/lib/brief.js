@@ -6,17 +6,17 @@
 import { createHash } from 'node:crypto';
 
 import { payloadProblems, readPayloads } from './payloads.js';
+import { showPath } from './git.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
-// Control and invisible or direction-changing format characters are shown as escapes, so a path cannot display as
-// another one; other whitespace collapses to one space.
-const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]/g;
-const flat = v => String(v ?? '').replace(INVISIBLE, c => `\\u{${c.codePointAt(0).toString(16)}}`).replace(/\s+/g, ' ').trim();
+// In prose, control, format and default-ignorable characters are shown as escapes and other whitespace collapses to
+// one space; paths are shown exactly, as printable ASCII with escapes (git.js showPath).
+const flat = v => String(v ?? '').replace(/[\t\n\r]+/g, ' ').replace(/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, c => `\\u{${c.codePointAt(0).toString(16)}}`).replace(/\s+/g, ' ').trim();
 const clip = (v, n) => { const s = flat(v); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 // A code span that stays one table cell: no backtick can close it and a pipe is escaped for the table parser.
 const code = (v, n = 300) => { const s = clip(v, n).replaceAll('`', "'").replaceAll('|', '\\|'); return s ? `\`${s}\`` : '`?`'; };
 const short = r => code(typeof r === 'string' ? r.slice(0, 12) : '?');
-const whole = v => code(v, Infinity); // paths are never cut short
+const whole = v => { const s = showPath(v ?? '').replaceAll('`', "'").replaceAll('|', '\\|'); return s ? `\`${s}\`` : '`?`'; }; // never shortened
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const checkList = p => (Array.isArray(p.checks) ? p.checks : []).map(c => `${code(c?.name, 80)} ${code(c?.result, 20)}`).join(', ');
 

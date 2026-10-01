@@ -2,7 +2,7 @@
 
 ## Coordinate and delegate
 
-Use one coordinator for an authorised milestone. Read current records and actual Git/external state, recompute readiness, select the highest-priority eligible task and claim it before work. With assisted execution, the coordinator serialises claims in the separate operational run record (see `operations.md`); milestone records retain approved limits and authority. Do not run concurrent coordinators, except one per person in a shared project (`shared.md`); parallel workers require separately assigned tasks and worktrees, with agreed shared contracts. This manual claim protocol is not an unattended distributed lock.
+Start every session with `wf next` (in manual mode with the trust options) and do the action it names, reading what it names; the records, not the session, carry the milestone. Use one coordinator for an authorised milestone. Check actual Git/external state against what `wf next` reports, and claim the task before work. With assisted execution, the coordinator serialises claims in the separate operational run record (see `operations.md`); milestone records retain approved limits and authority. Do not run concurrent coordinators, except one per person in a shared project (`shared.md`); parallel workers require separately assigned tasks and worktrees, with agreed shared contracts. This manual claim protocol is not an unattended distributed lock.
 
 Default to the coordinator and one independent reviewer (`review.md`). Before promising completion, estimate the dependency critical path, required checks, owner availability and release windows; extra workers do not shorten serial gates. Additional workers need bounded, separable work whose value justifies their coordination cost, including work to resolve a named uncertainty. Routine commands, check reruns and state queries can run directly; they do not require another agent. The owner does not run technical checks or reviews.
 
@@ -46,7 +46,7 @@ Stop affected work on reserved decisions, missing access, exhausted budgets, rep
 
 When manual continuation is needed, supply:
 
-> Resume task T-____ in milestone M-____. Read AGENTS.md, the profile, those records and their governing sources. Inspect the latest checkpoint, the handoff on the task's pull request or issue (or beside the round in the signing drop), and actual Git/external state; after a signed round, run `wf closeout` first. Recompute readiness against the freshly fetched authoritative revision. Continue only the next eligible action recorded in the handoff, within remaining limits. Post evidence and an explicit outcome on the pull request or issue; stop at the next reserved decision or acceptance boundary.
+> Resume task T-____ in milestone M-____. Read AGENTS.md and run `wf next`; read what it names. Inspect the latest checkpoint, the handoff on the task's pull request or issue (or beside the round in the signing drop), and actual Git/external state; after a signed round, run `wf closeout` first. Recompute readiness against the freshly fetched authoritative revision. Continue only the next eligible action recorded in the handoff, within remaining limits. Post evidence and an explicit outcome on the pull request or issue; stop at the next reserved decision or acceptance boundary.
 
 ## More than one person
 

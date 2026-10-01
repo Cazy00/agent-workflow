@@ -46,7 +46,9 @@ function attests(p) {
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, requiredChecks = null, changes = null }) {
+// With `attest` in the approved config, verification and integration come from the owner's own `wf attest` run
+// (procedures/approval-evidence.md *Attested evidence*): a round file the agent staged must not carry them.
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, requiredChecks = null, changes = null, attestConfigured = false }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${code(e.message)}. Do not sign it.\n` }; }
@@ -68,6 +70,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
         if (runs.length !== 1 || runs[0].status !== 'passed') problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; it must run once and pass`);
       }
     }
+    if (attestConfigured && ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool !== 'wf attest') problems.push(`${at}: this project runs wf attest, so verification and integration come from your own attest run, not from a payload the agent wrote`);
     const key = `${p?.purpose} ${p?.revision}`;
     if (seen.has(key)) problems.push(`#${i + 1} repeats #${seen.get(key)} (same purpose and revision): the gates reject both as ambiguous`);
     else seen.set(key, i + 1);
@@ -96,6 +99,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
     const other = tests.filter(t => t?.status !== 'passed' && !(required ?? []).some(m => m?.file === t?.file && m?.name === t?.name));
     if (other.length) judge.push(`- **${plural(other.length, 'test')} not passed** at ${short(p.revision)}${required ? ', none mapped to acceptance' : '; with `--repo` the brief checks whether any is mapped'}: ${other.slice(0, 5).map(t => code(`${flat(t?.name)}: ${flat(t?.status)}`, 120)).join(', ')}${other.length > 5 ? ` and ${other.length - 5} more` : ''}`);
   }
+  for (const p of payloads.filter(p => ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool === 'wf attest')) judge.push(`- **From \`wf attest\`** at ${short(p.revision)} (${p.purpose}): ${p.attested.sandbox ? `sandboxed by ${code(p.attested.sandbox.launcher, 60)}` : '**unsandboxed**'}. Sign it only if you ran that attest yourself and this file is the one it wrote.`);
   for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(Array.isArray(p.scenarios) ? p.scenarios : []).map(x => code(x)).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);
   if (changes?.unknown) judge.push(`- **Paths changed in the round** could not be listed: ${code(changes.unknown)}`);

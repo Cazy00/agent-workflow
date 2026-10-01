@@ -28,6 +28,8 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 
 ## Start or resume a task
 
+Start every session with `wf next` (the trust options add the trusted branch's approval state): it names the one next action, the files to read for it and the commands to run, and lists what waits on the owner. Read what it names and nothing else unless one of those points further; it grants nothing, and the gates below still decide.
+
 Inspect actual Git/external state before resuming. Confirm the worker route, fetch the configured authoritative branch and record its exact full revision. Record the task's baseline results, starting revision (in a milestone round the previous task's Done commit; after a rebase, the new base, with its checks rerun) and `governing_baseline_revision`, scope, feature readiness, milestone, acceptance IDs, verification and independent review plan. Reuse approved designs and contracts. Document existing failures for repairs.
 
 The examples assume `WF_LAUNCHER`, `WF_PROJECT`, `WF_BASELINE`, `WF_CANDIDATE`, `WF_OWNER_KEY`, `WF_RECEIPTS` and, in manual mode, `WF_SIGNING_DIR` (the signing drop) were set by the trusted operator; `WF_BASELINE` is the freshly fetched authoritative SHA. Replace `OWNER/REPOSITORY` and `T-0001` with the project's values.
@@ -71,9 +73,10 @@ Read this instead of the validator source. In manual mode every receipt is owner
 |---|---|---|---|
 | Start a task | `readiness --task T` | baseline receipt (or derived); profile Ready with `required_checks`; milestone Authorised or Active; task fields recorded; prerequisites Done; decisions Resolved; governing sources unchanged since `governing_baseline_revision` | none |
 | Planning-only change | `ci` | its config (classification) and valid records; no approval is checked | none |
-| Integrate a task | `ci --task T` | as for a task start | `verification` (checks passed, each with evidence that is a file in the candidate or a key of the receipt's `artifacts`, and every mapped test run once and passed), `review` (`implementer` equal to the task's `owner`, a different reviewer, six areas, findings resolved or accepted), `integration`; `governing-change` / `workflow-change` listing each protected path changed |
+| Integrate a task | `ci --task T` | as for a task start | `verification` (checks passed, each with evidence that is a file in the candidate or a key of the receipt's `artifacts`, and every mapped test run once and passed), `review` (`implementer` equal to the task's `owner`, a different reviewer, six areas, findings resolved or accepted), `integration`; `governing-change` / `workflow-change` listing each protected path changed; a `governing-change` listing each changed acceptance test (`paths.acceptance_tests`), at the candidate or at an earlier revision in its history with the same content |
 | Accept | `lifecycle --stage accept` | as for a task start, the milestone Authorised, Active, Verified, Accepted or Released | the above and `acceptance` naming the task's scenarios |
 | Release | `lifecycle --stage release` | as for acceptance | the above and `release` |
+| Produce verification and integration (manual mode, `attest` configured) | `attest --candidate SHA --sandbox LAUNCHER --protect KEY --out FILE`, run by the owner | `attest` checks and the profile's `required_checks` among them | none: it writes the two payloads for the owner to sign, and exits 0 only when every check passed and every mapped test ran once and passed |
 | Close a signed round | `closeout` | the trusted branch's tip, where the local branch must be | each Done task's gate at its `baseline_revision` and `implemented`, as one chain; no production change outside them; acceptance (and release) for each milestone accepted (released); the round's end approved |
 
 
@@ -87,7 +90,7 @@ Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit
 
 After explicit setup approval, optional local batches use `wf ci --tasks T-0001,T-0002`; every task still passes its gates. Routine integration can be delegated within narrow protected limits, using worker-posted evidence and exact-head GitHub owner approval for exceptions. Both are off by default; read `procedures/delivery.md` before activation.
 
-In manual mode a round of receipts is one file of unsigned payloads in the signing drop (`$WF_SIGNING_DIR`), with the brief `wf brief` renders from it; dry-run the round's gates with `--unsigned-receipts` (exit 3 instead of 0, never approval), and after signing run `wf closeout`, which re-runs them on the receipts and prints the fast-forward. Opt-in derived baselines spare the baseline receipt where the owner's other receipts already cover every change; `signing: milestone` collects a milestone's receipts in one round (`procedures/approval-evidence.md`, *Signing rounds*).
+In manual mode a round of receipts is one file of unsigned payloads in the signing drop (`$WF_SIGNING_DIR`), with the brief `wf brief` renders from it; dry-run the round's gates with `--unsigned-receipts` (exit 3 instead of 0, never approval), and after signing run `wf closeout`, which re-runs them on the receipts and prints the fast-forward. With `attest` in the config, the owner's `wf attest` run writes the verification and integration payloads instead of the agent (*Attested evidence*). Opt-in derived baselines spare the baseline receipt where the owner's other receipts already cover every change; `signing: milestone` collects a milestone's receipts in one round (`procedures/approval-evidence.md`, *Signing rounds*).
 
 Prepare a fresh independent review with `wf review-packet --repo DIR --baseline BASE_SHA --candidate HEAD_SHA --task T-0001 --evidence /external/checks.log`. Give its canonical references to an explicitly empty review context and rerun the command afterwards to catch checkout changes. The packet does not launch or authenticate the reviewer.
 

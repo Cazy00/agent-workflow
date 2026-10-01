@@ -54,6 +54,10 @@
       "**/*.{go,rs,java,kt,swift,c,cpp,h,rb,php,tf,tfvars,wasm}"
     ],
     "generated": [],
+    "acceptance_tests": [
+      "tests/acceptance-map.json",
+      "tests/acceptance/**"
+    ],
     "governing": [
       "docs/workflow/profile.md",
       "docs/workflow/decisions/**",

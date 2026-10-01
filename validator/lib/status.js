@@ -44,7 +44,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const all = loadAll(candidate, rd);
-  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(candidate));
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(candidate, { acceptanceTests: config.paths?.acceptance_tests ?? [] }));
   const profile = all.profile?.data ?? {};
   const owners = listedOwners(profile);
   const labels = [config.approval?.label ?? null, profile.approval_label ?? null];

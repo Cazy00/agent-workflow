@@ -126,12 +126,12 @@ function closeout({ repo, origin = repo, baseline, candidate, trust }) {
   // is left for the operator to refresh.
   const current = gitIn(origin)('branch', '--show-current').out.trim();
   const filters = cloneFilters(origin);
-  const linked = gitIn(origin)('worktree', 'list', '--porcelain').out.split('\n\n').find(w => w.includes(`branch refs/heads/${branch}`) && !w.startsWith(`worktree ${origin}\n`));
-  if (linked && current !== branch) notes.push(`${branch} is checked out in another worktree (${linked.split('\n')[0].slice(9)}): run the fast-forward there as merge --ff-only, or its index will show the round reversed`);
+  const linked = gitIn(origin)('worktree', 'list', '--porcelain').out.split('\n\n').find(w => w.split('\n').includes(`branch refs/heads/${branch}`) && !w.startsWith(`worktree ${origin}\n`));
   if (ok && !provisional && current === branch && filters.length) notes.push(`the clone configures its own filters (${filters.join(', ')}), so the fast-forward moves the ref without a checkout; refresh the work tree yourself after checking them`);
-  const quiet = `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C ${quote(origin)}`;
+  const quiet = `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c merge.verifySignatures=false -c submodule.recurse=false -C ${quote(origin)}`;
   const fastForward = !ok || provisional ? null
     : current === branch && !filters.length ? `${quiet} merge --ff-only ${candidate.name}`
     : `${quiet} update-ref ${quote(`refs/heads/${branch}`)} ${candidate.name} ${baseline.name}`;
+  if (fastForward && linked && current !== branch) notes.push(`${branch} is checked out in another worktree (${linked.split('\n')[0].slice(9)}): run the fast-forward there as merge --ff-only, or its index will show the round reversed`);
   return { ok, baseline: baseline.name, candidate: candidate.name, branch, steps, notes, fast_forward: fastForward, limitation: 'Read-only. It re-runs the recorded gates on the signed receipts and prints the fast-forward; it moves no branch and publishes nothing.' };
 }

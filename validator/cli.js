@@ -230,7 +230,7 @@ async function main() {
     const mirror = verifiedMirror(repo);
     try {
       const verified = withDerivedBaselines(baseTrust, mirror.path);
-      const inMirror = rev => { try { return gitSource(mirror.path, rev); } catch { throw new WfError(`${rev.slice(0, 12)} is reachable from no branch or tag, so the verified mirror does not hold it: put the round's end on a branch`); } };
+      const inMirror = rev => { try { return gitSource(mirror.path, rev); } catch (e) { throw new WfError(/invalid git revision/.test(e.message) ? `${rev.slice(0, 12)} is reachable from no branch or tag, so the verified mirror does not hold it: put the round's end on a branch` : e.message); } };
       result = evaluateCloseout({ repo: mirror.path, origin: repo, baseline: inMirror(baseline.name), candidate: inMirror(candidate.name), trust: verified });
     } finally { mirror.cleanup(); }
   }

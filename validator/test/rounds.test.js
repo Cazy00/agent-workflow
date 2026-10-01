@@ -159,7 +159,7 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.ok(r.json.steps.every(s => s.ok));
   assert.ok(r.json.steps.some(s => /wf ci for T-0001/.test(s.name)));
   assert.ok(r.json.steps.some(s => /approved baseline \(derived\)/.test(s.name)));
-  assert.equal(r.json.fast_forward, `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
+  assert.equal(r.json.fast_forward, `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c merge.verifySignatures=false -c submodule.recurse=false -C ${quote(p.repo)} update-ref 'refs/heads/main' ${p.D} ${p.B}`);
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
@@ -712,6 +712,14 @@ test('a round end on no branch is named as such, and a dirty submodule runs none
   g(path.join(p.repo, 'vendor/sub'), 'config', 'filter.y.clean', `touch '${marker}'; cat`);
   fs.writeFileSync(path.join(p.repo, '.git', 'modules', 'vendor', 'sub', 'info', 'attributes'), '* filter=y\n');
   fs.writeFileSync(path.join(p.repo, 'vendor/sub/f.txt'), 'y\n'); // same size: Git must hash it, through the filter
-  spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', withSub, '--json'], { encoding: 'utf8' });
+  const paths = spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', withSub, '--json'], { encoding: 'utf8' });
+  assert.equal(paths.status, 0, paths.stdout + paths.stderr);
   assert.equal(fs.existsSync(marker), false, 'the submodule filter must not run');
+});
+
+test('a stop signal to the wf process still stops it while it reads the verified mirror', t => {
+  const p = round(t);
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const child = spawnSync(process.execPath, ['-e', `const { spawn } = require('child_process'); const c = spawn(process.execPath, ${JSON.stringify([cli, 'closeout', '--repo', p.repo, '--baseline', p.B, '--candidate', p.D, '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository, '--json'])}, { stdio: 'ignore' }); setTimeout(() => c.kill('SIGTERM'), 300); c.on('exit', (code, signal) => process.stdout.write(String(signal ?? code)));`], { encoding: 'utf8' });
+  assert.equal(child.stdout, 'SIGTERM', 'Node\'s default termination stays in place');
 });

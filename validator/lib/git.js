@@ -59,16 +59,21 @@ export function gitRunner(repo, { timeout = 30000, maxBuffer = 64 * 1024 * 1024,
 // A bare mirror of the repository's refs in a new temporary directory, built through Git's transport so every object
 // is re-hashed and checked for connectivity; the mirror carries none of the clone's config, hooks or caches. Throws if
 // the clone fails, as it does for a rewritten object. `cleanup()` removes it.
+// Mirrors left by a run that was killed are swept by the next one after an hour. No signal handler is installed: one
+// would replace Node's default termination while the CLI runs synchronously, so a stop signal would be ignored.
+const STALE = 60 * 60 * 1000;
 const mirrors = new Set();
 let watching = false;
 const removeAll = () => { for (const dir of mirrors) fs.rmSync(dir, { recursive: true, force: true }); mirrors.clear(); };
+const sweep = () => {
+  try { for (const name of fs.readdirSync(os.tmpdir())) if (name.startsWith('wf-verified-')) { const p = path.join(os.tmpdir(), name); if (Date.now() - fs.statSync(p).mtimeMs > STALE) fs.rmSync(p, { recursive: true, force: true }); } } catch { /* best effort */ }
+};
 export function verifiedMirror(repo, { timeout = 600000 } = {}) {
   const { root } = repoLayout(repo);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-verified-'));
   const target = path.join(dir, 'mirror.git');
   mirrors.add(dir);
-  // An interrupted run removes its copy of the repository's objects too.
-  if (!watching) { watching = true; process.once('exit', removeAll); for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, () => { removeAll(); process.exit(128 + (signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : 1)); }); }
+  if (!watching) { watching = true; process.once('exit', removeAll); sweep(); }
   const cleanup = () => { fs.rmSync(dir, { recursive: true, force: true }); mirrors.delete(dir); };
   const r = spawnSync('git', ['clone', '--mirror', '--no-local', '--quiet', '--', root, target], { encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, env: safeEnv(dir, { bare: true, protocols: 'file' }) });
   if (r.status !== 0) { cleanup(); throw new Error(`the repository failed verification while being mirrored: ${(r.stderr || r.error?.message || 'git clone failed').trim().split('\n').slice(-2).join(' ')}`); }
@@ -79,7 +84,8 @@ export function verifiedMirror(repo, { timeout = 600000 } = {}) {
 // they are included); the operator's own global and system filters, such as git-lfs, are theirs to run.
 export function cloneFilters(repo) {
   const r = gitRunner(repo, { literal: false })('config', '--show-scope', '-z', '--get-regexp', '^filter\\..*\\.(clean|smudge|process)$');
-  if (r.status !== 0) return [];
+  if (r.status === 1) return []; // no match
+  if (r.status !== 0) throw new Error('git cannot read the clone\'s config');
   const fields = r.stdout.split('\0'); // scope NUL key NEWLINE value NUL, repeated
   const found = [];
   for (let i = 0; i + 1 < fields.length; i += 2) if (['local', 'worktree'].includes(fields[i])) found.push(fields[i + 1].split('\n')[0]);

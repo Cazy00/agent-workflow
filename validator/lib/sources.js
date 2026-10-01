@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// Git as the gates read it: objects as committed. A clone the agent can write could otherwise substitute content
+// through replace refs or a grafts file and show the validator signed trees for unsigned commits.
+export const gitEnv = () => ({ ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null' });
 export function safePath(rel) {
   if (typeof rel !== 'string' || !rel || rel.startsWith(':') || rel.includes('\\') || rel.includes('\0') || path.posix.isAbsolute(rel) || rel.split('/').some(p => p === '..' || p === '.' || p === '')) throw new Error(`invalid repository path: ${rel}`);
   return rel;
@@ -40,7 +43,7 @@ export function dirSource(root) {
   };
 }
 export function gitSource(repo, revision) {
-  const git = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  const git = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024, env: gitEnv() });
   const resolved = git('rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`);
   if (resolved.status !== 0) throw new Error(`invalid git revision: ${revision}`);
   const rev = resolved.stdout.trim();

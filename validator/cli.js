@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
+import { gitEnv } from './lib/sources.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -22,7 +23,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
-  brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV]: the owner's signing brief as Markdown (--json for the check)
+  brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
@@ -35,7 +36,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024, env: gitEnv() });
   if (r.status !== 0) throw new WfError(`git ${args[0]} failed: ${r.error?.message ?? r.stderr.trim()}`);
   return r.stdout;
 };
@@ -71,43 +72,51 @@ async function main() {
     const raw = fs.readFileSync(file, 'utf8');
     const repo = o.repo ? path.resolve(o.repo) : null;
     const sha = /^[0-9a-f]{40,64}$/;
-    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+    const run = (...args) => spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('log', '-1', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
     let requiredChecks = null, changes = null;
     if (repo && o.baseline) {
-      // Everything the round changes from the approved baseline to its latest revision, and what covers each path.
+      // Everything the round changes from the approved baseline to its end (--candidate, or the latest payload
+      // revision), judged path by path by both configs, as a derived baseline judges it (lib/derived.js).
       const base = gitSource(repo, o.baseline);
-      const baseConfig = loadConfig(base);
-      const rd = baseConfig.records_dir ?? 'docs/workflow';
+      const configs = [loadConfig(base)];
+      const rd = configs[0].records_dir ?? 'docs/workflow';
       requiredChecks = list(loadAll(base, rd).profile?.data?.required_checks);
       let payloads = [];
       try { payloads = readPayloads(raw); } catch { /* reported by the brief */ }
+      const at = (purpose, x) => payloads.filter(p => p?.purpose === purpose && p.revision === x);
       const revisions = [...new Set(payloads.map(p => p?.revision).filter(r => sha.test(r ?? '')))];
-      const contains = (older, newer) => older === newer || run('merge-base', '--is-ancestor', older, newer).status === 0;
+      const contains = (older, newer) => { if (older === newer) return true; const r = run('merge-base', '--is-ancestor', older, newer); if (r.status > 1 || r.status === null) throw new WfError('git cannot compare the round\'s revisions'); return r.status === 0; };
       const latest = revisions.filter(r => revisions.every(x => contains(x, r)));
-      if (latest.length !== 1 || !contains(base.name, latest[0])) changes = { unknown: 'the payload revisions do not form one line from the baseline' };
+      const end = o.candidate ? gitSource(repo, o.candidate).name : latest.length === 1 ? latest[0] : null;
+      if (!end || !contains(base.name, end) || revisions.some(x => !contains(x, end))) changes = { unknown: 'give --candidate ROUND_END: the payload revisions do not all lead to one revision after the baseline' };
       else {
-        const tip = gitSource(repo, latest[0]);
-        const diff = (from, to) => { const r = run('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null; };
-        const all = diff(base.name, tip.name);
-        if (!all) changes = { unknown: 'git diff failed' };
-        else {
-          const after = new Map(revisions.map(x => [x, new Set(diff(x, tip.name) ?? all)]));
-          const evidence = payloads.filter(p => p?.purpose === 'verification').map(p => p.revision);
-          const listing = payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose) && Array.isArray(p.paths));
-          const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
-          changes = { records: [], uncovered: [] };
-          for (const f of all) {
-            const record = f.match(new RegExp(`^${rd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(tasks|feedback/inbox)/([^/]+)\\.md$`));
-            if (record) {
-              const id = record[2];
-              const was = record[1] === 'tasks' ? before.get(id)?.data?.status ?? 'absent' : null, is = record[1] === 'tasks' ? now.get(id)?.data?.status ?? 'removed' : null;
-              changes.records.push(record[1] === 'tasks' ? (was === is ? `${id} (${is}) edited` : `${id} ${was} → ${is}`) : `${f} changed`);
-              continue;
-            }
-            const covered = evidence.some(x => !after.get(x)?.has(f)) || listing.some(p => p.paths.includes(f) && !after.get(p.revision)?.has(f));
-            if (!covered) changes.uncovered.push(f);
+        const tip = gitSource(repo, end);
+        try { configs.push(loadConfig(tip)); } catch { /* the base config alone */ }
+        const diff = (from, to) => { const r = run('diff', '--no-renames', '--name-only', '-z', from, to, '--'); if (r.status !== 0) throw new WfError('git diff failed'); return r.stdout.split('\0').filter(Boolean); };
+        const after = new Map(revisions.map(x => [x, new Set(diff(x, end))]));
+        const unchangedAt = (f, test) => revisions.some(x => !after.get(x).has(f) && test(x));
+        const evidence = x => ['verification', 'review', 'integration'].every(purpose => at(purpose, x).length === 1);
+        const listing = (purpose, f) => x => at(purpose, x).some(p => Array.isArray(p.paths) && p.paths.includes(f));
+        const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
+        changes = { records: [], uncovered: [] };
+        for (const f of diff(base.name, end)) {
+          const categories = new Set(configs.map(c => classifyPaths(c, [f])[0].category));
+          const record = f.startsWith(`${rd}/`) && /^(tasks|feedback\/inbox)\/[^/]+\.md$/.test(f.slice(rd.length + 1)) && [...categories].every(c => c === 'planning');
+          if (record) {
+            const id = f.match(/(T-\d{4})\.md$/)?.[1];
+            const was = before.get(id)?.data?.status ?? 'absent', is = now.get(id)?.data?.status ?? 'removed';
+            changes.records.push(id ? (was === is ? `${id} (${is}) edited` : `${id} ${was} → ${is}`) : `${f} changed`);
+            continue;
+          }
+          for (const category of categories) {
+            const ok = category === 'governing' ? unchangedAt(f, listing('governing-change', f))
+              : category === 'enforcement' ? unchangedAt(f, listing('workflow-change', f))
+              : ['production', 'generated'].includes(category) ? unchangedAt(f, evidence)
+              : category === 'planning' ? unchangedAt(f, x => evidence(x) || listing('governing-change', f)(x) || listing('workflow-change', f)(x))
+              : false;
+            if (!ok) { changes.uncovered.push([f, category === 'unclassified' ? 'unclassified' : `${category}: needs ${category === 'governing' ? 'a governing-change listing it' : category === 'enforcement' ? 'a workflow-change listing it' : category === 'planning' ? 'an evidence set or a change payload listing it' : 'an evidence set'} at a revision where it has its final content`]); break; }
           }
         }
       }
@@ -156,7 +165,7 @@ async function main() {
     const readArray = (file, what) => { const v = JSON.parse(fs.readFileSync(file, 'utf8')); if (!Array.isArray(v)) throw new WfError(`${what} must be an array`); return v; };
     const envelopes = readArray(o.receipts, 'receipts');
     const unsigned = o['unsigned-receipts'] ? readArray(o['unsigned-receipts'], 'unsigned receipts') : [];
-    // Derived baselines (lib/derived.js) apply only when the approved baseline's own config enables them.
+    // Derived baselines (lib/derived.js) apply only when the newest receipted baseline's config and the revision's own both enable them.
     trust = withDerivedBaselines(createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes, unsigned }), repo);
     if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
   }

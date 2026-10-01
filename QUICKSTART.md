@@ -74,7 +74,7 @@ Read this instead of the validator source. In manual mode every receipt is owner
 | Integrate a task | `ci --task T` | as for a task start | `verification` (checks passed, each with evidence that is a file in the candidate or a key of the receipt's `artifacts`, and every mapped test run once and passed), `review` (`implementer` equal to the task's `owner`, a different reviewer, six areas, findings resolved or accepted), `integration`; `governing-change` / `workflow-change` listing each protected path changed |
 | Accept | `lifecycle --stage accept` | as for a task start, the milestone Authorised, Active, Verified, Accepted or Released | the above and `acceptance` naming the task's scenarios |
 | Release | `lifecycle --stage release` | as for acceptance | the above and `release` |
-| Close a signed round | `closeout` | the trusted branch's tip, where the local branch must be | each Done task's gate at its `baseline_revision` and `verified`, as one chain; no production change outside them; acceptance (and release) for each milestone accepted (released); the round's end approved |
+| Close a signed round | `closeout` | the trusted branch's tip, where the local branch must be | each Done task's gate at its `baseline_revision` and `implemented`, as one chain; no production change outside them; acceptance (and release) for each milestone accepted (released); the round's end approved |
 
 
 ## Central reporting and assisted runtime
@@ -91,4 +91,4 @@ In manual mode a round of receipts is one file of unsigned payloads in the signi
 
 Prepare a fresh independent review with `wf review-packet --repo DIR --baseline BASE_SHA --candidate HEAD_SHA --task T-0001 --evidence /external/checks.log`. Give its canonical references to an explicitly empty review context and rerun the command afterwards to catch checkout changes. The packet does not launch or authenticate the reviewer.
 
-Before closeout, identify the actual delivered revision and run `wf delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/verify.yml --branch main --required-check JOB` for each required workflow. It exits nonzero for failed, pending, missing, skipped or mismatched required CI evidence. It does not identify the deployed artifact or grant acceptance/release authority.
+Before declaring delivery complete, identify the actual delivered revision and run `wf delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/verify.yml --branch main --required-check JOB` for each required workflow. It exits nonzero for failed, pending, missing, skipped or mismatched required CI evidence. It does not identify the deployed artifact or grant acceptance/release authority.

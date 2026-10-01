@@ -2,27 +2,35 @@
 // one read-only command instead of a model session. Given the trusted branch's approved tip (baseline) and the
 // revision the round ends at (candidate):
 // - the tasks the round marks Done form one chain from the tip: each was gated against the tip or the previous task's
-//   work (`baseline_revision`), on a candidate (`verified`) that holds everything before it;
+//   work (`baseline_revision`), on a candidate (`implemented`, which the receipts name) that holds everything before
+//   it. `implemented` is read rather than `verified`, which would raise the stage the task's own `wf ci` judges at;
 // - `wf ci` passes again for each, at those revisions, on the signed receipts;
 // - no production or generated path changes outside those candidates, so every line of code in the round passed a gate;
 // - each milestone the round accepts or releases has the owner's acceptance (and release) receipt;
-// - the round's end is an approved baseline, by receipt or derivation, and the local trusted branch is at the tip.
+// - the round's end is an approved baseline, by receipt or derivation, and the local trusted branch is at the tip;
+// - the clone is complete (not shallow), Git answers every question it asks, and replace refs and grafts are ignored.
 // It changes nothing. When every step passes on signed receipts it prints the fast-forward, shell-quoted, for the
 // operator to run; a dry run on unsigned payloads prints none.
 import { gitSource } from './sources.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths } from './paths.js';
 import { evaluateCi } from './ci.js';
-import { gitIn, quote, trustedBranchState } from './derived.js';
+import { ancestorIn, gitIn, quote, trustedBranchState } from './derived.js';
 import { payloadProblems } from './payloads.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 
-export function evaluateCloseout({ repo, baseline, candidate, trust }) {
+export function evaluateCloseout(args) {
+  try { return closeout(args); }
+  catch (e) { return { ok: false, baseline: args.baseline.name, candidate: args.candidate.name, steps: [{ name: 'closeout could read the history', ok: false, detail: [e.message] }], notes: [], fast_forward: null }; }
+}
+function closeout({ repo, baseline, candidate, trust }) {
   const steps = [];
   const step = (name, ok, detail = []) => { steps.push({ name, ok, ...(detail.length ? { detail } : {}) }); return ok; };
   const git = gitIn(repo);
-  const ancestor = (older, newer) => older === newer || git('merge-base', '--is-ancestor', older, newer).ok;
+  const ancestor = ancestorIn(git);
+  const shallow = git('rev-parse', '--is-shallow-repository');
+  if (!shallow.ok || shallow.out.trim() !== 'false') throw new Error('the clone is shallow or unreadable: closeout needs the full history');
   const changed = (from, to) => { const d = git('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? d.out.split('\0').filter(Boolean) : null; };
   const config = loadConfig(baseline);
   const endConfig = (() => { try { return loadConfig(candidate); } catch { return config; } })();
@@ -43,11 +51,13 @@ export function evaluateCloseout({ repo, baseline, candidate, trust }) {
   const before = loadAll(baseline, rd);
   const after = loadAll(candidate, rd);
   const finished = [...after.tasks.values()].map(r => r.data).filter(t => t?.id && t.status === 'Done' && before.tasks.get(t.id)?.data?.status !== 'Done');
+  // A record removed in the round that completes it would take its gate with it: remove Done records afterwards.
+  const removed = [...before.tasks.values()].map(r => r.data).filter(t => t?.id && !after.tasks.has(t.id) && t.status !== 'Done').map(t => t.id);
+  let chained = step('no task record is removed in the round that completes it', !removed.length, removed.length ? [`${removed.join(', ')} ${removed.length > 1 ? 'are' : 'is'} not Done at the trusted tip and gone at the round's end; remove Done records in a later records-only round, after closeout`] : []);
   const groups = new Map();
-  let chained = true;
   for (const t of finished) {
-    if (!SHA.test(t.baseline_revision ?? '') || !SHA.test(t.verified ?? '')) { chained = step(`${t.id} records the revisions it was gated at`, false, ['a Done task records baseline_revision (the approved baseline its wf ci ran against) and verified (the candidate its receipts name)']) && chained; continue; }
-    const key = `${t.baseline_revision} ${t.verified}`;
+    if (!SHA.test(t.baseline_revision ?? '') || !SHA.test(t.implemented ?? '')) { chained = step(`${t.id} records the revisions it was gated at`, false, ['a Done task records baseline_revision (the approved baseline its wf ci ran against) and implemented (the candidate its receipts name)']) && chained; continue; }
+    const key = `${t.baseline_revision} ${t.implemented}`;
     groups.set(key, [...(groups.get(key) ?? []), t.id]);
   }
   const chain = [...groups.entries()].map(([key, ids]) => { const [from, to] = key.split(' '); return { from, to, ids }; });
@@ -94,7 +104,7 @@ export function evaluateCloseout({ repo, baseline, candidate, trust }) {
     if (acceptance) trust.claim('acceptance', acceptance.x);
     if (!['Accepted', 'Released'].includes(before.milestones.get(m.id)?.data?.status)) step(`${m.id} acceptance covers ${needed.join(', ') || 'no scenarios'}`, !!acceptance, acceptance ? [] : ['no owner acceptance receipt in this round names every scenario of the milestone']);
     if (m.status === 'Released') {
-      const release = receipts('release')[0];
+      const release = receipts('release').find(({ x, p }) => p.candidate_revision === x);
       if (release) trust.claim('release', release.x);
       step(`${m.id} release authority`, !!release, release ? [] : ['no owner release receipt in this round']);
     }

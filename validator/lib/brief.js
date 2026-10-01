@@ -8,11 +8,15 @@ import { createHash } from 'node:crypto';
 import { payloadProblems, readPayloads } from './payloads.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
-const flat = v => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+// Control and invisible or direction-changing format characters are shown as escapes, so a path cannot display as
+// another one; other whitespace collapses to one space.
+const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]/g;
+const flat = v => String(v ?? '').replace(INVISIBLE, c => `\\u{${c.codePointAt(0).toString(16)}}`).replace(/\s+/g, ' ').trim();
 const clip = (v, n) => { const s = flat(v); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 // A code span that stays one table cell: no backtick can close it and a pipe is escaped for the table parser.
 const code = (v, n = 300) => { const s = clip(v, n).replaceAll('`', "'").replaceAll('|', '\\|'); return s ? `\`${s}\`` : '`?`'; };
 const short = r => code(typeof r === 'string' ? r.slice(0, 12) : '?');
+const whole = v => code(v, Infinity); // paths are never cut short
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const checkList = p => (Array.isArray(p.checks) ? p.checks : []).map(c => `${code(c?.name, 80)} ${code(c?.result, 20)}`).join(', ');
 
@@ -20,7 +24,7 @@ function attests(p) {
   switch (p.purpose) {
     case 'baseline': return 'you approve the governing records at this revision as the base for the next work';
     case 'governing-change': case 'workflow-change':
-      return `you approve these ${p.purpose === 'workflow-change' ? 'protected workflow' : 'governing'} paths as changed here: ${(Array.isArray(p.paths) ? p.paths : []).map(x => code(x)).join(', ')}`;
+      return `you approve these ${p.purpose === 'workflow-change' ? 'protected workflow' : 'governing'} paths as changed here: ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}`;
     case 'verification': {
       const tests = Array.isArray(p.execution?.tests) ? p.execution.tests : [];
       return `checks ${checkList(p)}; ${tests.filter(t => t?.status === 'passed').length} of ${plural(tests.length, 'test')} in the run passed; environment ${code(p.environment, 100)}`;
@@ -39,8 +43,9 @@ function attests(p) {
 
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
 // names (they must run once and pass; unmapped tests may be skipped), requiredChecks the approved profile's required
-// checks, and changes the paths the round changes that no payload covers: `records` (task and feedback records, which
-// ride along without a receipt) and `uncovered` (anything else), or `unknown` with the reason they could not be listed.
+// checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
+// a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
+// `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
 export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, requiredChecks = null, changes = null }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
@@ -91,11 +96,11 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
     const other = tests.filter(t => t?.status !== 'passed' && !(required ?? []).some(m => m?.file === t?.file && m?.name === t?.name));
     if (other.length) judge.push(`- **${plural(other.length, 'test')} not passed** at ${short(p.revision)}${required ? ', none mapped to acceptance' : '; with `--repo` the brief checks whether any is mapped'}: ${other.slice(0, 5).map(t => code(`${flat(t?.name)}: ${flat(t?.status)}`, 120)).join(', ')}${other.length > 5 ? ` and ${other.length - 5} more` : ''}`);
   }
-  for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(x => code(x)).join(', ')}. Read these diffs yourself.`);
+  for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(Array.isArray(p.scenarios) ? p.scenarios : []).map(x => code(x)).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);
   if (changes?.unknown) judge.push(`- **Paths changed in the round** could not be listed: ${code(changes.unknown)}`);
   for (const c of changes?.records ?? []) judge.push(`- **Record change with no receipt of its own:** ${code(c)}`);
-  if (changes?.uncovered?.length) judge.push(`- **Changed with no payload covering it** (a derived baseline refuses these; list them in a change payload or leave them out): ${changes.uncovered.map(x => code(x)).join(', ')}`);
+  if (changes?.uncovered?.length) judge.push(`- **Changed with no payload covering it** (a derived baseline refuses these; cover each or leave it out): ${changes.uncovered.map(([f, why]) => `${whole(f)} (${why})`).join(', ')}`);
   lines.push('## Needs your judgement', '', ...(judge.length ? judge : ['Nothing beyond the evidence counts above.']), '');
   if (problems.length) lines.push('## Problems: do not sign until fixed', '', ...problems.map(p => `- ${code(p, 400)}`), '');
   lines.push('<sub>The evidence itself (logs, the full review, test lists) is inside the payloads; a signature attests that you assessed it, not that the brief is complete.</sub>');

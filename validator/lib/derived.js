@@ -13,13 +13,14 @@
 //     governing / enforcement path     a governing-change / workflow-change receipt listing it
 //     production / generated path      a complete evidence set (verification, review, integration) the gates accept
 //   where "covered at X" means the receipt is at a revision X after A and no later than R, and the path is unchanged
-//   from X to R. A path name git reports with a backslash or a control character is never derived.
+//   from X to R. A path name with a backslash, a control character or an invisible format character is never derived.
 // - When production content changed, one evidence set at a revision X has R's production content exactly, so the
 //   assembled whole, not only its parts, was verified and integrated.
 // - R's records validate.
-// Git failures fail closed. A derivation that relied on an unsigned payload is provisional (never exit 0).
+// Git failures and shallow clones fail closed; replace refs and grafts are ignored (sources.js gitEnv). A derivation
+// that relied on an unsigned payload is provisional (never exit 0).
 import { spawnSync } from 'node:child_process';
-import { gitSource } from './sources.js';
+import { gitEnv, gitSource } from './sources.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths } from './paths.js';
 import { payloadProblems } from './payloads.js';
@@ -31,11 +32,23 @@ const REVIEW_OWNED = ['Ready', 'Active', 'Done'];
 
 export function gitIn(repo) {
   return (...args) => {
-    const r = spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
-    return { ok: r.status === 0, out: r.stdout ?? '' };
+    const r = spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+    return { ok: r.status === 0, status: r.status, out: r.stdout ?? '' };
+  };
+}
+// `merge-base --is-ancestor` exits 1 for "no"; anything else is an error, never an answer.
+export function ancestorIn(git) {
+  return (older, newer) => {
+    if (older === newer) return true;
+    const r = git('merge-base', '--is-ancestor', older, newer);
+    if (r.status === 0 || r.status === 1) return r.status === 0;
+    throw new Error(`git cannot tell whether ${String(older).slice(0, 12)} precedes ${String(newer).slice(0, 12)}`);
   };
 }
 const names = out => out.split('\0').filter(Boolean);
+// Never derived: a backslash, control characters, and invisible or direction-changing format characters, which can
+// make a path display as another one in the brief or a review.
+export const UNSAFE_PATH = /[\\\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]/;
 export const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 export function withDerivedBaselines(trust, repo) {
@@ -43,17 +56,23 @@ export function withDerivedBaselines(trust, repo) {
   const git = gitIn(repo);
   const memo = new Map();
   const remember = (key, fn) => { if (!memo.has(key)) memo.set(key, fn()); return memo.get(key); };
-  const ancestor = (older, newer) => older === newer || remember(`a ${older} ${newer}`, () => git('merge-base', '--is-ancestor', older, newer).ok);
+  const isAncestor = ancestorIn(git);
+  const ancestor = (older, newer) => remember(`a ${older} ${newer}`, () => isAncestor(older, newer));
   const changedBetween = (from, to) => remember(`d ${from} ${to}`, () => { const d = git('diff', '--no-renames', '--name-only', '-z', from, to, '--'); return d.ok ? new Set(names(d.out)) : null; });
   const source = rev => remember(`s ${rev}`, () => gitSource(repo, rev));
   const configAt = rev => remember(`c ${rev}`, () => { try { return loadConfig(source(rev)); } catch { return null; } });
 
   const compute = (revision, signedOnly) => {
+    try { return derive(revision, signedOnly); } catch (e) { return { result: { approved: false, via: null, revision, reasons: [`git failed during derivation: ${e.message}`] }, used: [] }; }
+  };
+  const derive = (revision, signedOnly) => {
     const used = [];
     const look = (purpose, rev) => { const f = trust.peek(purpose, rev); return f && (!signedOnly || f.level === 'signed') ? f.payload : null; };
     const take = (purpose, rev) => { const p = look(purpose, rev); if (p) used.push([purpose, rev]); return p; };
     const refuse = (reasons, extra = {}) => ({ result: { approved: false, via: null, revision, ...extra, reasons }, used: [] });
     if (!SHA.test(revision ?? '')) return refuse(['not an immutable revision']);
+    const shallow = git('rev-parse', '--is-shallow-repository');
+    if (!shallow.ok || shallow.out.trim() !== 'false') return refuse(['the clone is shallow or unreadable: derivation needs the full history']);
     if (trust.ambiguous('baseline', revision)) return refuse(['the baseline receipts for this revision are ambiguous']);
     if (take('baseline', revision)) return { result: { approved: true, via: 'receipt', revision }, used };
 
@@ -75,7 +94,7 @@ export function withDerivedBaselines(trust, repo) {
     // Revisions after the approved baseline, no later than R, holding receipts; and what changed from each to R.
     const later = [...trust.revisions()].filter(x => SHA.test(x) && x !== from && ancestor(from, x) && ancestor(x, revision))
       .map(x => ({ x, after: changedBetween(x, revision) })).filter(l => l.after !== null);
-    const evidenceAt = x => remember(`e ${x} ${signedOnly}`, () => EVIDENCE.every(purpose => sound(look(purpose, x), x)));
+    const evidenceAt = x => remember(`e ${x} ${signedOnly} ${JSON.stringify(requiredChecks)}`, () => EVIDENCE.every(purpose => sound(look(purpose, x), x)));
     function sound(p, x) {
       if (!p || payloadProblems(p).length) return false;
       const at = source(x);
@@ -102,7 +121,7 @@ export function withDerivedBaselines(trust, repo) {
     const covered = [];
     let production = false;
     for (const p of diff) {
-      if (/[\\\u0000-\u001f\u007f]/.test(p)) { reasons.push(`path ${JSON.stringify(p)} has a backslash or control character and is never derived`); continue; }
+      if (UNSAFE_PATH.test(p)) { reasons.push(`path ${JSON.stringify(p)} has a backslash, control or invisible character and is never derived`); continue; }
       const categories = new Set(configs.map(c => classifyPaths(c, [p])[0].category));
       if (categories.has('unclassified')) { reasons.push(`${p} is unclassified`); continue; }
       for (const category of categories) {

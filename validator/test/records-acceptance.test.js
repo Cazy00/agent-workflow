@@ -87,3 +87,12 @@ test('a milestone may choose task or milestone signing, nothing else', t => {
   fs.writeFileSync(file, original.replace('status: Authorised', 'status: Authorised\nsigning: never'));
   assert.match(p.records().errors.join('\n'), /signing must be one of task, milestone/);
 });
+
+test('a requirement or mapped file that is a directory is not a file', t => {
+  const p = project(t);
+  p.write('docs/workflow/acceptance.json', definitions([example('AC-001-1', { requirement: 'docs/specs' })]));
+  p.write('tests/acceptance-map.json', [{ acceptance: 'AC-001-1', file: 'evidence', name: 'case' }]);
+  const errors = p.records().errors.join('\n');
+  assert.match(errors, /AC-001-1 requirement "docs\/specs" is not a file/);
+  assert.match(errors, /mapped test file "evidence" is not in this revision/);
+});

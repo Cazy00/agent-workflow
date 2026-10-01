@@ -41,7 +41,7 @@ function round(t, { derived = true, mapped = false } = {}) {
   edit(taskPath, x => x.replace(`governing_baseline_revision: ${initial}`, `governing_baseline_revision: ${B}`).replace(/^baseline_revision:.*$/m, `baseline_revision: ${B}`));
   write('src/a.js', 'export const result = 1;\n');
   const C = commit('T-0001: candidate');
-  edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C}\nverified: ${C}`));
+  edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C}`));
   const D = commit('T-0001: record done');
   const keys = generateKeyPairSync('ed25519');
   const key = path.join(temp, 'owner.pem'); fs.writeFileSync(key, keys.publicKey.export({ type: 'spki', format: 'pem' }));
@@ -402,11 +402,11 @@ test('a milestone round gates each task on the unsigned work before it, and clos
   const p = round(t);
   const t2 = 'docs/workflow/tasks/T-0002.md';
   p.write(t2, fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Ready')
-    .replace(/^(start_revision|governing_baseline_revision|baseline_revision):.*$/gm, `$1: ${p.D}`).replace(/^implemented:.*\n^verified:.*$/m, 'implemented:').replace('prerequisites: []', 'prerequisites: [T-0001]'));
+    .replace(/^(start_revision|governing_baseline_revision|baseline_revision):.*$/gm, `$1: ${p.D}`).replace(/^implemented:.*$/m, 'implemented:').replace('prerequisites: []', 'prerequisites: [T-0001]'));
   const E = p.commit('T-0002: claim the task on top of T-0001');
   p.write('src/b.js', 'export const b = 2;\n');
   const C2 = p.commit('T-0002: candidate');
-  p.edit(t2, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C2}\nverified: ${C2}`));
+  p.edit(t2, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C2}`));
   const D2 = p.commit('T-0002: record done');
   p.receipts([{ purpose: 'baseline', revision: p.B }]);
   // Nothing of the round is signed: T-0002's gate runs on T-0001's staged payloads and is provisional.
@@ -434,4 +434,83 @@ test('two separately receipted branches merged together derive nothing until the
   const d = p.trustOf(both).derivation(M);
   assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /assembled/);
   assert.equal(p.trustOf([...both, ...p.evidence(M)]).derivation(M).approved, true);
+});
+
+test('replace refs cannot show the validator signed content for an unsigned commit', t => {
+  const p = round(t);
+  p.write('src/a.js', 'export const result = "evil";\n');
+  const E = p.commit('T-0001: unsigned change');
+  p.git('replace', p.git('rev-parse', `${E}^{tree}`), p.git('rev-parse', `${p.D}^{tree}`));
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', E]);
+  assert.equal(r.status, 1, r.stdout); assert.equal(r.json.fast_forward, null);
+  assert.equal(p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(E).approved, false);
+});
+
+test('a required check added later is judged the same whatever was derived first', t => {
+  const p = round(t);
+  p.edit('docs/workflow/profile.md', x => x.replace('required_checks: [unit]', 'required_checks: [unit, lint]'));
+  const W = p.commit('owner adds a required check');
+  const claims = [{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'governing-change', revision: W, paths: ['docs/workflow/profile.md'] }];
+  assert.equal(p.trustOf(claims).derivation(W).approved, false, 'fresh');
+  const warm = p.trustOf(claims);
+  assert.equal(warm.derivation(p.D).approved, true);
+  assert.equal(warm.derivation(W).approved, false, 'after deriving D in the same run');
+});
+
+test('a git error while comparing history refuses derivation instead of reading as "no"', t => {
+  const p = round(t);
+  const bin = fs.mkdtempSync(path.join(p.temp, 'bin-'));
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  fakeExecutable(path.join(bin, 'git'), `const {spawnSync}=require('child_process');const a=process.argv.slice(2);if(a.includes('--is-ancestor'))process.exit(128);const r=spawnSync(${JSON.stringify(realGit)},a,{stdio:'inherit'});process.exit(r.status??1);\n`);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${saved}`;
+  try {
+    const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(p.D);
+    assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /git/);
+  } finally { process.env.PATH = saved; }
+});
+
+test('Done records are removed after closeout, in a records-only round that needs no signature', t => {
+  const p = round(t);
+  fs.rmSync(path.join(p.repo, taskPath));
+  const gone = p.commit('remove T-0001 in the round that completes it');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const early = p.run(['closeout', '--baseline', p.B, '--candidate', gone]);
+  assert.equal(early.status, 1); assert.ok(early.json.steps.some(s => !s.ok && /removed in the round/.test(s.name)));
+  // After the round closes at D, removing the Done record is a records-only round of its own.
+  p.git('reset', '-q', '--hard', p.D);
+  p.git('update-ref', 'refs/heads/main', p.D);
+  fs.rmSync(path.join(p.repo, taskPath));
+  const tidy = p.commit('remove the Done record');
+  const later = p.run(['closeout', '--baseline', p.D, '--candidate', tidy]);
+  assert.equal(later.status, 0, later.stdout + later.stderr);
+});
+
+test('a path with an invisible direction mark is never derived and is shown escaped in the brief', t => {
+  const p = round(t);
+  const name = 'docs/specs/‮dm.erutaef';
+  p.write(name, 'looks like feature.md\n');
+  const E = p.commit('disguised path');
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'governing-change', revision: E, paths: [name] }]).derivation(E);
+  assert.equal(d.approved, false); assert.match(d.reasons.join(' '), /invisible/);
+  const f = p.file('disguised.json', [p.payload({ purpose: 'governing-change', revision: E, paths: [name] })]);
+  const r = spawnSync(process.execPath, [cli, 'brief', '--payloads', f], { encoding: 'utf8' });
+  assert.ok(r.stdout.includes('\\u{202e}') && !r.stdout.includes('‮'));
+});
+
+test('a review whose implementer owns no task, or a release for another revision, counts for nothing', t => {
+  const p = round(t);
+  const [verification, integration, review] = p.evidence(p.C);
+  const stranger = { ...review, implementer: 'someone-else' };
+  assert.equal(p.trustOf([{ purpose: 'baseline', revision: p.B }, verification, integration, stranger]).derivation(p.D).approved, false);
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Released'));
+  const Rl = p.commit('release M-0001');
+  const base = [{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'governing-change', revision: Rl, paths: ['docs/workflow/milestones/M-0001.md'] }, { purpose: 'acceptance', revision: p.C, decision: 'accepted', scenarios: ['AC-001-1'] }];
+  const release = rev => ({ purpose: 'release', revision: p.C, authority: 'owner', artifact: 'build 1', candidate_revision: rev, readiness: Object.fromEntries(['configuration', 'permissions', 'migration', 'monitoring', 'recovery', 'support', 'devices', 'deferred_information'].map(k => [k, 'verified'])) });
+  p.receipts([...base, release(p.B)]);
+  assert.equal(p.run(['closeout', '--baseline', p.B, '--candidate', Rl]).status, 1, 'a release naming another revision');
+  p.receipts([...base, release(p.C)]);
+  const ok = p.run(['closeout', '--baseline', p.B, '--candidate', Rl]);
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
 });

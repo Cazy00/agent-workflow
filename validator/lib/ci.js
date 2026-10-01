@@ -2,6 +2,7 @@
 import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths } from './paths.js';
+import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
@@ -78,7 +79,7 @@ function recordReferences({ baseline, candidate, rd, changed }) {
 // A governing-change receipt listing the path, at the candidate or at an earlier revision in its history where the path
 // already had the candidate's content; a signed receipt is preferred to an unsigned payload. The receipt relied on is
 // claimed, so relying on an unsigned one makes the result provisional.
-function ownerApprovedTest({ trust, candidate, path }) {
+export function ownerApprovedTest({ trust, candidate, path }) {
   if (!trust?.peek) return false;
   const listing = rev => { const found = trust.peek('governing-change', rev); return found?.payload?.paths?.includes(path) ? found.level : null; };
   const qualifies = rev => rev === candidate.name || (candidate.kind === 'git' && /^[0-9a-f]{40,64}$/.test(rev) && candidate.isAncestor(rev) && !candidate.changedSince(rev, [path]));
@@ -116,6 +117,15 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
 
   const classes = classifyPaths(config, changed);
   for (const c of classes) findings.push(`${c.category}: ${c.path}`);
+  // Classification reads a backslash as a slash, so a receipt naming one file could approve another whose name only looks
+  // like it. A protected path or acceptance test is matched to receipts only when its name is exactly what Git reports
+  // and cannot pass for another (validator/lib/git.js unsafePath).
+  for (const [i, c] of classes.entries()) {
+    const raw = changed[i];
+    if ((c.acceptance_test && unsafePath(raw)) || (['governing', 'enforcement'].includes(c.category) && raw !== c.path)) {
+      findings.push(`protected path ${showPath(raw)} could pass for another path; rename it before it can be approved`); fail = true;
+    }
+  }
   if (classes.some((c) => c.category === 'unclassified')) {
     findings.push('unclassified paths must be classified in docs/workflow/config.json before integration');
     fail = true;

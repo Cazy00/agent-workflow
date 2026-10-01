@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitRunner, safeEnv } from './git.js';
@@ -103,15 +103,49 @@ function checkEnv(names, reportDir) {
   return Object.assign(env, { CI: 'true', WF_REPORT_DIR: reportDir, WF_NODE_REPORTER: fileURLToPath(new URL('../reporters/node-test.js', import.meta.url)) });
 }
 
-// The protected paths must exist and be unreadable from inside the sandbox; otherwise the sandbox protects nothing.
+// Candidate code must not be able to read the protected paths (the signing key and its passphrase file). A protected
+// directory stands for every file under it, which this process must be able to list. With a launcher, the probe first
+// shows that the launcher runs `/bin/cat` on an ordinary file, then that the same command fails on each protected file:
+// a read that fails for another reason (a missing tool, a launcher that runs nothing) proves nothing. Without one,
+// candidate code runs as this process, so this process itself must be refused each protected file (an account that
+// cannot read the key, as POLICY § 7 recommends for strong isolation).
+const PROBE_LIMIT = 500;
 export function probeSandbox({ sandbox, protect, env }) {
   const failures = [];
+  const files = [];
   for (const p of protect) {
-    if (!fs.existsSync(p)) { failures.push(`${p} does not exist, so the probe would prove nothing`); continue; }
-    const r = spawnSync(sandbox, ['/bin/sh', '-c', 'if [ -d "$1" ]; then ls -- "$1"; else head -c 1 -- "$1"; fi >/dev/null 2>&1', 'probe', p], { env, timeout: 30000 });
-    if (r.status === 0) failures.push(`${p} is readable inside the sandbox`);
-    else if (r.error) failures.push(`the sandbox could not run: ${r.error.message}`);
+    let stat;
+    try { stat = fs.statSync(p); } catch (e) { failures.push(`${p} cannot be found (${e.code ?? e.message}), so the probe would prove nothing`); continue; }
+    if (stat.isFile()) { files.push(p); continue; }
+    if (!stat.isDirectory()) { failures.push(`${p} is neither a file nor a directory`); continue; }
+    let found;
+    try { found = fs.readdirSync(p, { recursive: true }).map(f => path.join(p, String(f))).filter(f => { try { return fs.statSync(f).isFile(); } catch { return false; } }); }
+    catch (e) { failures.push(`${p} cannot be listed by this process (${e.code ?? e.message}); name the files under it with --protect instead`); continue; }
+    if (!found.length) failures.push(`${p} holds no files to probe`);
+    else if (found.length > PROBE_LIMIT) failures.push(`${p} holds more than ${PROBE_LIMIT} files; name the key files themselves`);
+    else files.push(...found);
   }
+  if (failures.length) return failures;
+  if (!sandbox) {
+    for (const f of files) {
+      try { fs.closeSync(fs.openSync(f, 'r')); failures.push(`${f} is readable by this account, and without --sandbox candidate code runs as this account`); }
+      catch (e) { if (!['EACCES', 'EPERM'].includes(e.code)) failures.push(`${f} could not be opened for a reason other than a refusal (${e.code ?? e.message})`); }
+    }
+    return failures;
+  }
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-probe-'));
+  try {
+    const control = path.join(scratch, 'control');
+    const token = randomBytes(16).toString('hex');
+    fs.writeFileSync(control, token);
+    const read = f => spawnSync(sandbox, ['/bin/cat', '--', f], { env, encoding: 'utf8', timeout: 30000 });
+    const c = read(control);
+    if (c.error || c.status !== 0 || c.stdout !== token) return [`the launcher did not run /bin/cat on an ordinary file (${c.error?.message ?? `exit ${c.status}`}), so a refused read would prove nothing`];
+    for (const f of files) {
+      const r = read(f);
+      if (r.status === 0 || r.stdout) failures.push(`${f} is readable inside the sandbox`);
+    }
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   return failures;
 }
 
@@ -122,8 +156,8 @@ export function runAttest({ mirror, baseline, candidate, repository, expiresAt, 
   if (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= now) throw new Error('--expires-at must be a future ISO time');
   const missing = requiredChecks.filter(n => !a.checks.some(c => c.name === n));
   if (missing.length) throw new Error(`the profile requires ${missing.join(', ')}, which attest.checks does not run`);
-  if (!sandbox && !unsandboxed) throw new Error('give --sandbox FILE (a launcher outside every checkout) with --protect for each path it must hide, such as the signing key; or --unsandboxed to accept that candidate code can read everything you can');
-  if (sandbox && !protect.length) throw new Error('--sandbox needs at least one --protect PATH to probe, such as the signing key, or the sandbox is untested');
+  if (!sandbox && !unsandboxed) throw new Error('give --sandbox FILE (a launcher outside every checkout) and --protect for each path candidate code must not read, such as the signing key; or --unsandboxed in an account that cannot read them');
+  if (!protect.length) throw new Error('give --protect PATH for each path candidate code must not read, such as the signing key and any passphrase file: attest checks that it cannot');
 
   // The real path, as a test runner reports it (on macOS the temporary directory is reached through a link).
   const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wf-attest-')));
@@ -134,10 +168,8 @@ export function runAttest({ mirror, baseline, candidate, repository, expiresAt, 
   try {
     const env = checkEnv(a.env ?? [], reportDir);
     const sandboxDigest = sandbox ? sha256(fs.readFileSync(sandbox)) : null;
-    if (sandbox) {
-      const failures = probeSandbox({ sandbox, protect, env });
-      if (failures.length) throw new Error(`the sandbox does not hide what it must: ${failures.join('; ')}`);
-    }
+    const failures = probeSandbox({ sandbox, protect, env });
+    if (failures.length) throw new Error(`candidate code could read what it must not, or the probe proves nothing: ${failures.join('; ')}`);
     const inMirror = gitRunner(mirror);
     const resolve = rev => { const r = inMirror('rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}^{commit}`); if (r.status !== 0) throw new Error(`${String(rev).slice(0, 12)} is not on any branch or tag of the repository, so the verified mirror does not hold it`); return r.stdout.trim(); };
     const base = resolve(baseline), cand = resolve(candidate);
@@ -195,8 +227,8 @@ export function runAttest({ mirror, baseline, candidate, repository, expiresAt, 
       if (runs.length !== 1 || runs[0].status !== 'passed') notes.push(`mapped test ${m?.file} / ${m?.name} (${m?.acceptance}) ran ${runs.length} time(s)${runs.length === 1 ? `, ${runs[0].status}` : ''}; it must run once and pass`);
     }
     const gitVersion = (spawnSync('git', ['--version'], { encoding: 'utf8' }).stdout ?? '').trim();
-    const environment = `${os.type()} ${os.release()} ${os.arch()}; Node ${process.version}; ${gitVersion}; wf attest: a fresh checkout of ${cand} from a verified mirror, run by the operator; ${sandbox ? `sandbox ${path.basename(sandbox)} (sha256 ${sandboxDigest.slice(0, 12)}) hiding ${protect.length} path(s)` : 'UNSANDBOXED: candidate code could read everything the operator can'}`;
-    const attested = { tool: 'wf attest', baseline: base, sandbox: sandbox ? { launcher: path.basename(sandbox), sha256: sandboxDigest, protected: protect.length } : null, setup: a.setup ?? [], started_at: started, finished_at: new Date().toISOString() };
+    const environment = `${os.type()} ${os.release()} ${os.arch()}; Node ${process.version}; ${gitVersion}; wf attest: a fresh checkout of ${cand} from a verified mirror, run by the operator; ${sandbox ? `sandbox ${path.basename(sandbox)} (sha256 ${sandboxDigest.slice(0, 12)}) hiding ${protect.length} path(s)` : `unsandboxed, in an account refused ${protect.length} protected path(s)`}`;
+    const attested = { tool: 'wf attest', baseline: base, sandbox: sandbox ? { launcher: path.basename(sandbox), sha256: sandboxDigest } : null, protected: protect.length, setup: a.setup ?? [], started_at: started, finished_at: new Date().toISOString() };
     const common = { repository, revision: cand, expires_at: new Date(Date.parse(expiresAt)).toISOString(), environment, checks, artifacts };
     const payloads = [
       { purpose: 'verification', ...common, execution: { revision: cand, tests }, attested },

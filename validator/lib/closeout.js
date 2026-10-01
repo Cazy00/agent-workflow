@@ -13,10 +13,10 @@
 // operator to run; a dry run on unsigned payloads prints none.
 import { gitSource } from './sources.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
-import { classifyPaths } from './paths.js';
-import { evaluateCi } from './ci.js';
+import { classifyPaths, isAcceptanceTest } from './paths.js';
+import { evaluateCi, ownerApprovedTest } from './ci.js';
 import { ancestorIn, gitIn, quote, trustedBranchState } from './derived.js';
-import { cloneFilters } from './git.js';
+import { cloneFilters, showPath, unsafePath } from './git.js';
 import { payloadProblems } from './payloads.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
@@ -99,6 +99,12 @@ function closeout({ repo, origin = repo, baseline, candidate, trust }) {
     }
     step('every production change in the round passed a task gate', !outside.length, outside);
   }
+
+  // Every acceptance test the round changes, wherever in the round and whatever its category, carries the owner's
+  // governing-change for its content at the round's end: an approved end baseline does not stand in for it.
+  const tests = roundPaths.filter(p => [config, endConfig].some(c => isAcceptanceTest(c, p)));
+  const unapproved = tests.filter(p => unsafePath(p) || !ownerApprovedTest({ trust, candidate, path: p }));
+  if (tests.length) step('every acceptance test the round changes has the owner\'s governing-change', !unapproved.length, unapproved.map(p => `${showPath(p)} has no governing-change listing it at a revision with its content at the round's end`));
 
   // Milestones the round accepts or releases.
   const inRound = x => SHA.test(x) && candidate.isAncestor(x) && ancestor(baseline.name, x) && x !== baseline.name;

@@ -10,7 +10,7 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createTrust } from '../lib/trust.js';
 import { withDerivedBaselines } from '../lib/derived.js';
-import { readJunit, validateAttestConfig } from '../lib/attest.js';
+import { probeSandbox, readJunit, validateAttestConfig } from '../lib/attest.js';
 import { payloadProblems } from '../lib/payloads.js';
 import { renderBrief } from '../lib/brief.js';
 import { classifyPaths } from '../lib/paths.js';
@@ -182,7 +182,7 @@ function attestSetup(t, attest = { setup: ['echo preparing'], checks: [NODE_CHEC
     const json = (() => { try { return JSON.parse(r.stdout); } catch { return null; } })();
     return { ...r, json, out, payloads: fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
   };
-  return { ...p, secret, sandbox, leaky, attestRun };
+  return { ...p, secret, sandbox, leaky, attestRun, sandboxed: ['--sandbox', sandbox, '--protect', secret] };
 }
 
 test('attest runs the approved checks on a fresh checkout and writes verification and integration payloads', t => {
@@ -208,7 +208,7 @@ test('attest runs the approved checks on a fresh checkout and writes verificatio
   assert.equal(gate.status, 0, gate.stdout + gate.stderr);
 });
 
-test('attest refuses a sandbox that does not hide the protected path, and runs unsandboxed only when told', t => {
+test('attest refuses a sandbox that does not hide the protected path', t => {
   const p = attestSetup(t);
   const leaky = p.attestRun(['--sandbox', p.leaky, '--protect', p.secret]);
   assert.equal(leaky.status, 2); assert.match(leaky.stderr, /readable inside the sandbox/); assert.equal(leaky.payloads, null);
@@ -216,15 +216,27 @@ test('attest refuses a sandbox that does not hide the protected path, and runs u
   assert.equal(none.status, 2); assert.match(none.stderr, /--sandbox FILE/);
   const untested = p.attestRun(['--sandbox', p.sandbox]);
   assert.equal(untested.status, 2); assert.match(untested.stderr, /--protect/);
-  const unsandboxed = p.attestRun(['--unsandboxed']);
-  assert.equal(unsandboxed.status, 0, unsandboxed.stderr);
-  assert.match(unsandboxed.payloads[0].environment, /UNSANDBOXED/);
-  assert.equal(unsandboxed.payloads[0].attested.sandbox, null);
+  // A launcher that runs nothing fails every read, which proves nothing.
+  const inert = path.join(p.temp, 'inert.sh'); fs.writeFileSync(inert, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const r = p.attestRun(['--sandbox', inert, '--protect', p.secret]);
+  assert.equal(r.status, 2); assert.match(r.stderr, /did not run \/bin\/cat on an ordinary file/);
+});
+
+test('without a sandbox, attest runs only in an account that cannot read the protected paths', { skip: process.getuid?.() === 0 && 'root can read every file' }, t => {
+  const p = attestSetup(t);
+  assert.match(p.attestRun(['--unsandboxed']).stderr, /--protect/);
+  const readable = p.attestRun(['--unsandboxed', '--protect', p.secret]);
+  assert.equal(readable.status, 2); assert.match(readable.stderr, /readable by this account/);
+  const elsewhere = path.join(p.temp, 'another-account-key.pem'); fs.writeFileSync(elsewhere, 'KEY\n'); fs.chmodSync(elsewhere, 0o000);
+  const ok = p.attestRun(['--unsandboxed', '--protect', elsewhere]);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.payloads[0].environment, /unsandboxed, in an account refused 1 protected path/);
+  assert.equal(ok.payloads[0].attested.sandbox, null); assert.equal(ok.payloads[0].attested.protected, 1);
 });
 
 test('checks get a minimal environment: no signing or workflow variables reach candidate code', t => {
   const p = attestSetup(t, { checks: [{ name: 'unit', run: 'env' }] });
-  const r = p.attestRun(['--unsandboxed'], { env: { OWNER_SIGNING_KEY: '/owner/key.pem', OWNER_SIGNING_PASSPHRASE: 'hunter2', WF_RECEIPTS: '/x', GH_TOKEN: 'ghp_x', SAFE_TO_PASS: 'yes' } });
+  const r = p.attestRun(p.sandboxed, { env: { OWNER_SIGNING_KEY: '/owner/key.pem', OWNER_SIGNING_PASSPHRASE: 'hunter2', WF_RECEIPTS: '/x', GH_TOKEN: 'ghp_x', SAFE_TO_PASS: 'yes' } });
   assert.equal(r.status, 1, r.stderr); // no report, so the mapped test never ran: recorded, not signable
   assert.match(r.json.notes.join(' '), /ran 0 time\(s\)/);
   const log = r.payloads[0].artifacts['unit.log'];
@@ -236,7 +248,7 @@ test('attest runs the baseline\'s checks, whatever the candidate\'s config says'
   const p = attestSetup(t);
   p.edit('docs/workflow/config.json', x => { const c = JSON.parse(x); c.attest.checks = [{ name: 'unit', run: 'echo candidate-chosen; true' }]; return JSON.stringify(c); });
   const E = p.commit('T-0001: try to choose the checks');
-  const r = p.attestRun(['--unsandboxed'], { candidate: E });
+  const r = p.attestRun(p.sandboxed, { candidate: E });
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.payloads[0].artifacts['unit.log'], /candidate-chosen/);
   assert.match(r.payloads[0].artifacts['unit.log'], /node --test/);
@@ -244,14 +256,14 @@ test('attest runs the baseline\'s checks, whatever the candidate\'s config says'
 
 test('a failing mapped test, a failing check or a missing report is recorded and exits 1; do not sign it', t => {
   const p = attestSetup(t);
-  const red = p.attestRun(['--unsandboxed'], { candidate: p.A }); // the acceptance test before the implementation
+  const red = p.attestRun(p.sandboxed, { candidate: p.A }); // the acceptance test before the implementation
   assert.equal(red.status, 1, red.stderr);
   assert.equal(red.json.ok, false);
   assert.match(red.json.notes.join(' '), /mapped test tests\/acceptance\/feature\.test\.mjs \/ required scenario \(AC-001-1\) ran 1 time\(s\), failed/);
   assert.equal(red.payloads[0].checks[0].result, 'failed');
   assert.match(red.json.next, /do not sign/);
   const q = attestSetup(t, { checks: [{ name: 'unit', run: 'true', report: { format: 'junit', file: 'missing.xml' } }] });
-  const missing = q.attestRun(['--unsandboxed']);
+  const missing = q.attestRun(q.sandboxed);
   assert.equal(missing.status, 1); assert.match(missing.json.notes.join(' '), /missing\.xml could not be read/);
 });
 
@@ -260,12 +272,12 @@ test('attest refuses what it cannot vouch for: a candidate without the baseline,
   p.git('checkout', '-q', '-b', 'detached-work', p.initial);
   p.write('src/a.mjs', 'export const result = 1;\n');
   const elsewhere = p.commit('not on top of the baseline');
-  const r = p.attestRun(['--unsandboxed'], { candidate: elsewhere });
+  const r = p.attestRun(p.sandboxed, { candidate: elsewhere });
   assert.equal(r.status, 2); assert.match(r.stderr, /must contain the approved baseline/);
   const q = attestSetup(t, { checks: [{ name: 'lint', run: 'true' }] });
-  const m = q.attestRun(['--unsandboxed']);
+  const m = q.attestRun(q.sandboxed);
   assert.equal(m.status, 2); assert.match(m.stderr, /the profile requires unit/);
-  const inside = spawnSync(process.execPath, [cli, 'attest', '--repo', q.repo, '--baseline', q.B, '--candidate', q.C, '--repository', repository, '--expires-at', '2099-01-01T00:00:00Z', '--out', path.join(q.repo, 'x.json'), '--unsandboxed'], { encoding: 'utf8' });
+  const inside = spawnSync(process.execPath, [cli, 'attest', '--repo', q.repo, '--baseline', q.B, '--candidate', q.C, '--repository', repository, '--expires-at', '2099-01-01T00:00:00Z', '--out', path.join(q.repo, 'x.json'), ...q.sandboxed], { encoding: 'utf8' });
   assert.equal(inside.status, 2); assert.match(inside.stderr, /outside the repository/);
 });
 
@@ -348,4 +360,91 @@ test('wf next puts record errors first and stops when nothing is eligible', t =>
   const idle = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
   assert.equal(idle.next.kind, 'stop');
   assert.deepEqual(idle.blocked, [{ task: 'T-0001', resume_condition: 'the owner answers D-0009' }]);
+});
+
+// --- Regressions from the independent review of MAINT-0005 (Codex, GPT-6), each first shown failing ---
+
+test('R1: a launcher that confines nothing is refused even when the probe\'s tools are missing from PATH', t => {
+  const p = attestSetup(t);
+  const toolDir = path.join(p.temp, 'tools'); fs.mkdirSync(toolDir);
+  fs.symlinkSync(spawnSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).stdout.trim(), path.join(toolDir, 'git'));
+  const r = p.attestRun(['--sandbox', p.leaky, '--protect', p.secret], { env: { PATH: toolDir } });
+  assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /readable inside the sandbox/); assert.equal(r.payloads, null);
+});
+
+test('R2: a protected directory stands for the files under it, and one this process cannot list is refused', { skip: process.getuid?.() === 0 && 'root can list every directory' }, t => {
+  const p = attestSetup(t);
+  const dir = path.join(p.temp, 'trust'); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'key.pem'), 'KEY\n');
+  const leaky = probeSandbox({ sandbox: p.leaky, protect: [dir], env: { PATH: process.env.PATH } });
+  assert.match(leaky.join(' '), /key\.pem is readable inside the sandbox/);
+  fs.chmodSync(dir, 0o111);
+  const locked = probeSandbox({ sandbox: p.sandbox, protect: [dir], env: { PATH: process.env.PATH } });
+  fs.chmodSync(dir, 0o700); // before the project directory is removed
+  assert.match(locked.join(' '), /cannot be listed by this process/);
+});
+
+test('R3: closeout requires the governing-change for an acceptance test changed after the gated candidate, whatever its category', t => {
+  const p = project(t, { acceptanceTests: [...OWNER_TESTS, 'docs/acceptance/**'] });
+  const approved = [{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), testChange(p.A)];
+  p.write('docs/acceptance/case.json', '{"expected": "agent selected"}\n');
+  const E = p.commit('acceptance data changed after the gated candidate');
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', E], { claims: [...approved, { purpose: 'baseline', revision: E }] });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /docs\/acceptance\/case\.json has no governing-change listing it/);
+  const ok = p.run(['closeout', '--baseline', p.B, '--candidate', E], { claims: [...approved, { purpose: 'baseline', revision: E }, { purpose: 'governing-change', revision: E, paths: ['docs/acceptance/case.json'] }] });
+  assert.ok(!/case\.json has no governing-change/.test(ok.stdout), ok.stdout);
+});
+
+test('R4: a receipt for one acceptance file does not approve another whose name only looks like it', t => {
+  const p = project(t);
+  const clean = 'tests/acceptance/feature/test.mjs', literal = 'tests/acceptance/feature\\test.mjs';
+  p.write(clean, '// owner-approved content\n');
+  const F = p.commit('approved slash counterpart');
+  p.write(literal, '// different content the owner never approved\n');
+  const E = p.commit('a distinct file with a backslash in its name');
+  const r = p.run(ci(p, E), { claims: [{ purpose: 'baseline', revision: p.B }, ...p.evidence(E), testChange(p.A), { purpose: 'governing-change', revision: F, paths: [clean] }] });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.json.findings.join('\n'), /could pass for another path/);
+});
+
+test('R5: wf next holds an Active task whose readiness waits on the owner\'s decision instead of continuing it', t => {
+  const p = project(t);
+  p.git('checkout', '-q', 'main');
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Active'));
+  p.edit('docs/workflow/decisions/D-0001.md', x => x.replace('status: Resolved', 'status: Open'));
+  const V = p.commit('a reserved decision reopens');
+  p.edit(taskPath, x => x.replace(/^governing_baseline_revision:.*$/m, `governing_baseline_revision: ${V}`));
+  const B = p.commit('current sources');
+  const next = p.run(['next', '--baseline', B], { claims: [{ purpose: 'baseline', revision: B }] });
+  assert.equal(next.status, 0, next.stderr);
+  assert.notEqual(next.json.next.kind, 'continue');
+  assert.deepEqual(next.json.held.map(h => h.task), ['T-0001']);
+  assert.match(next.json.held[0].reasons.join(' '), /D-0001/);
+});
+
+test('wf next prints manual-mode commands with the trust options they need', t => {
+  const p = project(t);
+  p.git('checkout', '-q', 'main');
+  const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
+  assert.match(next.next.run[0], /^wf readiness --baseline [0-9a-f]{40} --task T-0001 --trust-key … --receipts … --repository …$/);
+});
+
+test('wf next reads pull-request claims: a duplicate claim comes first, and a claimed task is not started again', t => {
+  const p = project(t);
+  p.git('checkout', '-q', 'main');
+  const pr = (number, branch) => ({ number, title: `T-0001 work ${number}`, headRefName: branch, author: { login: `worker-${number}` }, isDraft: true, isCrossRepository: false });
+  const twice = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo), pullRequests: [pr(1, 'T-0001'), pr(2, 'T-0001-other')] });
+  assert.equal(twice.next.kind, 'claim');
+  const once = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo), pullRequests: [pr(1, 'T-0001')] });
+  assert.ok(![once.next, ...once.also].some(a => a.kind === 'start' && a.item === 'T-0001'), JSON.stringify(once.next));
+});
+
+test('wf next starts tasks in the order the milestone plan lists them, not by ID', t => {
+  const p = project(t);
+  p.git('checkout', '-q', 'main');
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002'));
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Authorised\ntasks: [T-0002, T-0001]'));
+  const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
+  assert.equal(next.next.item, 'T-0002');
+  assert.equal(next.also.find(a => a.kind === 'start')?.item, 'T-0001');
 });

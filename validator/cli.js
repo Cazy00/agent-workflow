@@ -29,7 +29,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
-  next [--baseline TRUSTED_TIP] [--candidate REV]: the agent's next action, what to read and what to run (--json for data); grants nothing
+  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
@@ -143,7 +143,7 @@ async function main() {
   if (cmd === 'attest') {
     for (const k of ['baseline', 'candidate', 'repository', 'expires-at', 'out']) if (!o[k]) throw new WfError(`attest needs --${k}`);
     if (o['trust-key'] || o.receipts || o['unsigned-receipts']) throw new WfError('attest reads no key or receipts: it produces payloads for the owner to sign');
-    if (o.unsandboxed && (o.sandbox || o.protect)) throw new WfError('--unsandboxed cannot be combined with --sandbox or --protect');
+    if (o.unsandboxed && o.sandbox) throw new WfError('--unsandboxed cannot be combined with --sandbox');
     const repo = path.resolve(o.repo ?? process.cwd());
     const root = fs.realpathSync(repo);
     const outside = file => { const r = path.relative(root, file); return r === '..' || r.startsWith(`..${path.sep}`) || path.isAbsolute(r); };
@@ -232,8 +232,13 @@ async function main() {
     return 0;
   }
   if (cmd === 'next') {
+    let pullRequests = null;
+    if (o['pull-requests']) {
+      try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
+      if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
+    }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
-    const view = evaluateNext({ baseline, candidate, trustedBranch });
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
   }

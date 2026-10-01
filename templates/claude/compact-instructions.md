@@ -1,0 +1,3 @@
+## Compact Instructions
+
+When the conversation is compacted, keep in the summary: the milestone and task IDs and the task record's path; the branch, commits and pull request; decisions with their reasons, and owner instructions given only in conversation, quoted exactly; anything unfinished, failing, skipped or promised. Leave file contents and tool output out of the summary; they can be read again. Mark as unverified any claim of work done, tested, reviewed or approved that no commit, record or command output shows. After a compaction, run `scripts/wf next` (with the trust options when you have them) and check `git status` and `git log` before continuing, and trust them over the summary.

@@ -284,7 +284,8 @@ test('JUnit reports from common runners give file and name as the acceptance map
     <testcase classname="tests/a.test.ts" name="suite &gt; case one"/>
     <testcase classname="tests/a.test.ts" name="suite > case two" time="0.1"><failure message="x">expected <b></failure></testcase>
     <testcase classname="pkg.mod" file="tests/test_b.py" name="test_b"><skipped/></testcase>
-    <testcase classname="tests/a.test.ts" name="printed"><system-out><![CDATA[<testcase name="fake"/>]]></system-out></testcase>
+    <testcase classname="tests/a.test.ts" name="printed"><system-out><![CDATA[log line </testcase> more]]></system-out></testcase>
+    <system-out><![CDATA[<testcase classname="tests/a.test.ts" name="printed by a test, not run"/>]]></system-out>
   </testsuite></testsuites>`;
   assert.deepEqual(readJunit(xml, '/root'), [
     { file: 'tests/a.test.ts', name: 'suite > case one', status: 'passed' },

@@ -259,6 +259,10 @@ ${shared ? `\nSeveral people share the owner role (\`owners\` in the profile): w
 write('CLAUDE.md', `# Shared repository instructions
 
 Read \`AGENTS.md\`, then \`.cache/agent-workflow/.agents/skills/workflow/SKILL.md\` and the relevant procedure it identifies. They are the shared workflow for this repository. Tool-specific defaults do not grant additional authority. Check the current baseline and task records before continuing.
+
+## Compact Instructions
+
+When the conversation is compacted, keep: the milestone and task IDs and the task record's path; the branch, commits and pull request; decisions with their reasons, and owner instructions given only in conversation, quoted exactly; anything unfinished, failing, skipped or promised. Drop file contents and tool output; they can be read again. Mark as unverified any claim of work done, tested, reviewed or approved that no commit, record or command output shows. After a compaction, run \`scripts/wf next\` and check \`git status\` and \`git log\` before continuing, and trust them over the summary.
 `);
 
 // Claude Code's independent-reviewer subagent: the separate review context of procedures/review.md.

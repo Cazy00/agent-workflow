@@ -20,8 +20,10 @@ Acceptance mappings, execution, assertions, helpers, fixtures, setup, configurat
 ## Findings and disposition
 Category: duplication · silenced error · scope · weakened test · security · boundary or convention · correctness · other.
 
-| Finding | Category | Severity | Evidence | Resolution / approved residual issue |
-|---|---|---|---|---|
+A blocking correctness or security finding carries a failing test, an exploit or exact steps, or says why none can be written.
+
+| Finding | Category | Severity | Evidence | Reproduction | Resolution / approved residual issue |
+|---|---|---|---|---|---|
 
 ## Verification and limitations
 Environment, executed checks and tested revision:

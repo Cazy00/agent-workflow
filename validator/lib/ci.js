@@ -2,6 +2,7 @@
 import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths } from './paths.js';
+import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
@@ -75,6 +76,21 @@ function recordReferences({ baseline, candidate, rd, changed }) {
   return errors;
 }
 
+// A governing-change receipt listing the path, at the candidate or at an earlier revision in its history where the path
+// already had the candidate's content; a signed receipt is preferred to an unsigned payload. The receipt relied on is
+// claimed, so relying on an unsigned one makes the result provisional.
+export function ownerApprovedTest({ trust, candidate, path }) {
+  if (!trust?.peek) return false;
+  const listing = rev => { const found = trust.peek('governing-change', rev); return found?.payload?.paths?.includes(path) ? found.level : null; };
+  const qualifies = rev => rev === candidate.name || (candidate.kind === 'git' && /^[0-9a-f]{40,64}$/.test(rev) && candidate.isAncestor(rev) && !candidate.changedSince(rev, [path]));
+  const revisions = [candidate.name, ...[...(trust.revisions?.() ?? [])].filter(r => r !== candidate.name).sort()];
+  for (const level of ['signed', 'provisional']) {
+    const rev = revisions.find(r => listing(r) === level && qualifies(r));
+    if (rev) return trust.claim('governing-change', rev) !== null;
+  }
+  return false;
+}
+
 export function evaluateCi({ baseline, candidate = baseline, task, tasks, changed = [], trust = null, changedLines = null, deliveryEvidence = null, ownerApproved = false }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -92,7 +108,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     } else findings.push('unverified: Spec Kit tracked-output exclusion requires a Git candidate');
   }
 
-  const records = validateRecords(candidate, rd);
+  const records = validateRecords(candidate, rd, config);
   for (const e of records.errors) { findings.push(`record: ${e}`); fail = true; }
   const ids = recordIds({ baseline, candidate, rd, changed });
   for (const e of ids.errors) { findings.push(e); fail = true; }
@@ -101,6 +117,15 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
 
   const classes = classifyPaths(config, changed);
   for (const c of classes) findings.push(`${c.category}: ${c.path}`);
+  // Classification reads a backslash as a slash, so a receipt naming one file could approve another whose name only looks
+  // like it. A protected path or acceptance test is matched to receipts only when its name is exactly what Git reports
+  // and cannot pass for another (validator/lib/git.js unsafePath).
+  for (const [i, c] of classes.entries()) {
+    const raw = changed[i];
+    if ((c.acceptance_test && unsafePath(raw)) || (['governing', 'enforcement'].includes(c.category) && raw !== c.path)) {
+      findings.push(`protected path ${showPath(raw)} could pass for another path; rename it before it can be approved`); fail = true;
+    }
+  }
   if (classes.some((c) => c.category === 'unclassified')) {
     findings.push('unclassified paths must be classified in docs/workflow/config.json before integration');
     fail = true;
@@ -188,6 +213,17 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
         if (trust?.mode === 'enforced' && !receipt) findings.push(`unverified: ${purpose}: no receipt; the code-owner review of this pull request is the approval for ${protectedPaths.join(', ')} (enforced mode)`);
         else { findings.push(`${purpose} approval for the exact candidate and protected paths is required`); fail = true; }
       }
+    }
+  }
+  // Owner-approved acceptance tests keep their category's gates and also need the owner's governing-change listing
+  // them: at this candidate, or at an earlier revision in its history where they already had their current content,
+  // so the owner can approve the tests before implementation starts (POLICY § 9).
+  const acceptanceTests = classes.filter(c => c.acceptance_test && c.category !== 'governing').map(c => c.path);
+  if (acceptanceTests.length) {
+    if (trust?.mode === 'enforced') findings.push(`unverified: governing-change: no receipt; the code-owner review of this pull request is the approval for the acceptance tests ${acceptanceTests.join(', ')} (enforced mode)`);
+    else {
+      const missing = acceptanceTests.filter(p => !ownerApprovedTest({ trust, candidate, path: p }));
+      if (missing.length) { findings.push(`acceptance tests ${missing.join(', ')} need the owner's governing-change receipt listing them, at this candidate or at an earlier revision in its history where they already had this content (POLICY § 9)`); fail = true; }
     }
   }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');

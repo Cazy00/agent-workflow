@@ -33,11 +33,10 @@ Default to one coordinating agent per active milestone. Use additional workers o
 This document is the reference policy. Agents should normally load:
 
 1. The short repository guide.
-2. The relevant procedure.
-3. The current task and milestone records.
-4. The governing requirements and applicable technical guidance.
+2. The output of `wf next`, which works out the next action from the records.
+3. Only what it names: the procedure for that action, the current task and milestone records, and the governing requirements.
 
-The full document is consulted when a rule is unclear or the workflow is being maintained.
+An agent re-reads whatever it is told to read in every session, so the workflow tells it what applies now rather than handing it this document. The full document is consulted when a rule is unclear or the workflow is being maintained.
 
 ---
 
@@ -385,6 +384,8 @@ A free-text Git author field does not prove approval. A signature is relevant on
 
 In manual mode the owner may choose two economies that keep every stage and protected-path receipt. The protected configuration may let a baseline follow from receipts already given: a revision whose every difference from the newest explicitly approved baseline carries the owner's receipt for that exact content is itself approved; only task and feedback records, such as a task marked Done, carry no signature of their own, as a records-only merge needs no owner review in enforced mode. A milestone may also collect its signatures in one round at its end: work continues on unsigned evidence meanwhile, nothing reaches the trusted branch before the round is signed and its gates rerun, and a result that relies on unsigned evidence is never approval.
 
+In manual mode the owner's machine can also produce the technical evidence itself (`wf attest`): it runs the approved checks on a fresh checkout of the exact candidate, confined so that candidate code cannot reach the signing key, and writes the verification and integration evidence the owner signs. The signature then records what the owner's own run observed, not an agent's report of its run. The owner's attention goes to intent (requirements, acceptance tests, protected changes) and outcomes (acceptance and release); the machines check the steps between.
+
 Check repository-plan support during setup. GitHub’s documented availability differs for public and private repositories. If required enforcement is unavailable, record the limitation and use an explicit alternative; do not claim equivalent protection. [GitHub availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 
 ---
@@ -403,6 +404,8 @@ Within an authorised milestone:
 6. Obtain independent review.
 7. Resolve findings and preserve evidence.
 8. Update progress and continue with the next eligible task.
+
+Steps 1 to 3 are computed: `wf next` reads the records and names the next action, what to read for it and what to run. A session starts from that output in a fresh context and ends at a checkpoint, a signing round or a stop, so no session carries the milestone's history. The coordinator is a role that the records and `wf next` hold between sessions, not one long-running session; a session that carries every earlier step re-reads them all on each new step.
 
 Use separate worktrees for concurrent changes. Agree shared contracts before dependent work diverges.
 
@@ -522,6 +525,8 @@ The checking mechanism should:
 
 **A tag provides traceability, not proof of test quality.**
 
+The project may name its automated acceptance tests and their map in `paths.acceptance_tests`. They keep the gates of their category, and every change to them also needs the owner's governing-change approval, which the owner can give before implementation, at the revision that wrote them. The agent that writes the code then cannot also rewrite the tests that judge it. Every mapped test must be among them. The helpers and fixtures they use remain production code under review.
+
 A test can retain its ID while its helper, fixture, setup, assertion, or execution configuration is weakened. Review must inspect those surrounding changes.
 
 Untagged tests remain subject to normal quality and regression review.
@@ -553,6 +558,8 @@ The reviewer receives:
 The reviewer does **not** receive the implementer’s conversation or informal reasoning. Canonical design rationale remains available.
 
 Review covers scope, correctness, maintainability, security, regression risk, and whether tests still represent approved behaviour.
+
+Independence is of context and, where available, of model. A reviewer built on the implementer's model shares its blind spots; prefer one from a different model family, or give each reviewer a distinct focus such as security or conformance to the specification. A blocking correctness or security finding comes with a failing test, an exploit or exact reproduction steps where one can be written; one that cannot says so and is weighed as judgement.
 
 Collect review results through the review procedure. An implementer-written `reviewed: true` field cannot substitute for it.
 

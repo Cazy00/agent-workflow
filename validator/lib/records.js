@@ -2,6 +2,7 @@
 import { parseFrontMatter } from './frontmatter.js';
 import { planningEnforcement } from './planning.js';
 import { validateAcceptanceFiles } from './acceptance-files.js';
+import { validateAttestConfig } from './attest.js';
 
 export class WfError extends Error {}
 
@@ -41,6 +42,9 @@ export function loadConfig(source) {
   try {
     const config = JSON.parse(text);
     planningEnforcement(config);
+    const tests = config.paths?.acceptance_tests;
+    if (tests !== undefined && (!Array.isArray(tests) || tests.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('paths.acceptance_tests must be an array of glob strings');
+    validateAttestConfig(config.attest);
     if (config.delegation !== undefined) {
       const d = config.delegation;
       if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||
@@ -118,9 +122,13 @@ export function ownerErrors(all) {
   return errors;
 }
 
-export function validateRecords(source, recordsDir) {
+// The acceptance-test globs come from `config` when given (a gate passes the baseline's), otherwise from the
+// source's own config.
+export function validateRecords(source, recordsDir, config = null) {
   const all = loadAll(source, recordsDir);
-  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source));
+  let tests = config?.paths?.acceptance_tests;
+  if (!config) { try { tests = loadConfig(source).paths?.acceptance_tests; } catch { /* a missing or invalid config is reported where it is loaded */ } }
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source, { acceptanceTests: tests ?? [] }));
   if (!all.profile) all.errors.unshift(`${recordsDir}/profile.md: missing`);
   return {
     ok: all.errors.length === 0,

@@ -22,7 +22,7 @@
 import { gitSource } from './sources.js';
 import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
-import { classifyPaths } from './paths.js';
+import { classifyPaths, isAcceptanceTest } from './paths.js';
 import { payloadProblems } from './payloads.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
@@ -130,6 +130,12 @@ export function withDerivedBaselines(trust, repo) {
         else { hit = unchangedAt(p, evidenceAt); production = true; }
         if (!hit) reasons.push(`${category} path ${p} is not covered by an owner receipt at a revision where it already had its current content`);
         else if (hit.x) covered.push({ path: p, category, receipt: hit.x });
+      }
+      // An owner-approved acceptance test (paths.acceptance_tests in either config) also needs the governing-change.
+      if (configs.some(c => isAcceptanceTest(c, p)) && !categories.has('governing')) {
+        const hit = unchangedAt(p, changeListing('governing-change', p));
+        if (!hit) reasons.push(`acceptance test ${p} is not covered by the owner's governing-change receipt at a revision where it already had its current content`);
+        else covered.push({ path: p, category: 'governing', receipt: hit.x });
       }
     }
     if (production && !reasons.length) {

@@ -884,6 +884,21 @@ and: "how about you consult or check with a sub-agent using Fable, discuss about
 
 ---
 
+## IDEA-20 — Organised for how an agent works, not how a team of people works
+
+**Status:** Implemented for `v1.10.0` (MAINT-0005, 2026-10-01), pending independent review, owner approval and tag.
+
+**Owner's words (2026-10-01, after the Tawali teardown and v1.9.0):**
+> Do you think we are approaching this from a wrong angle? Or we are on the right track. Maybe we are trying to mimic the way software development classically done. When its being done by humans. Now we are doing it with a machine and AI (LLM). Does this make a difference on how we are treating it, on how we are organizing it right now? … If it is, does make difference? Where changes needs to be done? Exactly.
+
+and, after the answer: "lets do them".
+
+**Assessment:** the goals hold (one owner with authority, state in files, mechanical gates, fresh-context review); the shape was borrowed from teams of people, and the pilot's largest costs sat where it does not fit. A person remembers for free; an agent pays to reread everything it carries (82% of the pilot's $84). Writing code is cheap and the owner's attention is not (37 signatures, rounds signed 16 to 60 seconds after requests of up to 160 KB). A person reads a handbook once; an agent rereads it every session (the validator source read 32 times). The agent that wrote the code also wrote the tests judging it (tests under `tests/**`, production), and a second copy of the same model shares its blind spots.
+
+**Implemented:** `wf next` (the coordinator's selection as code); `paths.acceptance_tests` (the owner approves every change to the acceptance tests, before implementation if wanted); `wf attest` (the owner's machine runs the checks in a sandbox and writes the evidence the owner signs); reviewers from another model family, and a reproduction for each blocking finding; a maintenance rule to ship rules as checks; a freeze on the Git-forgery defences.
+
+**Not claimed:** a measured saving. A matched trial (`templates/pilot.md`) on one milestone, v1.9.0 against v1.10.0 with both opt-ins, measuring cost per accepted acceptance ID, owner minutes and defects found after acceptance, is the test.
+
 ## Themes across the ideas (note-taker's observation, for the evaluator to confirm or discard)
 
 1. **Self-verification by running the app** (IDEA-02, A10, A11). This is the one change the owner explicitly asked for. It is probably the highest-value item, and the harness credential limit needs a practical workaround.

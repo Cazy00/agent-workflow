@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
 import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
+import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
@@ -16,13 +18,18 @@ import { evaluateStatus, renderStatus } from './lib/status.js';
 import { trustedBranchState, withDerivedBaselines } from './lib/derived.js';
 import { evaluateCloseout } from './lib/closeout.js';
 import { readPayloads, renderBrief } from './lib/brief.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'closeout', 'brief', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request', 'unsigned-receipts', 'payloads'];
+import { runAttest } from './lib/attest.js';
+import { evaluateNext, renderNext } from './lib/next.js';
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
+  attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
+    the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
+  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
@@ -46,12 +53,13 @@ async function main() {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') { o.json = true; continue; }
+    if (a === '--unsandboxed') { o.unsandboxed = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
       const value = argv[++i];
       if (name === 'changed') o.changed.push(value);
-      else if (['required-check', 'evidence'].includes(name)) (o[name] ??= []).push(value);
+      else if (['required-check', 'evidence', 'protect'].includes(name)) (o[name] ??= []).push(value);
       else if (o[name] !== undefined) throw new WfError(`duplicate option: ${a}`);
       else o[name] = value;
     } else if (!cmd) cmd = a;
@@ -77,12 +85,13 @@ async function main() {
     const run = repo ? gitRunner(repo) : null;
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
-    let requiredChecks = null, changes = null;
+    let requiredChecks = null, changes = null, attestConfigured = false;
     if (repo && o.baseline) {
       // Everything the round changes from the approved baseline to its end (--candidate, or the latest payload
       // revision), judged path by path by both configs, as a derived baseline judges it (lib/derived.js).
       const base = gitSource(repo, o.baseline);
       const configs = [loadConfig(base)];
+      attestConfigured = configs[0].attest !== undefined;
       const rd = configs[0].records_dir ?? 'docs/workflow';
       requiredChecks = list(loadAll(base, rd).profile?.data?.required_checks);
       let payloads = [];
@@ -121,14 +130,43 @@ async function main() {
               : false;
             if (!ok) { changes.uncovered.push([f, category === 'unclassified' ? 'unclassified' : `${category}: needs ${category === 'governing' ? 'a governing-change listing it' : category === 'enforcement' ? 'a workflow-change listing it' : category === 'planning' ? 'an evidence set or a change payload listing it' : 'an evidence set'} at a revision where it has its final content`]); break; }
           }
+          if (configs.some(c => isAcceptanceTest(c, f)) && !categories.has('governing') && !unchangedAt(f, listing('governing-change', f))) changes.uncovered.push([f, 'acceptance test: needs a governing-change listing it at a revision where it has its final content']);
         }
       }
     }
-    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes });
+    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;
     } finally { mirror?.cleanup(); }
+  }
+  if (cmd === 'attest') {
+    for (const k of ['baseline', 'candidate', 'repository', 'expires-at', 'out']) if (!o[k]) throw new WfError(`attest needs --${k}`);
+    if (o['trust-key'] || o.receipts || o['unsigned-receipts']) throw new WfError('attest reads no key or receipts: it produces payloads for the owner to sign');
+    if (o.unsandboxed && o.sandbox) throw new WfError('--unsandboxed cannot be combined with --sandbox');
+    const repo = path.resolve(o.repo ?? process.cwd());
+    const root = fs.realpathSync(repo);
+    const outside = file => { const r = path.relative(root, file); return r === '..' || r.startsWith(`..${path.sep}`) || path.isAbsolute(r); };
+    const out = path.resolve(o.out);
+    if (!outside(path.dirname(out)) || fs.existsSync(out)) throw new WfError('--out must be a new file outside the repository, such as <round>-attest.json in the signing drop');
+    const sandbox = o.sandbox ? fs.realpathSync(o.sandbox) : null;
+    if (sandbox && (!outside(sandbox) || !fs.statSync(sandbox).isFile())) throw new WfError('--sandbox must be a launcher file outside the repository');
+    const protect = (o.protect ?? []).map(p => path.resolve(p));
+    // Config, profile and candidate come from a verified mirror (lib/git.js), never from the clone's own objects or config.
+    const mirror = verifiedMirror(repo);
+    try {
+      const base = gitSource(mirror.path, o.baseline);
+      const config = loadConfig(base);
+      const requiredChecks = list(loadAll(base, config.records_dir ?? 'docs/workflow').profile?.data?.required_checks);
+      const result = runAttest({ mirror: mirror.path, baseline: base.name, candidate: o.candidate, repository: o.repository, expiresAt: o['expires-at'], config, requiredChecks, sandbox, protect, unsandboxed: o.unsandboxed === true });
+      const summary = { ok: result.ok, checks: result.checks ?? [], tests: { total: result.tests?.length ?? 0, passed: result.tests?.filter(t => t.status === 'passed').length ?? 0, failed: result.tests?.filter(t => t.status === 'failed').length ?? 0, skipped: result.tests?.filter(t => t.status === 'skipped').length ?? 0 }, notes: result.notes ?? [], sandboxed: result.sandboxed ?? !!sandbox };
+      if (result.setupFailed) { console.log(JSON.stringify({ ...summary, ok: false, error: result.summary, setup_log: result.artifacts['setup.log'].slice(-4000) }, null, 2)); return 1; }
+      const raw = `${JSON.stringify(result.payloads, null, 2)}\n`;
+      fs.writeFileSync(out, raw, { mode: 0o600, flag: 'wx' });
+      const digest = createHash('sha256').update(raw).digest('hex');
+      console.log(JSON.stringify({ ...summary, file: out, sha256: digest, next: result.ok ? `sign it: node sign-round.mjs ${out} ${digest}` : 'do not sign: a check, a report or a mapped test failed; the payloads record what happened' , limitation: 'The checks are the candidate\'s own code; attest proves your machine ran them on this exact revision, not that they test enough.' }, null, 2));
+      return result.ok ? 0 : 1;
+    } finally { mirror.cleanup(); }
   }
   if (cmd === 'delivery-check') {
     const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
@@ -151,7 +189,14 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && !['records', 'status'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status', 'next'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
+  // `wf next` defaults its baseline to the local trusted branch, named by the working tree's config.
+  if (!o.baseline && cmd === 'next') {
+    let branch = 'main';
+    try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; } catch { /* reported below */ }
+    const tip = gitRunner(repo)('rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`);
+    if (tip.status === 0) o.baseline = tip.stdout.trim();
+  }
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
   const candidate = o.candidate || o.head ? source(o.candidate ?? o.head) : dirSource(repo);
@@ -162,7 +207,7 @@ async function main() {
   if (o['unsigned-receipts'] && !o.receipts) throw new WfError('--unsigned-receipts is a dry run of a manual-mode round: it needs --trust-key, --receipts and --repository too');
   if (o['trust-key'] || o.receipts || o.repository) {
     if (!o['trust-key'] || !o.receipts || !o.repository) throw new WfError('trust requires --trust-key, --receipts and --repository together');
-    if (baseline.kind !== 'git') throw new WfError(cmd === 'status' ? 'with the trust options, status needs --baseline at an approved revision: the trusted branch is named by approved config, not the working tree' : 'approval requires an immutable Git baseline');
+    if (baseline.kind !== 'git') throw new WfError(['status', 'next'].includes(cmd) ? `with the trust options, ${cmd} needs --baseline at an approved revision: the trusted branch is named by approved config, not the working tree` : 'approval requires an immutable Git baseline');
     const keyPath = fs.realpathSync(o['trust-key']);
     const relative = path.relative(fs.realpathSync(repo), keyPath);
     if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('owner trust key must be provisioned outside the candidate repository');
@@ -184,6 +229,17 @@ async function main() {
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
     const view = evaluateStatus({ baseline, candidate, pullRequests, trustedBranch });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
+    return 0;
+  }
+  if (cmd === 'next') {
+    let pullRequests = null;
+    if (o['pull-requests']) {
+      try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
+      if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
+    }
+    const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
+    console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
   }
   // Enforced mode: the baseline's own config and profile (both code-owner protected) record that GitHub

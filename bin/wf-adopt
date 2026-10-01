@@ -289,7 +289,7 @@ else {
   if (created.length) console.log(`\nCreated:\n  ${created.join('\n  ')}`);
   if (appended.length) console.log(`\nAppended:\n  ${appended.join('\n  ')}`);
   if (skipped.length) console.log(`\nLeft as they were (already present):\n  ${skipped.join('\n  ')}`);
-  if (skipped.some(s => s === 'AGENTS.md' || s === 'CLAUDE.md')) console.log('\nAn adapter already existed: add a pointer to .cache/agent-workflow/.agents/skills/workflow/SKILL.md and docs/workflow/ to it yourself, and copy .cache/agent-workflow/templates/claude/compact-instructions.md into CLAUDE.md.');
+  if (skipped.some(s => s === 'AGENTS.md' || s === 'CLAUDE.md')) console.log(`\nAn adapter already existed: add a pointer to .cache/agent-workflow/.agents/skills/workflow/SKILL.md and docs/workflow/ to it yourself${skipped.includes('CLAUDE.md') ? ', and copy .cache/agent-workflow/templates/claude/compact-instructions.md into CLAUDE.md' : ''}.`);
   if (version === 'UNRELEASED') console.log('\nNote: the pin is not a released tag; recorded as UNRELEASED.');
   console.log('\nNext: read docs/workflow/setup.md. It holds the owner steps and the agent steps.');
   console.log(checklist);

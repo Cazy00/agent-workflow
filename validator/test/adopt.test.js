@@ -69,6 +69,17 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.equal(JSON.parse(wf.stdout).ok, true);
 });
 
+test('an existing AGENTS.md alone gets the pointer hint, and the new CLAUDE.md already carries the section', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const dir = project(t);
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'existing guide\n');
+  const r = adopt(dir);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /An adapter already existed/);
+  assert.doesNotMatch(r.stdout, /compact-instructions\.md/);
+  assert.match(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), /^## Compact Instructions$/m);
+});
+
 test('wf-adopt never overwrites an existing file and refuses a second adoption', t => {
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
   const dir = project(t);

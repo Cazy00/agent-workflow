@@ -161,7 +161,8 @@ function renderSettings() {
       ${agent.length ? `<p class="hint agent-steps">${agent.some(x => !x.done) ? `The agent has ${agent.filter(x => !x.done).length} setup step${agent.filter(x => !x.done).length === 1 ? '' : 's'} of its own left. You don't need to do anything for them.` : 'The agent has finished its setup steps.'}</p>` : ''}
     </section>
     <section id="presets"${label === 'owner-merge' ? '' : ' hidden'}><h2>When the agent stops for you</h2>
-      <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], (s.approval.checkpoint ?? 'change') === k)).join('')}</div>
+      ${label === 'owner-merge' && !s.approval.checkpoint ? '<p class="hint">Not chosen yet: you merge every pull request, and the agent does not stop between milestones. Pick one to change that.</p>' : ''}
+      <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], label === 'owner-merge' ? s.approval.checkpoint === k : k === 'milestone')).join('')}</div>
       <p class="hint">${PRESET_HINT}</p>
     </section>
     <section><h2>How approval is proven</h2>
@@ -201,8 +202,8 @@ function renderSettings() {
     saveButton.disabled = true; statusLine.textContent = 'Saving…';
     try {
       const r = await api('/api/settings', {
-        // A project without a checkpoint keeps none unless the owner picks one other than "every change".
-        approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && (s.approval.checkpoint !== null || picked('checkpoint') !== 'change') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
+        // A project without a checkpoint shows none picked and keeps none until the owner picks one.
+        approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
         project: value('project'), measure: value('measure'),
         client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
       });

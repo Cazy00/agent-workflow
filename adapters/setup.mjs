@@ -205,6 +205,7 @@ export function saveSettings({ project, form }) {
   // The checkpoint belongs to owner-merge alone: kept as it was unless the form sends one, and dropped with another mode.
   const checkpoint = form.approval && Object.hasOwn(form.approval, 'checkpoint') ? form.approval.checkpoint : config.approval?.checkpoint;
   if (label !== 'owner-merge') delete next.approval.checkpoint;
+  else if (checkpoint == null && (config.approval?.label ?? 'manual') !== 'owner-merge') next.approval.checkpoint = 'milestone'; // a switch takes the scaffold's default
   else if (checkpoint != null) {
     if (!CHECKPOINTS.includes(checkpoint)) throw new Error('choose when the agent stops for you: milestone, change or plan');
     next.approval.checkpoint = checkpoint;

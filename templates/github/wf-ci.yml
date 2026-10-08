@@ -74,12 +74,14 @@ jobs:
             cat "$RUNNER_TEMP/ci.json"
             # Who merges, and why, on the run's summary and as a notice beside the check (owner-merge mode).
             node -e '
-              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-              const fails = r.verdict === "fail" ? r.findings.filter(f => !/^(unverified|planning|production|governing|enforcement|generated|readiness)\b/.test(f) && !f.startsWith("  ")) : [];
-              const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f}`)];
+              const fs = require("fs");
+              let r;
+              try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### wf ci could not run\nIts reason is in the log.\n"); process.exit(0); }
+              const fails = r.verdict === "fail" ? r.findings.filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: )/.test(f)) : [];
+              const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
               if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
               if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
-              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             ' "$RUNNER_TEMP/ci.json" || true
             exit "$code"
           fi

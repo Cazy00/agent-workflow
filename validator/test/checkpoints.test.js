@@ -157,6 +157,15 @@ test('a records-only change needs no evidence, and the agent may merge it under 
   assert.equal(out(r).merge, 'agent');
 });
 
+test('a milestone record change goes to the owner even where an older config does not class it as governing', t => {
+  // The fixture's config, like v1.0.0's defaults, has no docs/workflow/milestones/** entry among the governing paths.
+  const p = setup(t, { checkpoint: 'milestone', change: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')) });
+  const r = p.run('ci');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'owner', 'the agent can never accept its own milestone');
+  assert.match(out(r).owner_reasons.join(' | '), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/);
+});
+
 test('the checkpoint comes from the baseline: a candidate cannot give itself the merge', t => {
   const p = setup(t, { change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/workflow/config.json', x => { const c = JSON.parse(x); c.approval.checkpoint = 'plan'; return JSON.stringify(c); }); } });
   const r = p.run('ci', { evidence: evidence(p.candidate) });

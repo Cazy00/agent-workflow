@@ -228,4 +228,14 @@ test('the checkpoint is saved with owner-merge, dropped with another mode, check
   assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, 'plan', 'nothing written on a refusal');
   save({ label: 'manual', checkpoint: 'plan' });
   assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, undefined, 'manual mode has no checkpoint');
+  save({ label: 'owner-merge' });
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, 'milestone', 'switching to owner-merge without a pick takes the scaffold\'s default (MAINT-0010 review S1)');
+});
+
+test('a legacy owner-merge project without a checkpoint keeps none on an unrelated save', t => {
+  const dir = project(t);
+  const file = path.join(dir, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(file, 'utf8')); delete config.approval.checkpoint; fs.writeFileSync(file, JSON.stringify(config, null, 2));
+  saveSettings({ project: dir, form: form({ dir, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, measure: 'A customer can order online.' }) });
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, undefined);
 });

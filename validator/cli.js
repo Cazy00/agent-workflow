@@ -336,7 +336,7 @@ async function main() {
       if (o['pull-request']) {
         ownerApproval = readOwnerApproval({ repository: config.repository, pullRequest: o['pull-request'], revision: candidate.name, baseline: baseline.name, branch: config.trusted_branch, approver: config.approval?.approver, worker: config.approval?.agent_identity });
         if (!ownerApproval.candidate_matches) throw new WfError(ownerApproval.reason);
-        if (!o['delivery-evidence']) { // the quality gate needs it even when the owner approved the exact head
+        if (deliveryEvidence == null) { // the quality gate needs it even when the owner approved the exact head
           const collected = readDeliveryEvidence({ repository: config.repository, pullRequest: o['pull-request'], worker: config.approval?.agent_identity });
           deliveryEvidence = collected.evidence; evidenceSource = collected.source;
         }

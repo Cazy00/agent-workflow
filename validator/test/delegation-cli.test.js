@@ -55,6 +55,11 @@ test('GitHub worker comment supplies data, while forged owner fields or inherite
   const r = p.run(['--pull-request', '1']);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(JSON.parse(r.stdout).delegation.evidence_source, /issuecomment-3$/);
+  // A description file without the marked block holds no evidence, so the comment is still read (MAINT-0010 review N4).
+  const blank = path.join(p.root, 'description.md'); fs.writeFileSync(blank, '## Summary\n\nNo evidence block.\n');
+  const fallback = p.run(['--pull-request', '1', '--delivery-evidence', blank]);
+  assert.equal(fallback.status, 0, fallback.stdout + fallback.stderr);
+  assert.match(JSON.parse(fallback.stdout).delegation.evidence_source, /issuecomment-3$/);
   post({ ...p.evidence, owner_approved: true });
   assert.equal(p.run(['--pull-request', '1']).status, 1);
   post({ ...p.evidence, review: { ...p.evidence.review, context: { ...p.evidence.review.context, inherited_context: true } } });

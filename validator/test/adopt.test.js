@@ -63,7 +63,17 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.match(setup, /^## Agent steps \(1, 4 and 7 in one session, then 8 in a fresh context; post progress here\)$/m);
   assert.deepEqual(evaluateStatus({ baseline: source, candidate: source }).setup_open, { owner: 0, agent: 4 }, 'nothing waits on the owner');
   assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '* @owner\n/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner gets the records carve-out');
-  if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) assert.match(fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8'), /name: wf ci/);
+  if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) {
+    const ci = fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8');
+    assert.match(ci, /name: wf ci/);
+    // MAINT-0010: the gate reads the delivery evidence from the description, reruns when it is edited, and never
+    // places the description's text in the script itself.
+    assert.match(ci, /types: \[opened, synchronize, reopened, edited\]/);
+    assert.match(ci, /^\s+DESCRIPTION: \$\{\{ github\.event\.pull_request\.body \}\}$/m);
+    assert.equal(ci.match(/github\.event\.pull_request\.body/g).length, 1, 'the description reaches the run only through the environment');
+    assert.match(ci, /--delivery-evidence "\$RUNNER_TEMP\/pr-description\.md"/);
+    assert.match(ci, /exit "\$code"/);
+  }
   assert.deepEqual([config.approval.approver, config.approval.agent_identity], ['owner', '']);
   const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8');
   assert.match(agents, /A production change needs your delivery evidence in the pull request description/);

@@ -260,6 +260,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     const of = category => classes.filter(c => c.category === category).map(c => c.path);
     if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
     if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
+    // The records the owner approves stay the owner's whatever an older config classifies them as: a milestone's
+    // acceptance lifts the checkpoint's hold, so the agent must never merge it.
+    const ownerRecords = classes.map(c => c.path).filter(p => p === 'docs/workflow/config.json' || p === `${rd}/profile.md` || p === `${rd}/acceptance.json` || p.startsWith(`${rd}/milestones/`) || p.startsWith(`${rd}/decisions/`)).filter(p => !['governing', 'enforcement'].includes(classes.find(c => c.path === p)?.category));
+    if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
     if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
     const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted').map(f => f.id);

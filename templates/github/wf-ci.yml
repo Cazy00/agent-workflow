@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0 # the gate diffs the base against the head and checks the head contains the base
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -35,7 +35,7 @@ jobs:
           node-version: 22
       - name: Fetch the validator pinned by the base branch
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           git show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/config.json"
@@ -52,9 +52,9 @@ jobs:
           echo "WF_LABEL=$LABEL" >> "$GITHUB_ENV"
       - name: Run the gate
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           wf() { node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" "$@"; }

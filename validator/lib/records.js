@@ -112,6 +112,8 @@ export function ownerErrors(all) {
   const owners = listedOwners(all.profile.data);
   if (!owners.length) return [`${all.profile.path}: owners must list two or more distinct GitHub usernames, like [alice, bob]`];
   const errors = [];
+  // Owner-merge counts one owner's own merge as approval; with several owners whose merge counts is undefined.
+  if (all.profile.data.approval_label === 'owner-merge') errors.push(`${all.profile.path}: approval_label owner-merge is for one owner; a project with owners uses manual or enforced mode (procedures/shared.md)`);
   const check = (r, owner) => { if (!owners.includes(owner)) errors.push(`${r.path}: owner ${owner} is not one of the profile's owners (${owners.join(', ')})`); };
   for (const r of all.tasks.values()) if (r.data?.owner != null) check(r, r.data.owner); // a missing task owner is a schema error
   for (const r of all.milestones.values()) {

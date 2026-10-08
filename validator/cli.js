@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TASK_BRANCH, WfError, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
+import { TASK_BRANCH, WfError, listedOwners, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
 import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
@@ -255,6 +255,7 @@ async function main() {
   if (!trust && ['enforced', 'owner-merge'].includes(label) && baseline.kind === 'git') {
     const profileLabel = loadAll(baseline, rd).profile?.data?.approval_label;
     if (profileLabel !== label) throw new WfError('approval label differs between docs/workflow/config.json and the profile on the baseline');
+    if (label === 'owner-merge' && listedOwners(loadAll(baseline, rd).profile?.data ?? {}).length) throw new WfError('owner-merge mode is for one owner: a project with owners uses manual or enforced mode (procedures/shared.md)');
     trust = createEnforcedTrust({ baseline: baseline.name, label });
   }
   const changed = () => {

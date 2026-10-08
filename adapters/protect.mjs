@@ -54,7 +54,7 @@ export function plan({ config, owners = [], requiredChecks = [], branch, target 
   const autoMerge = target === 'enforced' && !shared ? true : !shared ? false : null;
   // Ownerless CODEOWNERS lines a single owner may keep: the records that merge on their checks alone.
   const rd = (config.records_dir ?? 'docs/workflow').replace(/^\/+|\/+$/g, '');
-  const unowned = shared ? [] : [`/${rd}/tasks/`, `/${rd}/feedback/`];
+  const unowned = shared ? [] : [`/${rd}/tasks/`, `/${rd}/feedback/`, `/${rd}/checkpoints/`]; // planning records (IDEA-18)
   return {
     target, shared, oneAccount, approver, worker, branch, pullRequests, codeOwners, checks, autoMerge, unowned,
     ruleset: { name: RULESET, target: 'branch', enforcement: 'active', bypass_actors: [], conditions: { ref_name: { include: [`refs/heads/${branch}`], exclude: [] } }, rules },
@@ -153,7 +153,7 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
       // A later line without owners takes its paths out of code-owner review (the last matching line wins), so only the
       // records carve-out may be ownerless; anything else could un-own the config, the profile or this file.
       const ownerless = lines.filter(l => l.length === 1 && !p.unowned.includes(l[0])).map(l => l[0]);
-      item('CODEOWNERS leaves no path unowned except task and feedback records', ownerless.length === 0, ownerless.length ? `ownerless: ${ownerless.join(', ')}` : '');
+      item(p.shared ? 'CODEOWNERS leaves no path unowned' : 'CODEOWNERS leaves no path unowned except task, feedback and checkpoint records', ownerless.length === 0, ownerless.length ? `ownerless: ${ownerless.join(', ')}${p.shared ? '' : ` (only ${p.unowned.join(', ')}, written exactly so, may have no owner)`}` : '');
       const everything = lines.filter(l => l[0] === '*').at(-1) ?? [];
       const listed = everything.slice(1).map(n => n.replace(/^@/, '').toLowerCase());
       if (p.shared) item('CODEOWNERS assigns every path (*) to people', listed.length > 0, listed.length ? '' : 'no * line with owners');
@@ -161,7 +161,8 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
       if (p.worker) item(`CODEOWNERS names no worker (${p.worker})`, !lines.some(l => l.slice(1).some(n => n.replace(/^@/, '').toLowerCase() === p.worker.toLowerCase())));
     }
   }
-  if (p.target === 'enforced') item('owner and worker are different accounts', !!p.approver && !!p.worker && p.approver.toLowerCase() !== p.worker.toLowerCase());
+  // A shared project's people each verify their own worker (procedures/shared.md); the config names none.
+  if (p.target === 'enforced' && !p.shared) item('owner and worker are different accounts', !!p.approver && !!p.worker && p.approver.toLowerCase() !== p.worker.toLowerCase());
   if (p.pullRequests) {
     try { api('GET', `repos/${repository}/contents/.github/workflows/wf-ci.yml?ref=${encodeURIComponent(p.branch)}`); item('.github/workflows/wf-ci.yml reports wf ci', true); }
     catch (e) { if (!notFound(e)) throw e; item('.github/workflows/wf-ci.yml reports wf ci', null, `not on ${p.branch}: another job must report "wf ci" by running the pinned validator from protected configuration`); }

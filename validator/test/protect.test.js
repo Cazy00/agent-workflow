@@ -85,6 +85,14 @@ test('the read-back passes when GitHub reports what the mode needs', () => {
   assert.ok(r.items.some(i => i.name === 'CODEOWNERS names no worker (agent-bot)' && i.ok));
   const m = plan({ config: config('owner-merge'), branch: 'main', target: 'owner-merge' });
   assert.equal(checkProtection({ api: github({ rules: m.ruleset.rules }).api, repository: 'fixture/project', plan: m }).ok, true);
+  // The checkpoints carve-out a single owner may already have (IDEA-18), and a records_dir of the project's own.
+  const ops = plan({ config: { ...config('manual', 'owner', 'agent-bot'), records_dir: 'ops/wf' }, branch: 'main', target: 'enforced' });
+  assert.deepEqual(failing(checkProtection({ api: github({ rules: ops.ruleset.rules, autoMerge: true, codeowners: '# who approves\n* @owner\n/ops/wf/tasks/   # records\n/ops/wf/feedback/\n/ops/wf/checkpoints/\n' }).api, repository: 'fixture/project', plan: ops })), []);
+  // A shared project names no worker in its config: each person verifies their own (shared.md), so the read-back passes.
+  const shared = plan({ config: config('manual', '', ''), owners: ['alice', 'bob'], branch: 'main', target: 'enforced' });
+  const sharedRead = checkProtection({ api: github({ rules: shared.ruleset.rules, codeowners: '* @alice @bob\n' }).api, repository: 'fixture/project', plan: shared });
+  assert.deepEqual([sharedRead.ok, failing(sharedRead)], [true, []]);
+  assert.deepEqual(failing(checkProtection({ api: github({ rules: shared.ruleset.rules, codeowners: '* @alice @bob\n/docs/workflow/tasks/\n' }).api, repository: 'fixture/project', plan: shared })), ['CODEOWNERS leaves no path unowned'], 'a shared project keeps every path owned');
 });
 
 test('the read-back fails on a bypass, an unbound check, an impossible review, auto-merge in owner-merge, or a missing plan', () => {
@@ -96,7 +104,7 @@ test('the read-back fails on a bypass, an unbound check, an impossible review, a
   // MAINT-0007 review B1: a later ownerless line un-owns its paths, so only the records carve-out may have none.
   for (const codeowners of ['* @owner\n/docs/workflow/\n', '* @owner\n/docs/workflow/config.json\n/docs/workflow/profile.md\n/.github/\n']) {
     const r = checkProtection({ api: github({ rules: p.ruleset.rules, autoMerge: true, codeowners }).api, repository: 'fixture/project', plan: p });
-    assert.deepEqual([r.ok, r.ready_for_enforced, failing(r)], [false, false, ['CODEOWNERS leaves no path unowned except task and feedback records']], codeowners);
+    assert.deepEqual([r.ok, r.ready_for_enforced, failing(r)], [false, false, ['CODEOWNERS leaves no path unowned except task, feedback and checkpoint records']], codeowners);
   }
   const m = plan({ config: config('owner-merge'), branch: 'main', target: 'owner-merge' });
   const review = m.ruleset.rules.map(r => r.type === 'pull_request' ? { ...r, parameters: { ...r.parameters, required_approving_review_count: 1 } } : r);
@@ -167,6 +175,11 @@ test('wf-sign makes a passphrase-protected key outside any checkout and signs ro
   const receipts = path.join(dir, 'receipts.json');
   fs.writeFileSync(receipts, JSON.stringify([{ payload: { purpose: 'baseline', revision }, signature: 'old' }, { payload: { purpose: 'review', revision }, signature: 'kept' }]));
   assert.equal(sign([round, 'b'.repeat(64), '--key', secret, '--receipts', receipts]).status, 1, 'a different file is refused');
+  const broken = path.join(dir, 'broken.json'); fs.writeFileSync(broken, '{not json');
+  const bad = sign([round, digest, '--key', secret, '--receipts', broken]);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /^wf-sign: .*broken\.json: /);
+  assert.equal(fs.readFileSync(broken, 'utf8'), '{not json', 'a malformed receipts file is left as it was');
   assert.equal(sign([round, digest, '--key', secret, '--receipts', receipts], 'wrong passphrase').status, 1);
   const signed = sign([round, digest, '--key', secret, '--receipts', receipts]);
   assert.equal(signed.status, 0, signed.stdout + signed.stderr);

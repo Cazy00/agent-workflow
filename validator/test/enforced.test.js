@@ -177,6 +177,19 @@ test('owner-merge mode never satisfies agent-operated routine delegation, which 
   assert.ok(out.findings.includes('agent-operated routine delegation requires verified enforced-mode setup'), out.findings.join(' | '));
 });
 
+test('owner-merge mode is refused for a project with several owners, by the records and by the gate', t => {
+  const p = setup(t, { label: 'owner-merge' });
+  p.edit('docs/workflow/profile.md', x => x.replace(/^record: profile$/m, 'record: profile\nowners: [alice, bob]'));
+  p.git('add', '.'); p.git('commit', '-qm', 'two owners');
+  const baseline = p.git('rev-parse', 'HEAD');
+  const records = spawnSync(process.execPath, [cli, 'records', '--repo', p.repo, '--candidate', baseline], { encoding: 'utf8' });
+  assert.equal(records.status, 1, records.stdout + records.stderr);
+  assert.match(records.stdout, /approval_label owner-merge is for one owner/);
+  const r = spawnSync(process.execPath, [cli, 'readiness', '--repo', p.repo, '--baseline', baseline, '--candidate', baseline, '--task', 'T-0001', '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /owner-merge mode is for one owner/);
+});
+
 test('a Claude Code task branch names its task, as a Codex one does', t => {
   const p = setup(t, { label: 'owner-merge' });
   const r = spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--branch', 'claude/T-0001-work', '--json'], { encoding: 'utf8' });

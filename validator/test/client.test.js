@@ -207,15 +207,15 @@ test('the page shows now, next, what waits on a decision, and each stage\'s part
   write('docs/workflow/tasks/T-0005.md', '---\nrecord: task\nid: T-0005\ntitle: Order tracking page\nstatus: Ready\nmilestone: M-0002\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\n---\n# T\n');
   write('docs/workflow/tasks/T-0006.md', '---\nrecord: task\nid: T-0006\ntitle: Design the gift card\nstatus: Draft\nmilestone: M-0004\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\n---\n# T\n');
   const view = evaluateClient({ source: dirSource(dir) });
-  assert.deepEqual(view.now, { stage: 'Online ordering', review: false, items: ['Email the receipt'] });
-  assert.deepEqual(view.next, [{ title: 'Order tracking page', stage: 'Online ordering' }, { title: 'Design the gift card', stage: 'Gift cards' }]);
+  assert.deepEqual(view.now, { stage: 'M-0002', review: false, paused: false, items: ['Email the receipt'] });
+  assert.deepEqual(view.next, [{ title: 'Order tracking page', stage: 'Online ordering', stageId: 'M-0002' }, { title: 'Design the gift card', stage: 'Gift cards', stageId: 'M-0004' }]);
   assert.equal(view.then, 'The bakery sees each day\'s orders.');
   assert.deepEqual(view.overall, { done: 2, total: 6 }, 'parts across the stages still open');
   const ordering = view.stages[1];
   assert.deepEqual(ordering.items.map(i => [i.title, i.state, i.added]), [['Choose a cake', 'done', false], ['Pay by card', 'done', false], ['Email the receipt', 'active', false], ['Gift message', 'hold', false], ['Order tracking page', 'next', true]], 'the plan\'s order, then work added along the way');
   assert.deepEqual(view.waiting.map(d => d.holds), [['Gift message']], 'a decision about nothing on the page is not shown');
   const html = renderClient(view);
-  assert.match(html, /<h2 id="now">Now<\/h2>/); assert.match(html, /<h2 id="next">Next<\/h2>/); assert.match(html, /<h2 id="waiting">Waiting on a decision<\/h2>/);
+  assert.match(html, /<h2 id="now">Now<\/h2>/); assert.match(html, /<h2 id="next">Next<\/h2>/); assert.match(html, /<h2 id="waiting"><span aria-hidden="true"><svg[^]*?<\/svg><\/span>Waiting on a decision<\/h2>/);
   assert.match(html, /Design the gift card<\/bdi> <span class="where">in <bdi>Gift cards<\/bdi>/);
   assert.match(html, /<span class="tag">added along the way<\/span>/);
   assert.match(html, /<details class="more"><summary>The 1 part of this stage<\/summary>/, 'other stages fold their parts away');
@@ -234,5 +234,44 @@ test('the page shows now, next, what waits on a decision, and each stage\'s part
 
 test('the deeper page speaks Arabic too', t => {
   const html = renderClient(evaluateClient({ source: dirSource(project(t, { client: { language: 'ar' } })) }));
-  for (const words of ['<h2 id="now">الآن</h2>', '<h2 id="next">التالي</h2>', '<h2 id="waiting">بانتظار قرار</h2>', 'هناك إجابة مقترحة بانتظار الموافقة. يؤخر:', '<span class="state">قيد التنفيذ</span>', '<summary>كيف تتقدم المرحلة</summary>', 'الأجزاء المنجزة في المراحل المفتوحة: 2 من 4.']) assert.ok(html.includes(words), words);
+  for (const words of ['<h2 id="now">الآن</h2>', '<h2 id="next">التالي</h2>', '</span>بانتظار قرار</h2>', 'هناك إجابة مقترحة بانتظار الموافقة. يؤخر:', '<span class="state">قيد التنفيذ</span>', '<summary>كيف تتقدم المرحلة</summary>', 'الأجزاء المنجزة في المراحل المفتوحة: 2 من 4.']) assert.ok(html.includes(words), words);
+});
+
+// The depth review's cases (MAINT-0008): Now for a paused or signed-off-waiting stage, Next with only a next stage, decisions
+// matched through `affects` and never holding finished work, `client_question`, the four-part limit, and rows that shrink.
+test('Now, Next and decisions say the right thing in every state', t => {
+  const dir = project(t);
+  const write = (rel, body) => fs.writeFileSync(path.join(dir, rel), body);
+  const status = (id, value) => write(`docs/workflow/milestones/${id}.md`, fs.readFileSync(path.join(dir, `docs/workflow/milestones/${id}.md`), 'utf8').replace(/^status: .*$/m, `status: ${value}`));
+  write('docs/workflow/decisions/D-0007.md', fs.readFileSync(path.join(dir, 'docs/workflow/decisions/D-0007.md'), 'utf8').replace('question: Which gift wrap options do we offer?', 'question: gift_wrap enum values\nclient_question: Which gift wrap options would you like to offer?'));
+  write('docs/workflow/decisions/D-0009.md', '---\nrecord: decision\nid: D-0009\nquestion: Ordering hours\ntype: decision\nowner: alice-owner\naffects: [M-0002, M-0001]\nrequired_before: implement\nstatus: Open\n---\n# D\n');
+  write('docs/workflow/decisions/D-0010.md', '---\nrecord: decision\nid: D-0010\nquestion: Old question\ntype: decision\nowner: alice-owner\naffects: [M-0001, T-0001]\nrequired_before: implement\nstatus: Open\n---\n# D\n');
+  let view = evaluateClient({ source: dirSource(dir) });
+  assert.deepEqual(view.waiting.map(d => [d.question, d.holds]), [['Which gift wrap options would you like to offer?', ['Gift message']], ['Ordering hours', ['Online ordering']]], 'client_question wins; affects matches a milestone; a delivered stage and a done part are never held up');
+  assert.ok(!renderClient(view).includes('gift_wrap'), 'the developer\'s question stays out');
+  // A paused stage with nothing in progress.
+  write('docs/workflow/tasks/T-0003.md', fs.readFileSync(path.join(dir, 'docs/workflow/tasks/T-0003.md'), 'utf8').replace('status: Active', 'status: Ready'));
+  status('M-0002', 'Blocked');
+  view = evaluateClient({ source: dirSource(dir) });
+  assert.equal(view.headline, 'Online ordering is paused for now.');
+  assert.match(renderClient(view), /This stage is paused for now; work resumes once what it waits for is settled\./);
+  assert.doesNotMatch(renderClient(view), /the next part starts soon/);
+  // A stage built and waiting for sign-off, with only a next stage after it.
+  status('M-0002', 'Verified');
+  for (const id of ['T-0003', 'T-0004']) write(`docs/workflow/tasks/${id}.md`, fs.readFileSync(path.join(dir, `docs/workflow/tasks/${id}.md`), 'utf8').replace(/^status: .*$/m, 'status: Done'));
+  view = evaluateClient({ source: dirSource(dir) });
+  const html = renderClient(view);
+  assert.match(html, /Everything in this stage is built and checked\. It is waiting for sign-off\./);
+  assert.deepEqual(view.next, []);
+  assert.match(html, /Then the next stage: <bdi>The bakery sees each day&#39;s orders\.<\/bdi>/);
+  assert.doesNotMatch(html, /Nothing else is planned yet/, 'never "nothing planned" beside the next stage');
+});
+
+test('Next lists at most four parts across stages, and part rows shrink at phone width', t => {
+  const dir = project(t, { extraMilestones: [['M-0004', 'Draft', 'Gift cards']] });
+  for (let n = 5; n <= 9; n++) fs.writeFileSync(path.join(dir, `docs/workflow/tasks/T-000${n}.md`), `---\nrecord: task\nid: T-000${n}\ntitle: Part ${n}\nstatus: Draft\nmilestone: M-0004\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\n---\n# T\n`);
+  const view = evaluateClient({ source: dirSource(dir) });
+  assert.equal(view.next.length, 4);
+  const html = renderClient(view);
+  assert.match(html, /\.item \{ display: grid; grid-template-columns: 1\.25rem minmax\(0, 1fr\) auto;/, 'the name column can shrink, so the state never spills out of the card');
 });

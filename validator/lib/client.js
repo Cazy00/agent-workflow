@@ -38,6 +38,7 @@ const STRINGS = {
     now: 'Now',
     nowNothing: 'Nothing is being built at this moment; the next part starts soon.',
     nowReview: 'Everything in this stage is built and checked. It is waiting for sign-off.',
+    nowPaused: 'This stage is paused for now; work resumes once what it waits for is settled.',
     nextHeading: 'Next',
     nextIn: 'in',
     then: 'Then the next stage:',
@@ -87,6 +88,7 @@ const STRINGS = {
     now: 'الآن',
     nowNothing: 'لا يجري العمل على جزء في هذه اللحظة، ويبدأ الجزء التالي قريباً.',
     nowReview: 'اكتمل بناء كل أجزاء هذه المرحلة وفحصها، وهي بانتظار الاعتماد.',
+    nowPaused: 'هذه المرحلة متوقفة مؤقتاً، ويُستأنف العمل حين يُحسم ما تنتظره.',
     nextHeading: 'التالي',
     nextIn: 'ضمن',
     then: 'ثم المرحلة التالية:',
@@ -196,14 +198,15 @@ export function evaluateClient({ source, updated = null }) {
   else if (upNext) headline = say.next(upNext.title);
   else headline = say.nextPlanned;
 
-  // Now and next, from the stage in focus: the current one, or the first not yet finished.
+  // Now and next, from the stage in focus: the current one, or the first not yet finished. Stages run in ID order, so the
+  // queue looks forward from the focus; an unfinished stage before it still shows its parts in the list below.
   const focus = current ?? stages.find(s => !s.finished) ?? null;
   const later = focus ? stages.slice(stages.indexOf(focus) + 1).filter(s => !s.finished) : [];
-  const now = focus && detail !== 'stages' ? { stage: focus.title, review: focus.tone === 'review' && !focus.paused, items: focus.items.filter(i => i.state === 'active').map(i => i.title) } : null;
+  const now = focus && detail !== 'stages' ? { stage: focus.id, review: focus.tone === 'review' && !focus.paused, paused: focus.paused, items: focus.items.filter(i => i.state === 'active').map(i => i.title) } : null;
   let next = [];
   if (detail !== 'stages' && focus) {
     const rank = { next: 0, planned: 1 };
-    const pick = s => s.items.filter(i => i.state in rank).sort((a, b) => rank[a.state] - rank[b.state]).map(i => ({ title: i.title, stage: s.title }));
+    const pick = s => s.items.filter(i => i.state in rank).sort((a, b) => rank[a.state] - rank[b.state]).map(i => ({ title: i.title, stage: s.title, stageId: s.id }));
     next = pick(focus);
     for (const s of later) { if (next.length >= 4) break; next.push(...pick(s)); }
     next = next.slice(0, 4);
@@ -211,7 +214,7 @@ export function evaluateClient({ source, updated = null }) {
   const then = later[0]?.title ?? null;
 
   // Decisions that hold up work on this page, while they are open or proposed.
-  const visible = new Map(stages.flatMap(s => [[s.id, s.title], ...s.items.map(i => [i.id, i.title])]));
+  const visible = new Map(stages.filter(s => !s.finished).flatMap(s => [[s.id, s.title], ...s.items.filter(i => i.state !== 'done').map(i => [i.id, i.title])])); // only work still open is held up
   const waiting = detail === 'full' ? [...all.decisions.values()].map(r => r.data).filter(d => d?.id && ['Open', 'Proposed'].includes(d.status)).map(d => {
     const held = [...new Set([...list(d.affects).filter(a => visible.has(a)), ...tasks.filter(t => list(t.decisions).includes(d.id) && visible.has(t.id)).map(t => t.id)])];
     return held.length ? { question: text(d.client_question) ?? text(d.question) ?? '', proposed: d.status === 'Proposed', holds: held.map(id => visible.get(id)) } : null;
@@ -297,15 +300,15 @@ export function renderClient(view) {
   };
   const nowBlock = view.now ? `<section class="panel now" aria-labelledby="now">
     <h2 id="now">${esc(say.now)}</h2>
-    ${view.now.items.length ? `<ul class="items" role="list">${view.now.items.map(n => `<li class="item active"><span class="icon" aria-hidden="true">${ICON.active}</span><span class="name">${bdi(n)}</span></li>`).join('')}</ul>` : `<p>${esc(view.now.review ? say.nowReview : say.nowNothing)}</p>`}
+    ${view.now.items.length ? `<ul class="items" role="list">${view.now.items.map(n => `<li class="item active"><span class="icon" aria-hidden="true">${ICON.active}</span><span class="name">${bdi(n)}</span></li>`).join('')}</ul>` : `<p>${esc(view.now.review ? say.nowReview : view.now.paused ? say.nowPaused : say.nowNothing)}</p>`}
   </section>` : '';
   const nextBlock = view.detail !== 'stages' && (view.next.length || view.then) ? `<section class="panel next" aria-labelledby="next">
     <h2 id="next">${esc(say.nextHeading)}</h2>
-    ${view.next.length ? `<ol class="queue" role="list">${view.next.map(n => `<li>${bdi(n.title)}${n.stage !== view.now?.stage ? ` <span class="where">${esc(say.nextIn)} ${bdi(n.stage)}</span>` : ''}</li>`).join('')}</ol>` : `<p>${esc(say.nextNone)}</p>`}
+    ${view.next.length ? `<ol class="queue" role="list">${view.next.map(n => `<li>${bdi(n.title)}${n.stageId !== view.now?.stage ? ` <span class="where">${esc(say.nextIn)} ${bdi(n.stage)}</span>` : ''}</li>`).join('')}</ol>` : (view.then ? '' : `<p>${esc(say.nextNone)}</p>`)}
     ${view.then ? `<p class="then">${esc(say.then)} ${bdi(view.then)}</p>` : ''}
   </section>` : '';
   const waitBlock = view.waiting.length ? `<section class="panel waiting" aria-labelledby="waiting">
-    <h2 id="waiting">${esc(say.waiting)}</h2>
+    <h2 id="waiting"><span aria-hidden="true">${ICON.hold}</span>${esc(say.waiting)}</h2>
     <ul class="decisions" role="list">${view.waiting.map(d => `<li><p class="question">${bdi(d.question)}</p><p class="meta">${esc(d.proposed ? say.decisionProposed : say.decisionOpen)}. ${esc(say.holds)} ${d.holds.map(bdi).join(view.language === 'ar' ? '، ' : ', ')}</p></li>`).join('')}</ul>
   </section>` : '';
   return `<!doctype html>
@@ -347,7 +350,9 @@ export function renderClient(view) {
   .panels { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); align-items: start; }
   .panel { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.15rem 1.1rem; }
   .panel p { margin: 0; color: var(--muted); }
-  .panel.waiting { grid-column: 1 / -1; border-inline-start: 4px solid var(--review); }
+  .panel.waiting { grid-column: 1 / -1; }
+  .panel.waiting h2 { display: flex; align-items: center; gap: .45rem; color: var(--review); }
+  .panel.waiting h2 svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
   .queue { margin: 0; padding-inline-start: 1.25rem; display: grid; gap: .45rem; }
   .queue .where, .then { color: var(--muted); font-size: .92rem; }
   .panel .then { margin-top: .75rem; }
@@ -355,16 +360,17 @@ export function renderClient(view) {
   .panel .decisions .question { color: var(--text); font-weight: 600; }
   .decisions .meta { font-size: .92rem; margin-top: .2rem; }
   .items { list-style: none; margin: .75rem 0 0; padding: 0; display: grid; }
-  .item { display: grid; grid-template-columns: 1.25rem 1fr auto; gap: .6rem; align-items: baseline; padding: .32rem 0; border-top: 1px solid var(--line); }
+  .item { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr) auto; gap: .6rem; align-items: baseline; padding: .32rem 0; border-top: 1px solid var(--line); }
+  .item .name { overflow-wrap: anywhere; }
   .item:first-child { border-top: 0; }
-  .panel .items { margin-top: 0; } .panel .item { grid-template-columns: 1.25rem 1fr; border-top: 0; padding: .2rem 0; }
+  .panel .items { margin-top: 0; } .panel .item { grid-template-columns: 1.25rem minmax(0, 1fr); border-top: 0; padding: .2rem 0; }
   .icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transform: translateY(.15rem); }
   .icon .fill { fill: currentColor; stroke: none; }
   .item.done .icon { color: var(--done); } .item.active .icon { color: var(--active); } .item.next .icon { color: var(--text); } .item.planned .icon { color: var(--planned); } .item.hold .icon { color: var(--review); }
   .item.done .name { color: var(--muted); }
   .item .state { font-size: .85rem; color: var(--muted); white-space: nowrap; }
   .item.active .state { color: var(--active); font-weight: 600; } .item.hold .state { color: var(--review); font-weight: 600; }
-  .tag { font-size: .8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .45rem; white-space: nowrap; }
+  .tag { display: inline-block; font-size: .8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .45rem; white-space: nowrap; }
   ol.route { list-style: none; margin: 0; padding: 0; position: relative; }
   ol.route::before, ol.route::after { content: ""; position: absolute; inset-inline-start: 1.05rem; top: 1.1rem; width: 2px; border-radius: 1px; }
   ol.route::before { bottom: 1.1rem; background: var(--line); }

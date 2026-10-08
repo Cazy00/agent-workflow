@@ -94,7 +94,7 @@ const show = (kind, html) => { const box = app.querySelector('#message'); box.cl
 const PRESETS = {
   milestone: ['Review each milestone (recommended)', 'The agent merges each piece of work once its checks, tests and independent review pass, then stops when a milestone is finished so you can try it. The next one starts once you accept it.'],
   change: ['Review every change', 'You read and merge every pull request yourself. The agent also stops at the end of each milestone.'],
-  plan: ['Review when the plan is done', 'The agent works through every milestone you have approved without stopping, and you accept them when you like. Approve one milestone at a time to keep it shorter.'],
+  plan: ['Review when the plan is done', 'The agent works through every milestone you have approved without stopping, and you accept them when you like. Approve one milestone at a time if you want shorter runs.'],
 };
 const PRESET_HINT = 'Whichever you choose, changes to your plan, requirements, acceptance tests or the workflow wait for you, and the same checks and independent review run.';
 const APPROVAL = {
@@ -116,7 +116,6 @@ function renderAdopt() {
       <label class="field"><span>Repository</span><input type="text" name="repository" value="${esc(d.repository)}" placeholder="owner/repository" autocomplete="off"><small>As it appears in its GitHub address.</small></label>
       <label class="field"><span>Your GitHub username</span><input type="text" name="coordinator" value="${esc(d.coordinator)}" autocomplete="off"><small>You approve the agent's work.</small></label>
     </section>
-    <section><h2>The agent's account</h2>${accountFields()}</section>
     <section><h2>When should the agent stop for you?</h2>
       <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], k === 'milestone')).join('')}</div>
       <p class="hint">${PRESET_HINT}</p>
@@ -124,6 +123,7 @@ function renderAdopt() {
         <label class="choice"><input type="checkbox" name="signed"><strong>Prove each approval with your own signing key</strong><p>${APPROVAL.manual[1]} The stops above then don't apply. The strictest mode, where GitHub enforces your approval, can be switched on later.</p></label>
       </details>
     </section>
+    <section><h2>The agent's account</h2>${accountFields()}</section>
     <section><h2>A page for your client</h2>
       <label class="choice"><input type="checkbox" name="client_page"><strong>Publish a progress page on GitHub Pages</strong><p>Plain words, no technical detail. A GitHub Pages site is public, even for a private repository. You can always make the page as a file instead and send it.</p></label>
     </section>
@@ -140,7 +140,8 @@ function renderAdopt() {
       const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: app.querySelector('[name=signed]').checked ? 'manual' : 'owner-merge', checkpoint: picked('checkpoint'), lane: d.lane, production: d.production, client_page: app.querySelector('[name=client_page]').checked, version: d.version });
       if (!r.ok) { show('error', `<p>The setup script refused:</p><pre>${esc(r.output)}</pre>`); statusLine.textContent = 'Nothing was written.'; return; }
       state = await api('/api/state'); renderSettings();
-      show('ok', `<p>The project is set up with agent&#8209;workflow ${esc(d.version)}. Commit the new files to your main branch, or ask the agent to, then work through your steps above.</p>`);
+      const required = (state.checklist ?? []).filter(x => x.who === 'owner' && !x.optional).length;
+      show('ok', `<p>The project is set up with agent&#8209;workflow ${esc(d.version)}. Commit the new files to your main branch, or ask the agent to, ${required ? 'then work through your steps above.' : 'then hand the project to the agent: nothing else is needed from you before it starts.'}</p>`);
     } catch (e) { show('error', `<p>${esc(e.message)}</p>`); statusLine.textContent = 'Nothing was written.'; }
     finally { saveButton.disabled = Boolean(d.release.outdated); }
   };

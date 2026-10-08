@@ -45,8 +45,9 @@ test('saving settings writes config and profile together, keeps the approval lab
   const bodyBefore = read(dir, 'docs/workflow/profile.md').split('\n---\n').slice(1).join('\n---\n');
   const r = saveSettings({ project: dir, form: form({ dir, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '', derived_baselines: false }, measure: 'A customer can order online.', required_checks: ['test', 'lint'], production: [...loadConfig(dirSource(dir)).paths.production, '**/*.{dart,vue}'], client: { title: 'Shop', exclude: ['M-0001'] } }) });
   assert.deepEqual(r.changed, ['docs/workflow/config.json', 'docs/workflow/profile.md']);
-  assert.match(r.notes.join(' '), /from manual to owner-merge/);
-  assert.match(r.notes.join(' '), /rerun wf-protect --apply/);
+  assert.match(r.notes.join(' '), /Your own merge is now the approval/);
+  assert.match(r.notes.join(' '), /rerun the protection command/);
+  assert.doesNotMatch(r.notes.join(' '), /setup\.md|step \d/, 'plain words, no file names or step numbers for the owner');
   assert.match(r.next, /never commits or pushes/);
   const config = loadConfig(dirSource(dir));
   assert.deepEqual([config.approval.label, config.approval.mechanism, config.client], ['owner-merge', 'owner-merge', { title: 'Shop', exclude: ['M-0001'] }]);
@@ -95,12 +96,12 @@ test('switching to enforced needs both accounts and records the matching mechani
   assert.deepEqual([config.approval.label, config.approval.mechanism], ['enforced', 'github-rulesets-codeowners']);
   assert.match(read(dir, 'docs/workflow/profile.md'), /^approval_mechanism: github-rulesets-codeowners$/m);
   const notes = r.notes.join(' ');
-  assert.match(notes, /Switch only once wf-protect --target enforced passes/);
-  assert.match(notes, /update \.github\/CODEOWNERS/);
-  assert.match(notes, /wf-status\.yml/);
-  assert.doesNotMatch(notes, /update them to match/, 'the enforced switch follows step 9, not a rewrite of the checklist');
+  assert.match(notes, /your step "Switch to enforced mode" is done first/);
+  assert.match(notes, /Tell the agent to update CODEOWNERS/);
+  assert.match(notes, /change it in the GitHub workflows/);
+  assert.doesNotMatch(notes, /your setup steps/, 'the enforced switch follows its own step, not a rewrite of the checklist');
   const merge = project(t);
-  assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /update them to match \(step 6 at least\), and state under Supported scope that nothing proves who merged/);
+  assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /Tell the agent to update its instructions on merging \(AGENTS\.md\) and your setup steps to match/);
 });
 
 test('the page sends only what it shows, and saving keeps the agent\'s settings and the client theme', async t => {
@@ -108,7 +109,8 @@ test('the page sends only what it shows, and saving keeps the agent\'s settings 
   const configPath = path.join(dir, 'docs/workflow/config.json');
   const config = JSON.parse(read(dir, 'docs/workflow/config.json'));
   config.paths.production.push('**/*.dart');
-  config.trusted_branch = 'main';
+  config.trusted_branch = 'trunk';
+  config.approval.derived_baselines = true;
   config.client = { theme: { colors: { brand: '#174A7C' } } };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   fs.writeFileSync(path.join(dir, 'docs/workflow/profile.md'), read(dir, 'docs/workflow/profile.md').replace('required_checks: []', 'required_checks: [test]'));
@@ -117,6 +119,7 @@ test('the page sends only what it shows, and saving keeps the agent\'s settings 
   saveSettings({ project: dir, form: { approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, project: 'shop', measure: 'A customer can order online.', client: { title: 'Shop', language: 'ar', exclude: ['M-0001'] } } });
   const after = loadConfig(dirSource(dir));
   assert.ok(after.paths.production.includes('**/*.dart'), 'code paths are the agent\'s, untouched');
+  assert.deepEqual([after.trusted_branch, after.approval.derived_baselines], ['trunk', true], 'the trusted branch and derived baselines are kept');
   assert.deepEqual(after.client, { title: 'Shop', language: 'ar', exclude: ['M-0001'], theme: { colors: { brand: '#174A7C' } } }, 'the theme is kept');
   assert.match(read(dir, 'docs/workflow/profile.md'), /^required_checks: \[test\]$/m, 'required checks are the agent\'s, untouched');
   assert.throws(() => saveSettings({ project: dir, form: { approval: { label: 'manual', approver: 'owner', agent_identity: '' }, client: { language: 'fr' } } }), /language must be one of en, ar/);
@@ -153,7 +156,12 @@ function request(port, { method = 'GET', path: p = '/', host = `127.0.0.1:${port
 test('only this server\'s own page, with its token, can read or change anything', async t => {
   const dir = project(t, false);
   let quit = false;
-  const { server, token } = createSetupServer({ project: dir, workflowRepo: root, onQuit: () => { quit = true; } });
+  // A copy of the workflow at its own release: tags are made on GitHub, so a fresh clone is tagged here.
+  const release = `v${JSON.parse(read(root, 'package.json')).version}`;
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-setup-release-'));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  for (const args of [['clone', '-q', '--no-hardlinks', root, copy], ['-C', copy, 'tag', '-f', release]]) assert.equal(spawnSync('git', args).status, 0);
+  const { server, token } = createSetupServer({ project: dir, workflowRepo: copy, onQuit: () => { quit = true; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const { port } = server.address();
@@ -174,7 +182,9 @@ test('only this server\'s own page, with its token, can read or change anything'
   assert.throws(() => adoptArguments({ repository: 'acme/shop', coordinator: 'owner', approval: 'manual', lane: 'new', version: '--workflow-repo' }, dir), /choose a workflow release/);
   const state = JSON.parse((await request(port, { path: `/api/state?t=${token}` })).body);
   assert.equal(state.adopted, false);
-  const adopted = JSON.parse((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({ repository: 'acme/shop', coordinator: 'owner', approval: 'owner-merge', lane: 'new', production: [], version: 'HEAD' }) })).body);
+  assert.deepEqual([state.defaults.version, state.defaults.release.outdated], [release, false]);
+  assert.equal(state.defaults.warnings, undefined, 'the inspection\'s technical warnings stay with the agent');
+  const adopted = JSON.parse((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({ repository: 'acme/shop', coordinator: 'owner', approval: 'owner-merge', lane: 'new', production: [], version: release }) })).body);
   assert.equal(adopted.ok, true, adopted.output);
   assert.equal(loadConfig(dirSource(dir)).approval.label, 'owner-merge');
   const again = await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({}) });
@@ -185,4 +195,18 @@ test('only this server\'s own page, with its token, can read or change anything'
   assert.equal((await request(port, { method: 'POST', path: `/api/quit?t=${token}`, headers: json, body: '{}' })).status, 200);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(quit, true);
+});
+
+test('a copy of the workflow behind its own release cannot set a project up, and says how to update', async t => {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-setup-stale-'));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['clone', '-q', '--no-hardlinks', root, copy]).status, 0);
+  for (const tag of spawnSync('git', ['-C', copy, 'tag'], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean)) spawnSync('git', ['-C', copy, 'tag', '-d', tag]);
+  assert.equal(spawnSync('git', ['-C', copy, 'tag', 'v1.0.0']).status, 0); // older than its package.json version
+  const dir = project(t, false);
+  const { readState, adopt } = await import('../../adapters/setup.mjs');
+  const state = await readState({ project: dir, workflowRepo: copy });
+  assert.deepEqual([state.defaults.release.outdated, state.defaults.release.newest], [true, 'v1.0.0']);
+  assert.throws(() => adopt({ project: dir, workflowRepo: copy, form: { repository: 'acme/shop', coordinator: 'owner', approval: 'manual', lane: 'new', version: 'v1.0.0' } }), /git pull --tags/);
+  assert.ok(!fs.existsSync(path.join(dir, 'docs/workflow')), 'nothing is written');
 });

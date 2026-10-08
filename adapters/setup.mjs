@@ -29,6 +29,16 @@ async function inspectOnce(args) {
   return inspected.get(key);
 }
 
+// A copy of the workflow whose newest tag is older than its own version has not downloaded its releases (tags are made
+// on GitHub when a release merges), or is between releases: adopting from it would pin an old release silently.
+const version = tag => (tag?.match(/^v(\d+)\.(\d+)\.(\d+)$/) ?? []).slice(1).map(Number);
+const older = (a, b) => { const [x, y] = [version(a), version(b)]; if (x.length !== 3) return true; for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+function releaseCheck(workflowRepo, tags) {
+  let own = null;
+  try { own = `v${JSON.parse(fs.readFileSync(path.join(workflowRepo, 'package.json'), 'utf8')).version}`; } catch { /* no version to compare */ }
+  const newest = tags[0] ?? null;
+  return { newest, own, outdated: !newest || (own && version(own).length === 3 && older(newest, own)) };
+}
 const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 20000 });
 const rel = project => p => path.join(project, p);
 
@@ -86,17 +96,16 @@ export async function readState({ project, workflowRepo }) {
   const state = { project, name: path.basename(project), adopted };
   if (!adopted) {
     const repository = remoteRepository(project);
-    const tags = (git(workflowRepo, 'tag', '--sort=-creatordate').stdout ?? '').split('\n').filter(t => /^v\d/.test(t)).slice(0, 12);
+    const tags = (git(workflowRepo, 'tag', '--sort=-v:refname').stdout ?? '').split('\n').filter(t => /^v\d+\.\d+\.\d+$/.test(t)).slice(0, 12);
+    const release = releaseCheck(workflowRepo, tags);
     let inspection = null;
     try { inspection = await inspectOnce({ project, workflowRepo, rev: tags[0] ?? 'HEAD' }); } catch (e) { inspection = { error: e.message }; }
     // Worked out, not asked: whether there is code already, the newest release, and the inspection's code paths.
     state.defaults = {
       repository, coordinator: repository.split('/')[0] ?? '',
       lane: git(project, 'rev-parse', '--verify', '--quiet', 'HEAD').status === 0 ? 'existing' : 'new',
-      version: tags[0] ?? 'HEAD',
+      version: release.newest, release,
       production: (inspection?.suggested_production ?? []).map(s => s.glob),
-      warnings: inspection?.warnings ?? (inspection?.error ? [inspection.error] : []),
-      collisions: inspection?.collisions ?? [],
     };
     return state;
   }
@@ -107,13 +116,9 @@ export async function readState({ project, workflowRepo }) {
   const owners = listedOwners(profile);
   const milestones = [...loadAll(source, rd).milestones.values()].filter(r => r.data?.id).sort((a, b) => a.data.id.localeCompare(b.data.id));
   state.settings = {
-    repository: config.repository ?? '', trusted_branch: config.trusted_branch ?? 'main', workflow: config.workflow ?? {},
     owners, shared: owners.length >= 2,
     approval: { label: config.approval?.label ?? 'manual', approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true },
-    project: profile.project ?? '', measure: profile.measure ?? '', coordinator: profile.coordinator ?? '',
-    required_checks: list(profile.required_checks), production: list(config.paths?.production),
-    // The workflow's own defaults, so the page can show what this project adds and fold the rest away.
-    default_production: (() => { try { return list(JSON.parse(fs.readFileSync(path.join(workflowRepo, 'config.default.json'), 'utf8')).paths?.production); } catch { return []; } })(),
+    project: profile.project ?? '', measure: profile.measure ?? '',
     client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
     milestones: milestones.map(r => ({ id: r.data.id, title: titleOf(r) ?? r.data.outcome ?? r.data.id })),
   };
@@ -142,6 +147,9 @@ export function adoptArguments(form, project) {
 }
 
 export function adopt({ project, workflowRepo, form }) {
+  const tags = (git(workflowRepo, 'tag', '--sort=-v:refname').stdout ?? '').split('\n').filter(t => /^v\d+\.\d+\.\d+$/.test(t));
+  const release = releaseCheck(workflowRepo, tags);
+  if (release.outdated || form.version !== release.newest) throw new Error('this copy of agent-workflow is not at its newest release: run git pull --tags in it, then reopen this page');
   const args = adoptArguments(form, project);
   const r = spawnSync(process.execPath, [path.join(workflowRepo, 'bin/wf-adopt'), '--workflow-repo', workflowRepo, ...args], { encoding: 'utf8', timeout: 180000 });
   return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`.trim() };
@@ -184,7 +192,8 @@ export function saveSettings({ project, form }) {
   if (has('production')) next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
   const title = Object.hasOwn(client, 'title') ? oneLine(client.title, 'the client page title') : config.client?.title ?? '';
   const { title: _t, exclude: _e, language: _l, ...kept } = config.client ?? {}; // the theme and anything else stay
-  next.client = { ...(title ? { title } : {}), ...(language && language !== 'en' ? { language } : {}), ...(exclude.length ? { exclude } : {}), ...kept };
+  const keepLanguage = language && (language !== 'en' || config.client?.language === 'en'); // English is the default
+  next.client = { ...(title ? { title } : {}), ...(keepLanguage ? { language } : {}), ...(exclude.length ? { exclude } : {}), ...kept };
   if (!Object.keys(next.client).length) delete next.client;
   const values = {
     project: (has('project') ? oneLine(form.project, 'the project name') : '') || before.project,
@@ -210,13 +219,19 @@ export function saveSettings({ project, form }) {
   const changed = [];
   if (nextConfig !== configText) { fs.writeFileSync(file('docs/workflow/config.json'), nextConfig); changed.push('docs/workflow/config.json'); }
   if (nextProfile !== profileText) { fs.writeFileSync(file(profilePath), nextProfile); changed.push(profilePath); }
+  // What the owner reads after saving: plain words, and what to ask the agent to bring along in the same pull request.
   const notes = [];
-  if (label !== config.approval?.label) notes.push(`The approval mode changes from ${config.approval?.label ?? 'manual'} to ${label}. ${label === 'enforced' ? 'Switch only once wf-protect --target enforced passes (setup step 9), and update AGENTS.md\'s auto-merge sentence in the same pull request.' : label === 'owner-merge' ? 'Your own merge becomes the approval, and nothing proves who merged; update AGENTS.md\'s merge sentence in the same pull request.' : 'Receipts you sign become the approval again.'}`);
-  if (label !== config.approval?.label && [label, config.approval?.label ?? 'manual'].every(l => l !== 'enforced')) notes.push(`The owner steps in ${rd}/setup.md were written for the old mode: update them to match (step 6 at least)${label === 'owner-merge' ? ', and state under Supported scope that nothing proves who merged' : ''}.`);
-  if (JSON.stringify(values.required_checks) !== JSON.stringify(list(before.required_checks))) notes.push('Required checks changed: after this is approved, rerun wf-protect --apply so GitHub requires them too.');
-  if (approver !== (config.approval?.approver ?? '')) notes.push('Your username changed: update .github/CODEOWNERS to name it in the same pull request.');
-  if (branch !== (config.trusted_branch ?? 'main')) notes.push(`The trusted branch changed: change the branch named in .github/workflows/wf-status.yml${fs.existsSync(file('.github/workflows/wf-client-page.yml')) ? ' and wf-client-page.yml' : ''} in the same pull request.`);
-  return { ok: true, changed, notes, next: changed.length ? 'These are governing and workflow changes: commit them on a branch and open a pull request (in manual mode you also sign a governing-change and a workflow-change receipt). This page never commits or pushes.' : 'Nothing changed.' };
+  const was = config.approval?.label ?? 'manual';
+  if (label !== was) notes.push(label === 'enforced'
+    ? 'GitHub now enforces your approval. Make sure your step "Switch to enforced mode" is done first. Tell the agent to update its instructions on merging (AGENTS.md) in the same pull request.'
+    : label === 'owner-merge'
+      ? 'Your own merge is now the approval, and nothing proves who merged. Tell the agent to update its instructions on merging (AGENTS.md) and your setup steps to match, in the same pull request.'
+      : `Receipts you sign are now the approval. Tell the agent to update ${was === 'enforced' ? 'its instructions on merging (AGENTS.md) and ' : ''}your setup steps to match, in the same pull request.`);
+  if (worker !== (config.approval?.agent_identity ?? '')) notes.push('The agent\'s account changed. Tell the agent to update its account instructions and your setup steps to match.');
+  if (approver !== (config.approval?.approver ?? '')) notes.push('Your username changed. Tell the agent to update CODEOWNERS to name you, in the same pull request.');
+  if (JSON.stringify(values.required_checks) !== JSON.stringify(list(before.required_checks))) notes.push('The required checks changed. Once this is approved, rerun the protection command so GitHub requires them too.');
+  if (branch !== (config.trusted_branch ?? 'main')) notes.push('The trusted branch changed. Tell the agent to change it in the GitHub workflows too, in the same pull request.');
+  return { ok: true, changed, notes, next: changed.length ? 'Next: commit these changes on a branch and open a pull request, or ask the agent to. This page never commits or pushes.' : 'Nothing changed.' };
 }
 
 export function tickStep({ project, index, done, text }) {

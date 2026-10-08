@@ -103,7 +103,7 @@ const wireAccount = () => app.querySelectorAll('[name=account]').forEach(r => r.
 function renderAdopt() {
   const d = state.defaults;
   app.innerHTML = `<h1>Set up agent&#8209;workflow</h1>
-    <p class="lede">For <strong>${esc(state.name)}</strong>. Four questions, then press the button. The files are written into this project; nothing is committed or pushed. You can change any answer later on this page.</p>
+    <p class="lede">For <strong>${esc(state.name)}</strong>. A few questions, then press the button. The files are written into this project; nothing is committed or pushed. You can change any answer later on this page.</p>
     <section><h2>The project on GitHub</h2>
       <label class="field"><span>Repository</span><input type="text" name="repository" value="${esc(d.repository)}" placeholder="owner/repository" autocomplete="off"><small>As it appears in its GitHub address.</small></label>
       <label class="field"><span>Your GitHub username</span><input type="text" name="coordinator" value="${esc(d.coordinator)}" autocomplete="off"><small>You approve the agent's work.</small></label>
@@ -118,6 +118,10 @@ function renderAdopt() {
     </section>
     <div id="message" role="status" hidden></div>`;
   wireAccount();
+  if (d.release.outdated) {
+    app.querySelector('section').insertAdjacentHTML('beforebegin', `<div class="message error"><p>This copy of agent&#8209;workflow is not at its newest release${d.release.own ? ` (it is ${esc(d.release.own)}${d.release.newest ? `; the newest it has downloaded is ${esc(d.release.newest)}` : ''})` : ''}, so it cannot set a project up yet.</p><p>Run <code>git pull --tags</code> in the agent&#8209;workflow folder, then reopen this page.</p></div>`);
+    saveButton.disabled = true;
+  }
   bar.hidden = false; saveButton.textContent = 'Set up the project'; statusLine.textContent = 'Nothing has been written yet.';
   saveButton.onclick = async () => {
     saveButton.disabled = true; statusLine.textContent = 'Setting up…';
@@ -125,9 +129,9 @@ function renderAdopt() {
       const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: picked('approval'), lane: d.lane, production: d.production, client_page: app.querySelector('[name=client_page]').checked, version: d.version });
       if (!r.ok) { show('error', `<p>The setup script refused:</p><pre>${esc(r.output)}</pre>`); statusLine.textContent = 'Nothing was written.'; return; }
       state = await api('/api/state'); renderSettings();
-      show('ok', '<p>The project is set up. Commit the new files to your main branch, then work through your steps above.</p>');
+      show('ok', `<p>The project is set up with agent&#8209;workflow ${esc(d.version)}. Commit the new files to your main branch, or ask the agent to, then work through your steps above.</p>`);
     } catch (e) { show('error', `<p>${esc(e.message)}</p>`); statusLine.textContent = 'Nothing was written.'; }
-    finally { saveButton.disabled = false; }
+    finally { saveButton.disabled = Boolean(d.release.outdated); }
   };
 }
 
@@ -170,7 +174,7 @@ function renderSettings() {
   });
   bar.hidden = false; saveButton.textContent = 'Save settings'; statusLine.textContent = 'All saved.';
   saveButton.onclick = async () => {
-    if (picked('label') === 'enforced' && label !== 'enforced' && !confirm('Switch to the stricter mode only once the protection check passes (step 9 of your setup steps). Has it passed?')) return;
+    if (picked('label') === 'enforced' && label !== 'enforced' && !confirm('Switch to the stricter mode only once your step "Switch to enforced mode" is done. Is it done?')) return;
     saveButton.disabled = true; statusLine.textContent = 'Saving…';
     try {
       const r = await api('/api/settings', {

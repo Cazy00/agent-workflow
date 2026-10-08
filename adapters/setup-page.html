@@ -145,7 +145,7 @@ function renderAdopt() {
     <section><h2>Workflow version</h2>
       <label class="field"><span>Release</span><select name="version">${d.versions.map(v => `<option>${esc(v)}</option>`).join('')}</select><small>The newest release is first.</small></label>
     </section>
-    <div id="message" hidden></div>`;
+    <div id="message" role="status" hidden></div>`;
   const production = listEditor('production paths', [], d.production.map(p => p.glob), '**/*.dart');
   app.querySelector('#production').append(production);
   app.querySelectorAll('[name=account]').forEach(r => r.onchange = () => { app.querySelector('#worker-field').hidden = picked('account') !== 'worker'; });
@@ -201,18 +201,19 @@ function renderSettings() {
       <label class="choice"><input type="checkbox" name="derived_baselines"${s.approval.derived_baselines ? ' checked' : ''}><strong>Derived baselines (manual mode)</strong><p>Spare a signature where your other receipts already cover every change.</p></label>
       <p class="hint">Workflow ${esc(s.workflow.version ?? '')} at <code>${esc(String(s.workflow.revision ?? '').slice(0, 12))}</code>, repository <code>${esc(s.repository)}</code>.</p>
     </details>
-    <div id="message" hidden></div>`;
+    <div id="message" role="status" hidden></div>`;
   const checks = listEditor('required checks', s.required_checks, state.suggested_checks, 'test');
   const production = listEditor('production paths', s.production.filter(g => !isDefault(g)), [], '**/*.dart');
   app.querySelector('#checks').append(checks); app.querySelector('#production').append(production);
   app.querySelectorAll('input, select').forEach(i => { if (!i.dataset.step) i.addEventListener('input', changed); if (i.type === 'radio' || i.type === 'checkbox') i.addEventListener('change', changed); });
   app.querySelectorAll('[data-step]').forEach(box => box.onchange = async () => {
     const step = steps.find(x => x.index === Number(box.dataset.step));
-    try { await api('/api/step', { index: step.index, text: step.text, done: box.checked }); state = await api('/api/state'); renderSettings(); }
+    try { await api('/api/step', { index: step.index, text: step.text, done: box.checked }); state = await api('/api/state'); renderSettings(); app.querySelector(`[data-step="${step.index}"]`)?.focus(); }
     catch (e) { box.checked = !box.checked; show('error', `<p>${esc(e.message)}</p>`); }
   });
   bar.hidden = false; saveButton.textContent = 'Save settings'; statusLine.textContent = 'All saved.';
   saveButton.onclick = async () => {
+    if (picked('label') === 'enforced' && label !== 'enforced' && !confirm('Switch to enforced mode only once node .cache/agent-workflow/bin/wf-protect --project . --target enforced passes (setup step 9). Has it passed?')) return;
     saveButton.disabled = true; statusLine.textContent = 'Saving…';
     try {
       const r = await api('/api/settings', {
@@ -223,7 +224,7 @@ function renderSettings() {
       state = await api('/api/state'); renderSettings();
       show('ok', `${r.changed.length ? `<p>Saved: ${r.changed.map(f => `<code>${esc(f)}</code>`).join(', ')}.</p>` : ''}${r.notes.map(n => `<p class="warn">${esc(n)}</p>`).join('')}<p>${esc(r.next)}</p>`);
     } catch (e) { show('error', `<p>Not saved: ${esc(e.message)}</p>`); statusLine.textContent = 'Not saved.'; }
-    finally { saveButton.disabled = false; }
+    finally { saveButton.disabled = false; saveButton.focus(); }
   };
 }
 

@@ -7,7 +7,6 @@
 // and every request needs the session's random token and this server's own Host, so another site in the browser
 // cannot drive it.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
@@ -19,7 +18,15 @@ import { parseFrontMatter } from '../validator/lib/frontmatter.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const MILESTONE = /^M-\d{4}$/;
-const MECHANISM = { manual: 'manual-signed-receipts', 'owner-merge': 'owner-merge' };
+const MECHANISM = { manual: 'manual-signed-receipts', 'owner-merge': 'owner-merge', enforced: 'github-rulesets-codeowners' };
+const VERSION = /^[\w.\/-]+$/;
+// Inspection reads the whole tracked tree: once per server and revision, not on every reload of the page.
+const inspected = new Map();
+async function inspectOnce(args) {
+  const key = JSON.stringify(args);
+  if (!inspected.has(key)) inspected.set(key, import('./inspect.mjs').then(m => m.inspectProject(args)));
+  return inspected.get(key);
+}
 
 const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 20000 });
 const rel = project => p => path.join(project, p);
@@ -80,10 +87,7 @@ export async function readState({ project, workflowRepo }) {
     const repository = remoteRepository(project);
     const tags = (git(workflowRepo, 'tag', '--sort=-creatordate').stdout ?? '').split('\n').filter(t => /^v\d/.test(t)).slice(0, 12);
     let inspection = null;
-    try {
-      const { inspectProject } = await import('./inspect.mjs');
-      inspection = await inspectProject({ project, workflowRepo, rev: tags[0] ?? 'HEAD' });
-    } catch (e) { inspection = { error: e.message }; }
+    try { inspection = await inspectOnce({ project, workflowRepo, rev: tags[0] ?? 'HEAD' }); } catch (e) { inspection = { error: e.message }; }
     state.defaults = {
       repository, coordinator: repository.split('/')[0] ?? '',
       lane: git(project, 'rev-parse', '--verify', '--quiet', 'HEAD').status === 0 ? 'existing' : 'new',
@@ -100,10 +104,7 @@ export async function readState({ project, workflowRepo }) {
   const profile = loadAll(source, rd).profile?.data ?? {};
   const owners = listedOwners(profile);
   let suggestedChecks = [];
-  try {
-    const { inspectProject } = await import('./inspect.mjs');
-    suggestedChecks = (await inspectProject({ project, workflowRepo, rev: config.workflow?.revision || 'HEAD' })).suggested_required_checks.map(s => s.name);
-  } catch { /* suggestions are optional */ }
+  try { suggestedChecks = (await inspectOnce({ project, workflowRepo, rev: config.workflow?.revision || 'HEAD' })).suggested_required_checks.map(s => s.name); } catch { /* suggestions are optional */ }
   state.settings = {
     repository: config.repository ?? '', trusted_branch: config.trusted_branch ?? 'main', workflow: config.workflow ?? {},
     owners, shared: owners.length >= 2,
@@ -127,7 +128,9 @@ export function adoptArguments(form, project) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('the repository must look like OWNER/REPOSITORY');
   const coordinator = oneLine(form.coordinator, 'your GitHub username');
   if (!USERNAME.test(coordinator)) throw new Error('your GitHub username is not a valid username');
-  args.push('--repository', repository, '--coordinator', coordinator, '--rev', oneLine(form.version || 'HEAD', 'version'));
+  const version = oneLine(form.version || 'HEAD', 'version');
+  if (!VERSION.test(version) || version.startsWith('-')) throw new Error('choose a workflow release');
+  args.push('--repository', repository, '--coordinator', coordinator, '--rev', version);
   if (!['manual', 'owner-merge'].includes(form.approval)) throw new Error('choose how you approve work');
   args.push('--approval', form.approval);
   if (form.worker) { const w = oneLine(form.worker, 'the agent\'s account'); if (!USERNAME.test(w)) throw new Error('the agent\'s GitHub account is not a valid username'); args.push('--worker', w); }
@@ -141,7 +144,7 @@ export function adoptArguments(form, project) {
 export function adopt({ project, workflowRepo, form }) {
   const args = adoptArguments(form, project);
   const r = spawnSync(process.execPath, [path.join(workflowRepo, 'bin/wf-adopt'), '--workflow-repo', workflowRepo, ...args], { encoding: 'utf8', timeout: 180000 });
-  return { ok: r.status === 0, output: (r.stdout + r.stderr).trim() };
+  return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`.trim() };
 }
 
 // Applies the settings form. Everything is checked on a copy of the records first; nothing is written on an error.
@@ -161,6 +164,7 @@ export function saveSettings({ project, form }) {
   for (const [name, value] of [['the owner\'s username', approver], ['the agent\'s account', worker]]) if (value && !USERNAME.test(value)) throw new Error(`${name} is not a valid GitHub username`);
   if (worker && approver && worker.toLowerCase() === approver.toLowerCase()) throw new Error('the agent\'s account must differ from yours; leave it empty to work with one account');
   if (label === 'enforced' && !shared && !worker) throw new Error('enforced mode needs the agent\'s own account: GitHub never lets you approve your own pull request');
+  if (label === 'enforced' && !shared && !approver) throw new Error('enforced mode needs your GitHub username: code-owner review names you');
   const branch = oneLine(form.trusted_branch, 'the trusted branch');
   if (!/^[\w./-]+$/.test(branch)) throw new Error('the trusted branch must be a plain branch name');
   const exclude = items(form.client?.exclude ?? [], 'hidden stages');
@@ -185,27 +189,25 @@ export function saveSettings({ project, form }) {
   const nextConfig = `${JSON.stringify(next, null, 2)}\n`;
   const nextProfile = setFrontMatter(profileText, values);
 
-  // A copy of the records with the new files, checked as the validator checks them.
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-setup-'));
-  try {
-    fs.cpSync(file(rd), path.join(temp, rd), { recursive: true });
-    if (fs.existsSync(file('tests/acceptance-map.json'))) fs.cpSync(file('tests/acceptance-map.json'), path.join(temp, 'tests/acceptance-map.json'));
-    fs.mkdirSync(path.join(temp, 'docs/workflow'), { recursive: true });
-    fs.writeFileSync(path.join(temp, 'docs/workflow/config.json'), nextConfig);
-    fs.writeFileSync(path.join(temp, profilePath), nextProfile);
-    const source = dirSource(temp);
-    loadConfig(source);
-    const already = new Set(validateRecords(dirSource(project), rd).errors);
-    const errors = validateRecords(source, rd).errors.filter(e => !already.has(e)); // only what this change introduces
-    if (errors.length) throw new Error(errors.join('; '));
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  // The project as it would be with the two new files, checked as the validator checks it; everything else (specs,
+  // acceptance tests, records) is read from the project itself.
+  const real = dirSource(project);
+  const pending = new Map([['docs/workflow/config.json', nextConfig], [profilePath, nextProfile]]);
+  const source = { ...real, read: p => pending.has(p) ? pending.get(p) : real.read(p), exists: p => pending.has(p) || real.exists(p), isFile: p => pending.has(p) || real.isFile(p) };
+  loadConfig(source);
+  const already = new Set(validateRecords(real, rd).errors);
+  const errors = validateRecords(source, rd).errors.filter(e => !already.has(e)); // only what this change introduces
+  if (errors.length) throw new Error(errors.join('; '));
 
   const changed = [];
   if (nextConfig !== configText) { fs.writeFileSync(file('docs/workflow/config.json'), nextConfig); changed.push('docs/workflow/config.json'); }
   if (nextProfile !== profileText) { fs.writeFileSync(file(profilePath), nextProfile); changed.push(profilePath); }
   const notes = [];
   if (label !== config.approval?.label) notes.push(`The approval mode changes from ${config.approval?.label ?? 'manual'} to ${label}. ${label === 'enforced' ? 'Switch only once wf-protect --target enforced passes (setup step 9), and update AGENTS.md\'s auto-merge sentence in the same pull request.' : label === 'owner-merge' ? 'Your own merge becomes the approval, and nothing proves who merged; update AGENTS.md\'s merge sentence in the same pull request.' : 'Receipts you sign become the approval again.'}`);
+  if (label !== config.approval?.label && [label, config.approval?.label ?? 'manual'].every(l => l !== 'enforced')) notes.push(`The owner steps in ${rd}/setup.md were written for the old mode: update steps 2, 6 and 9 there${label === 'owner-merge' ? ', and state under Supported scope that nothing proves who merged' : ''}.`);
   if (JSON.stringify(values.required_checks) !== JSON.stringify(list(before.required_checks))) notes.push('Required checks changed: after this is approved, rerun wf-protect --apply so GitHub requires them too.');
+  if (approver !== (config.approval?.approver ?? '')) notes.push('Your username changed: update .github/CODEOWNERS to name it in the same pull request.');
+  if (branch !== (config.trusted_branch ?? 'main')) notes.push(`The trusted branch changed: change the branch named in .github/workflows/wf-status.yml${fs.existsSync(file('.github/workflows/wf-client-page.yml')) ? ' and wf-client-page.yml' : ''} in the same pull request.`);
   return { ok: true, changed, notes, next: changed.length ? 'These are governing and workflow changes: commit them on a branch and open a pull request (in manual mode you also sign a governing-change and a workflow-change receipt). This page never commits or pushes.' : 'Nothing changed.' };
 }
 
@@ -243,8 +245,10 @@ export function createSetupServer({ project, workflowRepo, token = randomBytes(2
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return send(403, { error: 'wrong origin' });
     let body = '';
     req.setEncoding('utf8');
-    req.on('data', chunk => { body += chunk; if (body.length > 65536) req.destroy(); });
+    let tooLarge = false;
+    req.on('data', chunk => { if (tooLarge) return; body += chunk; if (body.length > 65536) { tooLarge = true; send(413, { error: 'request too large' }); req.destroy(); } });
     req.on('end', () => {
+      if (tooLarge) return;
       let input;
       try { input = JSON.parse(body || '{}'); } catch { return send(400, { error: 'invalid JSON' }); }
       try {

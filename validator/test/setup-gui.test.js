@@ -75,6 +75,34 @@ test('saving refuses what the workflow would reject, and writes nothing then', t
   assert.throws(() => saveSettings({ project: shared, form: form({ dir: shared, approval: { label: 'owner-merge', approver: '', agent_identity: '' } }) }), /owner-merge is for one owner/);
 });
 
+test('saving works once the project has acceptance examples and test mappings (MAINT-0009 review B1)', t => {
+  const dir = project(t);
+  const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
+  write('docs/specs/orders.md', '# Orders\n');
+  write('tests/acceptance/orders.test.js', "test('AC-001-1 a customer orders', () => {});\n");
+  write('docs/workflow/acceptance.json', JSON.stringify({ examples: [{ id: 'AC-001-1', requirement: 'docs/specs/orders.md', method: 'automated' }] }));
+  write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/acceptance/orders.test.js', name: 'AC-001-1 a customer orders' }]));
+  assert.deepEqual(validateRecords(dirSource(dir), 'docs/workflow').errors, []);
+  const r = saveSettings({ project: dir, form: form({ dir, measure: 'A customer can order online.' }) });
+  assert.deepEqual(r.changed, ['docs/workflow/profile.md']);
+});
+
+test('switching to enforced needs both accounts and records the matching mechanism; dependent files are named', t => {
+  const dir = project(t, '--worker', 'agent-bot');
+  assert.throws(() => saveSettings({ project: dir, form: form({ dir, approval: { label: 'enforced', approver: '', agent_identity: 'agent-bot' } }) }), /needs your GitHub username/);
+  const r = saveSettings({ project: dir, form: form({ dir, approval: { label: 'enforced', approver: 'owner-2', agent_identity: 'agent-bot' }, trusted_branch: 'trunk' }) });
+  const config = loadConfig(dirSource(dir));
+  assert.deepEqual([config.approval.label, config.approval.mechanism], ['enforced', 'github-rulesets-codeowners']);
+  assert.match(read(dir, 'docs/workflow/profile.md'), /^approval_mechanism: github-rulesets-codeowners$/m);
+  const notes = r.notes.join(' ');
+  assert.match(notes, /Switch only once wf-protect --target enforced passes/);
+  assert.match(notes, /update \.github\/CODEOWNERS/);
+  assert.match(notes, /wf-status\.yml/);
+  assert.doesNotMatch(notes, /steps 2, 6 and 9/, 'the enforced switch follows step 9, not a rewrite of the checklist');
+  const merge = project(t);
+  assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /update steps 2, 6 and 9 there, and state under Supported scope that nothing proves who merged/);
+});
+
 test('the owner ticks their own steps; agent steps and a stale page are refused', t => {
   const dir = project(t);
   const lines = read(dir, 'docs/workflow/setup.md').split('\n');
@@ -92,7 +120,7 @@ test('the owner ticks their own steps; agent steps and a stale page are refused'
 // Requests with full control of the Host header, which fetch does not give.
 function request(port, { method = 'GET', path: p = '/', host = `127.0.0.1:${port}`, headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, method, path: p, headers: { Host: host, ...headers } }, res => { let data = ''; res.on('data', c => { data += c; }); res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers })); });
+    const req = http.request({ host: '127.0.0.1', port, method, path: p, agent: false, headers: { Host: host, ...headers } }, res => { let data = ''; res.on('data', c => { data += c; }); res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers })); });
     req.on('error', reject);
     req.end(body);
   });
@@ -115,6 +143,11 @@ test('only this server\'s own page, with its token, can read or change anything'
   assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
   assert.equal((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: { 'Content-Type': 'text/plain' }, body: '{}' })).status, 415, 'a plain form post');
   assert.equal((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: { ...json, Origin: 'https://evil.example' }, body: '{}' })).status, 403, 'another origin');
+  assert.equal((await request(port, { method: 'OPTIONS', path: `/api/adopt?t=${token}`, headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' } })).headers['access-control-allow-origin'], undefined, 'no CORS preflight is granted');
+  assert.equal((await request(port, { path: `/?t=${token}`, host: `[::1]:${port}` })).status, 403, 'only the address it listens on');
+  assert.equal((await request(port, { path: `/?t=${token}`, host: `localhost:${port}` })).status, 200);
+  assert.equal((await request(port, { method: 'POST', path: `/api/settings?t=${token}`, headers: json, body: 'x'.repeat(70000) }).catch(() => ({ status: 413 }))).status, 413, 'an oversized body is refused');
+  assert.throws(() => adoptArguments({ repository: 'acme/shop', coordinator: 'owner', approval: 'manual', lane: 'new', version: '--workflow-repo' }, dir), /choose a workflow release/);
   const state = JSON.parse((await request(port, { path: `/api/state?t=${token}` })).body);
   assert.equal(state.adopted, false);
   const adopted = JSON.parse((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({ repository: 'acme/shop', coordinator: 'owner', approval: 'owner-merge', lane: 'new', production: [], version: 'HEAD' }) })).body);

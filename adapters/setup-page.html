@@ -207,6 +207,7 @@ function renderSettings() {
   app.querySelector('#checks').append(checks); app.querySelector('#production').append(production);
   app.querySelectorAll('input, select').forEach(i => { if (!i.dataset.step) i.addEventListener('input', changed); if (i.type === 'radio' || i.type === 'checkbox') i.addEventListener('change', changed); });
   app.querySelectorAll('[data-step]').forEach(box => box.onchange = async () => {
+    if (statusLine.textContent === 'Unsaved changes.') { box.checked = !box.checked; show('error', '<p>Save or undo your setting changes before ticking a step: ticking reloads the page.</p>'); return; }
     const step = steps.find(x => x.index === Number(box.dataset.step));
     try { await api('/api/step', { index: step.index, text: step.text, done: box.checked }); state = await api('/api/state'); renderSettings(); app.querySelector(`[data-step="${step.index}"]`)?.focus(); }
     catch (e) { box.checked = !box.checked; show('error', `<p>${esc(e.message)}</p>`); }

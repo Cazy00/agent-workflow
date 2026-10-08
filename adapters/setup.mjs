@@ -24,7 +24,7 @@ const VERSION = /^[\w.\/-]+$/;
 const inspected = new Map();
 async function inspectOnce(args) {
   const key = JSON.stringify(args);
-  if (!inspected.has(key)) inspected.set(key, import('./inspect.mjs').then(m => m.inspectProject(args)));
+  if (!inspected.has(key)) inspected.set(key, import('./inspect.mjs').then(m => m.inspectProject(args)).catch(e => { inspected.delete(key); throw e; }));
   return inspected.get(key);
 }
 
@@ -204,7 +204,7 @@ export function saveSettings({ project, form }) {
   if (nextProfile !== profileText) { fs.writeFileSync(file(profilePath), nextProfile); changed.push(profilePath); }
   const notes = [];
   if (label !== config.approval?.label) notes.push(`The approval mode changes from ${config.approval?.label ?? 'manual'} to ${label}. ${label === 'enforced' ? 'Switch only once wf-protect --target enforced passes (setup step 9), and update AGENTS.md\'s auto-merge sentence in the same pull request.' : label === 'owner-merge' ? 'Your own merge becomes the approval, and nothing proves who merged; update AGENTS.md\'s merge sentence in the same pull request.' : 'Receipts you sign become the approval again.'}`);
-  if (label !== config.approval?.label && [label, config.approval?.label ?? 'manual'].every(l => l !== 'enforced')) notes.push(`The owner steps in ${rd}/setup.md were written for the old mode: update steps 2, 6 and 9 there${label === 'owner-merge' ? ', and state under Supported scope that nothing proves who merged' : ''}.`);
+  if (label !== config.approval?.label && [label, config.approval?.label ?? 'manual'].every(l => l !== 'enforced')) notes.push(`The owner steps in ${rd}/setup.md were written for the old mode: update them to match (step 6 at least)${label === 'owner-merge' ? ', and state under Supported scope that nothing proves who merged' : ''}.`);
   if (JSON.stringify(values.required_checks) !== JSON.stringify(list(before.required_checks))) notes.push('Required checks changed: after this is approved, rerun wf-protect --apply so GitHub requires them too.');
   if (approver !== (config.approval?.approver ?? '')) notes.push('Your username changed: update .github/CODEOWNERS to name it in the same pull request.');
   if (branch !== (config.trusted_branch ?? 'main')) notes.push(`The trusted branch changed: change the branch named in .github/workflows/wf-status.yml${fs.existsSync(file('.github/workflows/wf-client-page.yml')) ? ' and wf-client-page.yml' : ''} in the same pull request.`);

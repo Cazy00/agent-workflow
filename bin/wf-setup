@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The setup page (MAINT-0009): adopt the workflow, or change its settings later, from a page in your browser.
-// It serves adapters/setup-page.html on 127.0.0.1 with a one-time token, writes only the project's workflow files,
+// It serves adapters/setup-page.html on 127.0.0.1 with a token for this run, writes only the project's workflow files,
 // and never commits, pushes or approves. See adapters/setup.mjs.
 import fs from 'node:fs';
 import path from 'node:path';

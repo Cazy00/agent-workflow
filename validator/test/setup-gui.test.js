@@ -98,9 +98,9 @@ test('switching to enforced needs both accounts and records the matching mechani
   assert.match(notes, /Switch only once wf-protect --target enforced passes/);
   assert.match(notes, /update \.github\/CODEOWNERS/);
   assert.match(notes, /wf-status\.yml/);
-  assert.doesNotMatch(notes, /steps 2, 6 and 9/, 'the enforced switch follows step 9, not a rewrite of the checklist');
+  assert.doesNotMatch(notes, /update them to match/, 'the enforced switch follows step 9, not a rewrite of the checklist');
   const merge = project(t);
-  assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /update steps 2, 6 and 9 there, and state under Supported scope that nothing proves who merged/);
+  assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /update them to match \(step 6 at least\), and state under Supported scope that nothing proves who merged/);
 });
 
 test('the owner ticks their own steps; agent steps and a stale page are refused', t => {
@@ -146,7 +146,7 @@ test('only this server\'s own page, with its token, can read or change anything'
   assert.equal((await request(port, { method: 'OPTIONS', path: `/api/adopt?t=${token}`, headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' } })).headers['access-control-allow-origin'], undefined, 'no CORS preflight is granted');
   assert.equal((await request(port, { path: `/?t=${token}`, host: `[::1]:${port}` })).status, 403, 'only the address it listens on');
   assert.equal((await request(port, { path: `/?t=${token}`, host: `localhost:${port}` })).status, 200);
-  assert.equal((await request(port, { method: 'POST', path: `/api/settings?t=${token}`, headers: json, body: 'x'.repeat(70000) }).catch(() => ({ status: 413 }))).status, 413, 'an oversized body is refused');
+  assert.equal((await request(port, { method: 'POST', path: `/api/settings?t=${token}`, headers: json, body: 'x'.repeat(70000) })).status, 413, 'an oversized body is refused with 413, not a dropped connection');
   assert.throws(() => adoptArguments({ repository: 'acme/shop', coordinator: 'owner', approval: 'manual', lane: 'new', version: '--workflow-repo' }, dir), /choose a workflow release/);
   const state = JSON.parse((await request(port, { path: `/api/state?t=${token}` })).body);
   assert.equal(state.adopted, false);

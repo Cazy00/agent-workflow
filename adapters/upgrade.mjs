@@ -1,8 +1,9 @@
 // Moving an adopted project to another workflow release (bin/wf-upgrade, MAINT-0011). It moves the pin, removes what the
-// releases in between no longer read (config keys and files listed in the target release's upgrades.json), refreshes the
-// workflow files the scaffold installed where the project has not changed them, and lists the manual steps each release
-// names. It reads everything shared from the workflow repository's Git objects, never from a working tree, and it never
-// commits, pushes or approves: the result is a workflow change that goes through a pull request.
+// releases in between no longer read (config keys and files listed in a released upgrades.json), refreshes the workflow
+// files the scaffold installed where the project has not changed them, and lists the manual steps each release names.
+// It reads everything shared from the workflow repository's Git objects, never from a working tree, and only from
+// released revisions or the target itself, so a local, unreleased commit never changes what is done to a project. It
+// never commits, pushes or approves: the result is a workflow change that goes through a pull request.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,17 +33,16 @@ const git = (repo, args, allowFailure = false) => {
 };
 const show = (repo, rev, file) => { const r = git(repo, ['show', `${rev}:${file}`], true); return r.status === 0 ? r.stdout : null; };
 
-// The release a revision is: its exact tag, or, between tags, the version its package.json is heading for.
-function releaseOf(repo, rev) {
+// The release a revision is: its exact tag; between tags, for a target, the version its package.json is heading for (so
+// that release's steps apply), and for a pin, the last release it contains (so the next release's steps still apply).
+function releaseOf(repo, rev, { pin = false } = {}) {
   const tag = git(repo, ['describe', '--tags', '--exact-match', rev], true).stdout.trim();
   if (parseVersion(tag).length === 3) return { tag, version: tag };
-  const pkg = show(repo, rev, 'package.json');
+  const nearest = git(repo, ['describe', '--tags', '--abbrev=0', rev], true).stdout.trim();
+  if (pin && parseVersion(nearest).length === 3) return { tag: null, version: nearest };
   let version = null;
-  try { version = `v${JSON.parse(pkg).version}`; } catch { /* below */ }
-  if (parseVersion(version).length !== 3) {
-    const nearest = git(repo, ['describe', '--tags', '--abbrev=0', rev], true).stdout.trim();
-    version = parseVersion(nearest).length === 3 ? nearest : null;
-  }
+  try { version = `v${JSON.parse(show(repo, rev, 'package.json')).version}`; } catch { /* below */ }
+  if (parseVersion(version).length !== 3) version = parseVersion(nearest).length === 3 ? nearest : null;
   return { tag: null, version };
 }
 
@@ -76,23 +76,26 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   if (resolved.status !== 0) throw new Error(`--rev ${target} does not resolve to a commit in ${workflowRepo}`);
   const to = resolved.stdout.trim();
   // The pinned revision's own tag is the truth; a hand-edited version that disagrees with it is reported, not trusted.
-  const pinned = releaseOf(workflowRepo, from);
+  const pinned = releaseOf(workflowRepo, from, { pin: true });
   const recorded = parseVersion(config.workflow?.version).length === 3 ? config.workflow.version : null;
-  const fromRelease = { version: pinned.tag ?? recorded ?? pinned.version };
+  const fromRelease = { version: pinned.version ?? recorded };
   const warnings = [];
-  if (pinned.tag && recorded && compareVersions(pinned.tag, recorded) !== 0) warnings.push(`workflow.version says ${recorded}, but the pinned revision is ${pinned.tag}; the upgrade goes from ${pinned.tag}`);
+  if (pinned.version && recorded && compareVersions(pinned.version, recorded) !== 0) warnings.push(`workflow.version says ${recorded}, but the pinned revision is ${pinned.tag ?? `after ${pinned.version}`}; the upgrade goes from ${pinned.version}`);
   const toRelease = releaseOf(workflowRepo, to);
   if (!fromRelease.version || !toRelease.version) throw new Error('cannot tell which releases the pinned and target revisions are');
   if (to === from) return { project, from, to, from_version: fromRelease.version, to_version: toRelease.version, current: true, changes: [], notes: warnings, left: [] };
   if (git(workflowRepo, ['merge-base', '--is-ancestor', from, to], true).status !== 0) throw new Error(`the target ${to.slice(0, 12)} does not contain the pinned revision ${from.slice(0, 12)}: a pin moves forward only`);
 
-  // What the releases after the pin, up to and including the target, ask for. Later releases document earlier ones, so
-  // the list comes from this checkout's HEAD when it contains the target (an older target may predate upgrades.json).
+  // What the releases after the pin, up to and including the target, ask for. Later releases document earlier ones (an
+  // older target may predate upgrades.json), so the list comes from the newest release tag that contains the target and
+  // holds one, else from the target itself: never from an unreleased commit, which could change what is done to a project.
   let manifest = {};
-  const head = git(workflowRepo, ['rev-parse', 'HEAD'], true).stdout.trim();
-  const listFrom = SHA.test(head) && git(workflowRepo, ['merge-base', '--is-ancestor', to, head], true).status === 0 && show(workflowRepo, head, 'upgrades.json') !== null ? head : to;
+  const released = git(workflowRepo, ['tag', '--sort=-v:refname', '--contains', to], true).stdout.split('\n').filter(t => parseVersion(t).length === 3);
+  const listTag = released.find(t => show(workflowRepo, t, 'upgrades.json') !== null) ?? null;
+  const listFrom = listTag ?? to;
   const raw = show(workflowRepo, listFrom, 'upgrades.json');
-  if (raw !== null) { try { manifest = JSON.parse(raw); } catch { throw new Error('the target release\'s upgrades.json is not valid JSON'); } }
+  const listName = listTag ? `release ${listTag}` : `the target ${to.slice(0, 12)}`;
+  if (raw !== null) { try { manifest = JSON.parse(raw); } catch { throw new Error(`upgrades.json in ${listName} is not valid JSON`); } }
   const steps = Object.entries(manifest).filter(([v]) => parseVersion(v).length === 3 && compareVersions(v, fromRelease.version) > 0 && compareVersions(v, toRelease.version) <= 0).sort(([a], [b]) => compareVersions(a, b));
   const removeKeys = steps.flatMap(([, s]) => s.remove_config ?? []);
   const removeFiles = steps.flatMap(([, s]) => s.remove_files ?? []);
@@ -135,7 +138,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
     if (older !== null && have === fill(older, item)) changes.push({ path: item.path, action: 'update', content: want, why: 'still the pinned release\'s copy, so it takes the new one' });
     else left.push({ path: item.path, why: `changed in this project; compare it with ${item.template} at ${to.slice(0, 12)} and merge by hand` });
   }
-  return { project, from, to, from_version: fromRelease.version, to_version: toRelease.tag ?? `${toRelease.version} (unreleased)`, current: false, changes, notes, left, removed_config: removed };
+  return { project, from, to, from_version: fromRelease.version, to_version: toRelease.tag ?? `${toRelease.version} (unreleased)`, current: false, changes, notes, left, removed_config: removed, steps_from: raw === null ? null : listName };
 }
 
 // Writes the plan. Refuses when a file it would change has uncommitted edits, so nothing of the owner's is overwritten.
@@ -166,8 +169,8 @@ export function validateWith({ workflowRepo, rev, project }) {
 }
 
 export function renderPlan(plan, { applied = false, validation = null } = {}) {
-  if (plan.current) return `Already at ${plan.to_version} (${plan.to.slice(0, 12)}); nothing to do.\n`;
-  const lines = [`${applied ? 'Upgraded' : 'Upgrade plan for'} ${plan.project}: ${plan.from_version} → ${plan.to_version}`, ''];
+  if (plan.current) return `Already at ${plan.to_version} (${plan.to.slice(0, 12)}); nothing to do.\n${plan.notes.map(n => `  - ${n}\n`).join('')}`;
+  const lines = [`${applied ? 'Upgraded' : 'Upgrade plan for'} ${plan.project}: ${plan.from_version} → ${plan.to_version}${plan.steps_from ? ` (steps from upgrades.json in ${plan.steps_from})` : ''}`, ''];
   lines.push(applied ? 'Changed:' : 'Would change (run again with --apply):');
   for (const c of plan.changes) lines.push(`  ${c.action.padEnd(6)} ${c.path}: ${c.why}`);
   if (plan.left.length) lines.push('', 'Left as they are:', ...plan.left.map(l => `  ${l.path}: ${l.why}`));

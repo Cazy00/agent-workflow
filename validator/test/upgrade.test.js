@@ -31,11 +31,12 @@ function releases(t, oldTag = 'v1.10.1', { middle = null } = {}) {
   edit('package.json', x => x.replace(/"version": "[^"]+"/, `"version": "${oldTag.slice(1)}"`));
   git(wf, 'rm', '-q', 'upgrades.json'); // releases before v2.0.0 had none
   git(wf, 'commit', '-qam', 'an older release'); git(wf, 'tag', '-f', oldTag);
-  if (middle) { edit('package.json', x => x.replace(/"version": "[^"]+"/, `"version": "${middle.slice(1)}"`)); git(wf, 'commit', '-qam', 'a release between'); git(wf, 'tag', '-f', middle); }
+  if (middle) { edit('package.json', x => x.replace(/"version": "[^"]+"/, `"version": "${middle === true ? '1.12.0' : middle.slice(1)}"`)); git(wf, 'commit', '-qam', 'a release between'); if (middle !== true) git(wf, 'tag', '-f', middle); }
+  const between = git(wf, 'rev-parse', 'HEAD');
   git(wf, 'checkout', '-q', head, '--', '.'); git(wf, 'commit', '-qm', 'this release'); git(wf, 'tag', '-f', 'v2.0.0');
   const project = path.join(temp, 'project');
   fs.mkdirSync(project); git(project, 'init', '-q');
-  const a = run(process.execPath, [adopt, '--project', project, '--workflow-repo', wf, '--rev', oldTag, '--repository', 'acme/shop', '--coordinator', 'owner']);
+  const a = run(process.execPath, [adopt, '--project', project, '--workflow-repo', wf, '--rev', middle === true ? between : oldTag, '--repository', 'acme/shop', '--coordinator', 'owner']);
   assert.equal(a.status, 0, a.stdout + a.stderr);
   return { wf, project, temp, up: (...args) => run(process.execPath, [upgrade, '--project', project, '--workflow-repo', wf, ...args]) };
 }
@@ -153,4 +154,32 @@ test('the pinned revision\'s tag outranks a workflow.version that disagrees with
   assert.equal(plan.from_version, 'v1.10.1');
   assert.ok(plan.notes.some(n => /workflow\.version says v1\.12\.0, but the pinned revision is v1\.10\.1/.test(n)), plan.notes.join(' | '));
   assert.ok(plan.notes.some(n => n.startsWith('v1.11.0: ')), 'steps after the real pin are kept');
+  assert.match(r.up('--rev', 'v1.10.1').stdout, /Already at v1\.10\.1[\s\S]*workflow\.version says v1\.12\.0/, 'a current pin still shows the warning (fix review N-new-3)');
+});
+
+test('an unreleased commit on the workflow checkout never changes what an upgrade to a release does (fix review S-new-1)', t => {
+  const r = releases(t); if (!r) return t.skip('not a Git checkout');
+  fs.mkdirSync(path.join(r.project, 'src')); fs.writeFileSync(path.join(r.project, 'src/app.js'), 'export {};\n');
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted, with code');
+  const manifest = path.join(r.wf, 'upgrades.json');
+  const edited = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  edited['v2.0.0'].remove_config.push('approval'); edited['v2.0.0'].remove_files = ['src'];
+  fs.writeFileSync(manifest, JSON.stringify(edited, null, 2)); git(r.wf, 'commit', '-qam', 'an unreleased edit of a released entry');
+  const plan = JSON.parse(r.up('--rev', 'v2.0.0', '--json').stdout);
+  assert.equal(plan.steps_from, 'release v2.0.0');
+  assert.ok(!plan.removed_config.includes('approval') && !plan.changes.some(c => c.path === 'src'), JSON.stringify(plan.changes));
+  assert.equal(r.up('--rev', 'v2.0.0', '--apply').status, 0);
+  assert.ok(fs.existsSync(path.join(r.project, 'src/app.js')), 'the project\'s code is untouched');
+  assert.ok(JSON.parse(read(r.project, 'docs/workflow/config.json')).approval, 'and so is its approval');
+});
+
+test('a pin between releases counts from the last release it contains (fix review N-new-4)', t => {
+  const r = releases(t, 'v1.10.1', { middle: true }); if (!r) return t.skip('not a Git checkout');
+  const file = path.join(r.project, 'docs/workflow/config.json');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).workflow.version, 'UNRELEASED');
+  const config = JSON.parse(fs.readFileSync(file, 'utf8')); config.workflow.version = 'v1.14.0'; fs.writeFileSync(file, JSON.stringify(config, null, 2));
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted between releases, version edited by hand');
+  const plan = JSON.parse(r.up('--rev', 'v2.0.0', '--json').stdout);
+  assert.equal(plan.from_version, 'v1.10.1');
+  assert.ok(plan.notes.some(n => n.startsWith('v1.11.0: ')) && plan.notes.some(n => /workflow\.version says v1\.14\.0, but the pinned revision is after v1\.10\.1/.test(n)), plan.notes.join(' | '));
 });

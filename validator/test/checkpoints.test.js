@@ -274,3 +274,28 @@ test('the setup counts leave out optional steps, so an owner with nothing to do 
   assert.deepEqual(view.setup_open, { owner: 0, agent: 1 });
   assert.ok(!view.waiting.some(w => w.kind === 'setup' && w.owner === 'owner'), JSON.stringify(view.waiting));
 });
+
+// The wf ci workflow's summary step, run as the workflow runs it: who merges and why, every failing reason, and a
+// plain line when wf ci printed nothing (exit 2).
+test('the wf ci workflow summary names who merges, lists failing reasons and never stays blank', t => {
+  const template = fs.readFileSync(fileURLToPath(new URL('../../templates/github/wf-ci.yml', import.meta.url)), 'utf8');
+  const script = template.slice(template.indexOf('# Who merges')).match(/node -e '\n([\s\S]*?)\n\s*' "\$RUNNER_TEMP\/ci\.json"/)[1];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-summary-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = result => {
+    const file = path.join(dir, 'ci.json'), summary = path.join(dir, 'summary.md');
+    fs.writeFileSync(file, result === null ? '' : JSON.stringify(result)); fs.writeFileSync(summary, '');
+    const r = spawnSync(process.execPath, ['-e', script, file], { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: summary } });
+    assert.equal(r.status, 0, r.stderr);
+    return { out: r.stdout, summary: fs.readFileSync(summary, 'utf8') };
+  };
+  const owner = run({ verdict: 'pass', findings: [], merge: 'owner', owner_reasons: ['it changes acceptance tests: a\n::warning::x%y'] });
+  assert.match(owner.summary, /\*\*Merge:\*\* the owner\./);
+  assert.equal(owner.out.trim(), '::notice title=The owner merges this::it changes acceptance tests: a ::warning::x y', 'a path cannot start a workflow command of its own');
+  assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [] }).summary, /the agent may merge this once every required check has passed/);
+  const failed = run({ verdict: 'fail', findings: ['production: src/a.js', 'production path src/a.js must belong to exactly one selected task (found 0)', 'readiness T-0001: Needs discovery or resolution', '  readiness is stale', 'unverified: x', 'note: y'] }).summary;
+  assert.match(failed, /- production path src\/a\.js must belong/);
+  assert.match(failed, /- readiness is stale/);
+  assert.doesNotMatch(failed, /- production: src\/a\.js|unverified: x|note: y/);
+  assert.match(run(null).summary, /wf ci could not run/);
+});

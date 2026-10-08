@@ -12,6 +12,8 @@ import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
+// The records the owner approves, whatever a project's config classifies them as (owner-merge's `merge`, MAINT-0010).
+const ownerRecord = (p, rd) => p === 'docs/workflow/config.json' || p === `${rd}/profile.md` || p === `${rd}/acceptance.json` || within(p, `${rd}/${DIRS.milestone}`) || within(p, `${rd}/${DIRS.decision}`);
 
 // A record ID names one piece of work for good: once a task record is removed after its milestone's acceptance,
 // its pull requests are the permanent record. Two planners on two branches, or one planner reading the directory after a
@@ -262,7 +264,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
     // The records the owner approves stay the owner's whatever an older config classifies them as: a milestone's
     // acceptance lifts the checkpoint's hold, so the agent must never merge it.
-    const ownerRecords = classes.map(c => c.path).filter(p => p === 'docs/workflow/config.json' || p === `${rd}/profile.md` || p === `${rd}/acceptance.json` || p.startsWith(`${rd}/milestones/`) || p.startsWith(`${rd}/decisions/`)).filter(p => !['governing', 'enforcement'].includes(classes.find(c => c.path === p)?.category));
+    const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category)).map(c => c.path);
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
     if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);

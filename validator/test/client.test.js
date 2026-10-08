@@ -55,6 +55,19 @@ test('the headline follows the project: awaiting sign-off, all delivered, nothin
   assert.match(renderClient(empty), /The stages appear here once the first one is planned/);
 });
 
+test('a paused milestone says so, an unknown status reads as planned, and Up next leads when nothing is under way', t => {
+  const paused = project(t, { extraMilestones: [['M-0004', 'Blocked', 'Gift cards']] });
+  fs.writeFileSync(path.join(paused, 'docs/workflow/milestones/M-0002.md'), fs.readFileSync(path.join(paused, 'docs/workflow/milestones/M-0002.md'), 'utf8').replace('status: Active', 'status: Authorised').replace('tasks: [T-0001, T-0002, T-0003, T-0004]', 'tasks: [T-0001, T-0001, T-0002]'));
+  const view = evaluateClient({ source: dirSource(paused) });
+  assert.equal(view.headline, 'Gift cards is paused for now.');
+  assert.deepEqual(view.stages.map(s => s.status), ['Delivered', 'Up next', 'Planned', 'Paused for now']);
+  assert.deepEqual(view.stages[1].parts, { done: 2, total: 4 }, 'a task planned twice counts once; the records are the larger count');
+  fs.rmSync(path.join(paused, 'docs/workflow/milestones/M-0004.md'));
+  assert.equal(evaluateClient({ source: dirSource(paused) }).headline, 'Next: online ordering.');
+  fs.writeFileSync(path.join(paused, 'docs/workflow/milestones/M-0002.md'), fs.readFileSync(path.join(paused, 'docs/workflow/milestones/M-0002.md'), 'utf8').replace('status: Authorised', 'status: Someday'));
+  assert.equal(evaluateClient({ source: dirSource(paused) }).stages[1].status, 'Planned', 'never a raw record word');
+});
+
 test('the page carries no IDs, people, branches or reasons, and escapes record text', t => {
   const dir = project(t, { client: { title: 'Layla\'s <Bakery>', exclude: ['M-0003'] } });
   fs.appendFileSync(path.join(dir, 'docs/workflow/milestones/M-0002.md'), '');
@@ -76,6 +89,11 @@ test('wf status --client prints the page; the option is refused elsewhere; clien
   const r = spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^<!doctype html>/);
+  // From a commit, the page is dated by the commit, not by today.
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'records', '--date', '2026-03-05T12:00:00Z']]) assert.equal(spawnSync('git', ['-C', dir, ...args], { env: { ...process.env, GIT_COMMITTER_DATE: '2026-03-05T12:00:00Z' } }).status, 0);
+  const dated = spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir, '--candidate', 'HEAD'], { encoding: 'utf8' });
+  assert.equal(dated.status, 0, dated.stderr);
+  assert.match(dated.stdout, /Updated 5 March 2026\./);
   for (const args of [['ci', '--client', '--baseline', dir], ['status', '--client', '--json']]) {
     const refused = spawnSync(process.execPath, [cli, ...args, '--repo', dir], { encoding: 'utf8' });
     assert.equal(refused.status, 2, refused.stdout + refused.stderr);

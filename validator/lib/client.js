@@ -1,7 +1,8 @@
 // `wf status --client` (MAINT-0008): the project's progress for a client who does not read records. It shows each
 // milestone as a stage in plain words: its title and outcome, where it stands, how many of its parts are done and how
-// many are on hold. Nothing else leaves the records: no IDs, branches, people, decisions, readiness reasons or pull
-// requests. Like `wf status` it is derived and read-only, grants nothing and no gate reads it. Record text is escaped.
+// many are on hold. No other record field leaves the records: no IDs, branches, people, decisions, readiness reasons or
+// pull requests. The title, outcome and measure are shown as written, so they are written for the client. Like
+// `wf status` it is derived and read-only, grants nothing and no gate reads it. Record text is escaped.
 import { list, loadAll, loadConfig } from './records.js';
 
 // What each milestone status means to someone outside the work.
@@ -9,6 +10,7 @@ const STAGE = {
   Draft: { words: 'Planned', tone: 'planned', order: 0 },
   Authorised: { words: 'Up next', tone: 'planned', order: 1 },
   Active: { words: 'In progress', tone: 'active', order: 2 },
+  Blocked: { words: 'Paused for now', tone: 'review', order: 2 },
   Verified: { words: 'Built and checked, awaiting sign-off', tone: 'review', order: 3 },
   Accepted: { words: 'Signed off', tone: 'done', order: 4 },
   Released: { words: 'Delivered', tone: 'done', order: 5 },
@@ -35,26 +37,27 @@ export function evaluateClient({ source, updated = null }) {
     .sort((a, b) => String(a.data.id).localeCompare(String(b.data.id)))
     .map(r => {
       const m = r.data;
-      const stage = STAGE[m.status] ?? { words: String(m.status ?? 'Unknown'), tone: 'planned', order: 0 };
+      const stage = STAGE[m.status] ?? STAGE.Draft; // never a raw record word
       const own = tasks.filter(t => t.milestone === m.id);
       // Task records are removed once a milestone is accepted, so a signed-off stage is complete by definition.
       const finished = stage.tone === 'done';
-      const total = finished ? null : Math.max(list(m.tasks).length, own.length);
+      const total = finished ? null : Math.max(new Set(list(m.tasks)).size, own.length);
       const done = finished ? null : own.filter(t => t.status === 'Done').length;
       const title = titleOf(r) ?? m.outcome ?? 'Untitled stage';
       return {
         title,
         outcome: m.outcome && m.outcome !== title ? m.outcome : null,
         measure: m.measure ?? null,
-        status: stage.words, tone: stage.tone, finished,
+        status: stage.words, tone: stage.tone, finished, paused: m.status === 'Blocked',
         parts: total ? { done, total } : null,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
       };
     });
-  const current = stages.find(s => s.tone === 'review') ?? stages.find(s => s.tone === 'active') ?? null;
+  const current = stages.find(s => s.tone === 'review' && !s.paused) ?? stages.find(s => s.tone === 'active') ?? stages.find(s => s.paused) ?? null;
   const delivered = stages.filter(s => s.finished).length;
   let headline;
   if (!stages.length) headline = 'The project is being planned.';
+  else if (current?.paused) headline = `${current.title} is paused for now.`;
   else if (current?.tone === 'review') headline = `${current.title}: built and checked, and waiting for sign-off.`;
   else if (current) headline = `Now working on ${lowerFirst(current.title)}.`;
   else if (delivered === stages.length) headline = 'Everything planned so far is delivered.';
@@ -83,12 +86,12 @@ export function renderClient(view) {
   const stage = (s, i) => {
     const pct = s.parts ? Math.round((s.parts.done / s.parts.total) * 100) : s.finished ? 100 : 0;
     const progress = s.parts
-      ? `<div class="parts"><div class="bar" role="img" aria-label="${s.parts.done} of ${s.parts.total} parts done"><span style="width:${pct}%"></span></div><p>${s.parts.done} of ${s.parts.total} part${s.parts.total === 1 ? '' : 's'} done${s.on_hold ? `, ${s.on_hold} on hold` : ''}</p></div>`
+      ? `<div class="parts"><div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div><p>${s.parts.done} of ${s.parts.total} part${s.parts.total === 1 ? '' : 's'} done${s.on_hold ? `, ${s.on_hold} on hold` : ''}</p></div>`
       : '';
     return `<li class="stage ${s.tone}${i === view.current ? ' current' : ''}">
         <span class="marker" aria-hidden="true">${s.finished ? '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>' : i + 1}</span>
         <div class="body">
-          <p class="status">${esc(s.status)}</p>
+          <p class="status"><span class="visually-hidden">Stage ${i + 1} of ${view.stages.length}: </span>${esc(s.status)}</p>
           <h3>${esc(s.title)}</h3>
           ${s.outcome ? `<p class="outcome">${esc(s.outcome)}</p>` : ''}
           ${s.measure && !s.finished ? `<p class="measure">You will be able to check it by: ${esc(s.measure)}</p>` : ''}
@@ -106,7 +109,7 @@ export function renderClient(view) {
 <style>
   :root {
     --paper: #f2f5f1; --sheet: #fbfcfa; --ink: #1e2b2f; --muted: #5a6a6d; --rule: #d3dbd4;
-    --done: #2e6b4f; --active: #2f4fb0; --review: #9a6a12; --planned: #8a9799;
+    --done: #2e6b4f; --active: #2f4fb0; --review: #8a5e0e; --planned: #8a9799;
     --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
     --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     color-scheme: light dark;
@@ -147,6 +150,7 @@ export function renderClient(view) {
   .bar { height: .45rem; border-radius: .25rem; background: var(--rule); overflow: hidden; max-width: 22rem; }
   .bar span { display: block; height: 100%; background: var(--planned); }
   .active .bar span { background: var(--active); } .review .bar span { background: var(--review); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem; }
   footer p { margin: 0 0 .4rem; }
   @media (prefers-reduced-motion: reduce) { ol::after { animation: none; } }
@@ -163,7 +167,7 @@ export function renderClient(view) {
   </header>
   ${view.stages.length ? `<section aria-labelledby="stages">
     <h2 id="stages">Stages</h2>
-    <ol style="--fill:${(fill / 100).toFixed(3)}">
+    <ol role="list" style="--fill:${(fill / 100).toFixed(3)}">
       ${view.stages.map(stage).join('\n      ')}
     </ol>
   </section>` : '<p>The stages appear here once the first one is planned.</p>'}

@@ -103,11 +103,35 @@ test('switching to enforced needs both accounts and records the matching mechani
   assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /update them to match \(step 6 at least\), and state under Supported scope that nothing proves who merged/);
 });
 
+test('the page sends only what it shows, and saving keeps the agent\'s settings and the client theme', async t => {
+  const dir = project(t);
+  const configPath = path.join(dir, 'docs/workflow/config.json');
+  const config = JSON.parse(read(dir, 'docs/workflow/config.json'));
+  config.paths.production.push('**/*.dart');
+  config.trusted_branch = 'main';
+  config.client = { theme: { colors: { brand: '#174A7C' } } };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  fs.writeFileSync(path.join(dir, 'docs/workflow/profile.md'), read(dir, 'docs/workflow/profile.md').replace('required_checks: []', 'required_checks: [test]'));
+  fs.writeFileSync(path.join(dir, 'docs/workflow/milestones/M-0001.md'), '---\nrecord: milestone\nid: M-0001\noutcome: Customers order online.\nstatus: Draft\ncoordinator: agent\nowner: owner\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nauthority: owner\nlimits: x\ndemonstration: x\nstop_conditions: x\nrelease_authority: owner\ntasks: []\n---\n# M-0001 — Online ordering\n');
+  // Exactly what the page sends.
+  saveSettings({ project: dir, form: { approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, project: 'shop', measure: 'A customer can order online.', client: { title: 'Shop', language: 'ar', exclude: ['M-0001'] } } });
+  const after = loadConfig(dirSource(dir));
+  assert.ok(after.paths.production.includes('**/*.dart'), 'code paths are the agent\'s, untouched');
+  assert.deepEqual(after.client, { title: 'Shop', language: 'ar', exclude: ['M-0001'], theme: { colors: { brand: '#174A7C' } } }, 'the theme is kept');
+  assert.match(read(dir, 'docs/workflow/profile.md'), /^required_checks: \[test\]$/m, 'required checks are the agent\'s, untouched');
+  assert.throws(() => saveSettings({ project: dir, form: { approval: { label: 'manual', approver: 'owner', agent_identity: '' }, client: { language: 'fr' } } }), /language must be one of en, ar/);
+  const { readState } = await import('../../adapters/setup.mjs');
+  const state = await readState({ project: dir, workflowRepo: root });
+  assert.deepEqual(state.settings.milestones, [{ id: 'M-0001', title: 'Online ordering' }], 'stages are named, not numbered');
+  assert.deepEqual([state.settings.client.language, state.settings.client.themed], ['ar', true]);
+  assert.equal(state.suggested_checks, undefined, 'no inspection once adopted');
+});
+
 test('the owner ticks their own steps; agent steps and a stale page are refused', t => {
   const dir = project(t);
   const lines = read(dir, 'docs/workflow/setup.md').split('\n');
-  const pilot = lines.findIndex(l => l.includes('11. Your first milestone is the pilot'));
-  const agent = lines.findIndex(l => l.startsWith('- [ ] 1. Fill'));
+  const pilot = lines.findIndex(l => l.includes('11. **Watch the first milestone.**'));
+  const agent = lines.findIndex(l => l.startsWith('- [ ] 1. **Write the project profile.**'));
   const text = lines[pilot].slice(6);
   tickStep({ project: dir, index: pilot, done: true, text });
   assert.equal(read(dir, 'docs/workflow/setup.md').split('\n')[pilot], `- [x] ${text}`);

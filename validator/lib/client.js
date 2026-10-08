@@ -67,7 +67,7 @@ const STRINGS = {
 export const LANGUAGES = Object.keys(STRINGS);
 
 // The milestone's own heading names it ("# M-0002 — Customers can order online"); its outcome says what it delivers.
-function titleOf(record) {
+export function titleOf(record) {
   const heading = (record.body ?? '').match(/^#\s+(.+)$/m)?.[1]?.trim() ?? '';
   const named = heading.replace(/^M-\d{4}\s*[—–-]\s*/, '').trim();
   return named && !PLACEHOLDER.test(named) && !/^M-\d{4}$/.test(named) ? named : null;

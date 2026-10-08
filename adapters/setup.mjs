@@ -14,6 +14,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirSource, list, listedOwners, loadAll, loadConfig, validateRecords } from '../validator/lib/index.js';
 import { parseFrontMatter } from '../validator/lib/frontmatter.js';
+import { LANGUAGES, titleOf } from '../validator/lib/client.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -88,11 +89,12 @@ export async function readState({ project, workflowRepo }) {
     const tags = (git(workflowRepo, 'tag', '--sort=-creatordate').stdout ?? '').split('\n').filter(t => /^v\d/.test(t)).slice(0, 12);
     let inspection = null;
     try { inspection = await inspectOnce({ project, workflowRepo, rev: tags[0] ?? 'HEAD' }); } catch (e) { inspection = { error: e.message }; }
+    // Worked out, not asked: whether there is code already, the newest release, and the inspection's code paths.
     state.defaults = {
       repository, coordinator: repository.split('/')[0] ?? '',
       lane: git(project, 'rev-parse', '--verify', '--quiet', 'HEAD').status === 0 ? 'existing' : 'new',
-      versions: tags.length ? tags : ['HEAD'],
-      production: (inspection?.suggested_production ?? []).map(s => ({ glob: s.glob, reason: s.reason, covers: s.covers })),
+      version: tags[0] ?? 'HEAD',
+      production: (inspection?.suggested_production ?? []).map(s => s.glob),
       warnings: inspection?.warnings ?? (inspection?.error ? [inspection.error] : []),
       collisions: inspection?.collisions ?? [],
     };
@@ -103,8 +105,7 @@ export async function readState({ project, workflowRepo }) {
   const rd = config.records_dir ?? 'docs/workflow';
   const profile = loadAll(source, rd).profile?.data ?? {};
   const owners = listedOwners(profile);
-  let suggestedChecks = [];
-  try { suggestedChecks = (await inspectOnce({ project, workflowRepo, rev: config.workflow?.revision || 'HEAD' })).suggested_required_checks.map(s => s.name); } catch { /* suggestions are optional */ }
+  const milestones = [...loadAll(source, rd).milestones.values()].filter(r => r.data?.id).sort((a, b) => a.data.id.localeCompare(b.data.id));
   state.settings = {
     repository: config.repository ?? '', trusted_branch: config.trusted_branch ?? 'main', workflow: config.workflow ?? {},
     owners, shared: owners.length >= 2,
@@ -113,10 +114,9 @@ export async function readState({ project, workflowRepo }) {
     required_checks: list(profile.required_checks), production: list(config.paths?.production),
     // The workflow's own defaults, so the page can show what this project adds and fold the rest away.
     default_production: (() => { try { return list(JSON.parse(fs.readFileSync(path.join(workflowRepo, 'config.default.json'), 'utf8')).paths?.production); } catch { return []; } })(),
-    client: { title: config.client?.title ?? '', exclude: list(config.client?.exclude) },
-    milestones: [...loadAll(source, rd).milestones.values()].map(r => r.data?.id).filter(Boolean).sort(),
+    client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
+    milestones: milestones.map(r => ({ id: r.data.id, title: titleOf(r) ?? r.data.outcome ?? r.data.id })),
   };
-  state.suggested_checks = suggestedChecks.filter(c => !state.settings.required_checks.includes(c));
   state.checklist = checklist(source.read(`${rd}/setup.md`));
   return state;
 }
@@ -165,24 +165,32 @@ export function saveSettings({ project, form }) {
   if (worker && approver && worker.toLowerCase() === approver.toLowerCase()) throw new Error('the agent\'s account must differ from yours; leave it empty to work with one account');
   if (label === 'enforced' && !shared && !worker) throw new Error('enforced mode needs the agent\'s own account: GitHub never lets you approve your own pull request');
   if (label === 'enforced' && !shared && !approver) throw new Error('enforced mode needs your GitHub username: code-owner review names you');
-  const branch = oneLine(form.trusted_branch, 'the trusted branch');
+  // The page sends only what it shows. Anything else (the agent's code paths and checks, the trusted branch, the client
+  // theme) is kept as it is; a form may still send those keys, and then they are checked and saved.
+  const has = key => Object.hasOwn(form, key);
+  const branch = has('trusted_branch') ? oneLine(form.trusted_branch, 'the trusted branch') : config.trusted_branch ?? 'main';
   if (!/^[\w./-]+$/.test(branch)) throw new Error('the trusted branch must be a plain branch name');
-  const exclude = items(form.client?.exclude ?? [], 'hidden stages');
+  const client = form.client ?? {};
+  const exclude = Object.hasOwn(client, 'exclude') ? items(client.exclude ?? [], 'hidden stages') : list(config.client?.exclude);
   for (const id of exclude) if (!MILESTONE.test(id)) throw new Error(`hidden stages must be milestone IDs like M-0001 (got ${id})`);
+  const language = Object.hasOwn(client, 'language') ? client.language : config.client?.language;
+  if (language !== undefined && !LANGUAGES.includes(language)) throw new Error(`the client page language must be one of ${LANGUAGES.join(', ')}`);
 
   const next = structuredClone(config);
   next.trusted_branch = branch;
-  next.approval = { ...(next.approval ?? {}), label, approver, agent_identity: worker, derived_baselines: form.approval?.derived_baselines === true };
+  next.approval = { ...(next.approval ?? {}), label, approver, agent_identity: worker };
+  if (form.approval && Object.hasOwn(form.approval, 'derived_baselines')) next.approval.derived_baselines = form.approval.derived_baselines === true;
   if (MECHANISM[label]) next.approval.mechanism = MECHANISM[label];
-  next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
-  const title = oneLine(form.client?.title, 'the client page title');
-  if (title || exclude.length) next.client = { ...(title ? { title } : {}), ...(exclude.length ? { exclude } : {}) };
-  else delete next.client;
+  if (has('production')) next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
+  const title = Object.hasOwn(client, 'title') ? oneLine(client.title, 'the client page title') : config.client?.title ?? '';
+  const { title: _t, exclude: _e, language: _l, ...kept } = config.client ?? {}; // the theme and anything else stay
+  next.client = { ...(title ? { title } : {}), ...(language && language !== 'en' ? { language } : {}), ...(exclude.length ? { exclude } : {}), ...kept };
+  if (!Object.keys(next.client).length) delete next.client;
   const values = {
-    project: oneLine(form.project, 'the project name') || before.project,
-    measure: oneLine(form.measure, 'the measure'),
+    project: (has('project') ? oneLine(form.project, 'the project name') : '') || before.project,
+    measure: has('measure') ? oneLine(form.measure, 'the measure') : before.measure ?? '',
     approval_label: label,
-    required_checks: items(form.required_checks ?? [], 'required checks'),
+    required_checks: has('required_checks') ? items(form.required_checks ?? [], 'required checks') : list(before.required_checks),
   };
   if (MECHANISM[label]) values.approval_mechanism = MECHANISM[label];
   for (const key of ['project', 'measure']) if (/^\[.*\]$/.test(values[key] ?? '')) throw new Error(`the ${key} cannot be wrapped in square brackets`);

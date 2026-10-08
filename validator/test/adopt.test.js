@@ -45,7 +45,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   for (const d of ['milestones', 'tasks', 'decisions', 'feedback/inbox', 'inbox/done']) assert.ok(fs.statSync(path.join(dir, 'docs/workflow', d)).isDirectory(), d);
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
-  assert.match(setup, /7\. The profile's `required_checks` \(readiness fails while it is empty\)/);
+  assert.match(setup, /7\. \*\*Define the checks and acceptance tests\.\*\* The profile's `required_checks` \(readiness fails while it is empty\)/);
   // MAINT-0007: the GitHub steps are optional and scripted, and the checklist follows the arrangement: one account and
   // manual approval here, so no worker step, no enforced switch, a key made by wf-sign and a ruleset that only stops
   // the trusted branch being deleted or rewritten (the owner's closeout fast-forward must still push).
@@ -53,9 +53,9 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.doesNotMatch(setup, /^- \[ \] 2\./m, 'one account has no worker to verify');
   assert.doesNotMatch(setup, /^- \[ \] 9\./m, 'enforced mode needs a worker account');
   assert.doesNotMatch(setup, /^- \[ \] 10\./m, 'central reporting is not a default step');
-  assert.match(setup, /^- \[ \] 5\. Optional, and only on a public repository or a GitHub Pro or Team plan: .*wf-protect --project \. --apply.* never deleted or rewritten/m);
-  assert.match(setup, /^- \[ \] 6\. .*bin\/wf-sign --keygen DIR.* passphrase/m);
-  assert.match(setup, /^- \[ \] 11\. Your first milestone is the pilot/m);
+  assert.match(setup, /^- \[ \] 5\. \*\*Protect the main branch \(optional\)\.\*\* Only on a public repository or a GitHub Pro or Team plan\. .*wf-protect --project \. --apply.* never deleted or rewritten/m);
+  assert.match(setup, /^- \[ \] 6\. \*\*Make your signing key\.\*\* .*bin\/wf-sign --keygen DIR.* passphrase/m);
+  assert.match(setup, /^- \[ \] 11\. \*\*Watch the first milestone\.\*\* It is the pilot/m);
   assert.match(setup, /usage per step: scaffolded \d{4}-\d{2}-\d{2}; lane existing; one account; approval manual/);
   assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '* @owner\n/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner gets the records carve-out');
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) assert.match(fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8'), /name: wf ci/);
@@ -72,7 +72,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-status.yml']).status === 0) {
     const workflow = fs.readFileSync(path.join(dir, '.github/workflows/wf-status.yml'), 'utf8');
     assert.match(workflow, /branches: \[main\]/); assert.match(workflow, /refs\/heads\/main'/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
-    assert.match(setup, /Optional: pin the \*Project status\* issue/);
+    assert.match(setup, /\*\*Pin the status issue \(optional\)\.\*\* Pin the \*Project status\* issue/);
   }
   assert.ok(fs.statSync(path.join(dir, 'scripts/wf')).mode & 0o111, 'launcher is executable');
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.cache\/$/m);
@@ -126,8 +126,8 @@ test('wf-adopt scaffolds manual approval by default, owner-merge on request, and
   assert.match(profile, /^approval_mechanism: manual-signed-receipts$/m);
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Arrangement: owner `owner`, worker `agent-bot`/);
-  assert.match(setup, /^- \[ \] 2\. Verify the owner and worker GitHub usernames/m);
-  assert.match(setup, /^- \[ \] 9\. Optional, to switch to enforced mode.*--target enforced --apply.*switch .*enforced.* in one code-owner-reviewed pull request/m);
+  assert.match(setup, /^- \[ \] 2\. \*\*Check the two GitHub accounts\.\*\* Verify the owner and worker GitHub usernames/m);
+  assert.match(setup, /^- \[ \] 9\. \*\*Switch to enforced mode \(optional\)\.\*\* Where.*--target enforced --apply.*switch .*enforced.* in one code-owner-reviewed pull request/m);
   const other = project(t);
   const enforced = adopt(other, '--approval', 'enforced');
   assert.equal(enforced.status, 2, 'enforced is never scaffolded');
@@ -147,7 +147,7 @@ test('wf-adopt scaffolds manual approval by default, owner-merge on request, and
   assert.deepEqual([mergeConfig.approval.label, mergeConfig.approval.mechanism], ['owner-merge', 'owner-merge']);
   assert.match(fs.readFileSync(path.join(merge, 'docs/workflow/profile.md'), 'utf8'), /^approval_label: owner-merge$/m);
   const mergeSetup = fs.readFileSync(path.join(merge, 'docs/workflow/setup.md'), 'utf8');
-  assert.match(mergeSetup, /^- \[ \] 6\. Nothing to provision: your own review and merge of each pull request is the approval/m);
+  assert.match(mergeSetup, /^- \[ \] 6\. \*\*Nothing to set up for approval\.\*\* Your own review and merge of each pull request is the approval/m);
   assert.match(mergeSetup, /Approval: owner-merge, chosen by the owner: .*No protection shows that the owner, not the agent, merged/);
   assert.match(mergeSetup, /ruleset requiring pull requests, with the `wf ci` check/);
   const mergeAgents = fs.readFileSync(path.join(merge, 'AGENTS.md'), 'utf8');
@@ -235,14 +235,14 @@ test('wf-adopt sets up a shared project with --owner and refuses one owner, a ba
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).owners, ['alice', 'bob']);
   assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8'), /^owners: \[alice, bob\]$/m);
-  assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project .*`CODEOWNERS` assigns every path \(`\*`\) to alice, bob and no worker, and the ruleset requires code-owner review and approval of the most recent push;.* step 9 also shows that a worker's approval cannot merge/m);
+  assert.match(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] \*\*Set up the shared project\.\*\* .*`CODEOWNERS` assigns every path \(`\*`\) to alice, bob and no worker, and the ruleset requires code-owner review and approval of the most recent push;.* step 9 also shows that a worker's approval cannot merge/m);
   assert.doesNotMatch(fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8'), /unowned/, 'a shared project keeps every path owned');
   assert.doesNotMatch(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /auto-merge/, 'no auto-merge instruction without the single-owner settings');
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /work only on tasks whose `owner` is the person you work for, and claim each one before starting/);
   assert.deepEqual(validateRecords(dirSource(dir), 'docs/workflow').errors, []);
   const solo = project(t);
   assert.equal(adopt(solo).status, 0, 'a one-owner adoption needs no --owner');
-  assert.doesNotMatch(fs.readFileSync(path.join(solo, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Shared project/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(solo, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] \*\*Set up the shared project/m);
   assert.doesNotMatch(fs.readFileSync(path.join(solo, 'AGENTS.md'), 'utf8'), /Several people share/);
 });
 

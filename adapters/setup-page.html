@@ -38,13 +38,6 @@
   .choice p { grid-column: 2; margin: 0; color: var(--muted); font-size: .95rem; }
   .choice:has(input:checked) { border-color: var(--accent); }
   .choice.disabled { opacity: .55; cursor: not-allowed; }
-  .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 .5rem; }
-  .chip { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .25rem .2rem .6rem; border: 1px solid var(--rule); border-radius: 999px; background: var(--sheet); font: .9rem var(--mono); }
-  .chip button { border: 0; background: none; color: var(--muted); font-size: 1rem; line-height: 1; padding: .1rem .35rem; border-radius: 999px; cursor: pointer; }
-  .adder { display: flex; gap: .5rem; max-width: 30rem; }
-  .adder input { flex: 1; }
-  .suggest { margin: .4rem 0 0; font-size: .9rem; color: var(--muted); }
-  .suggest button { font: .85rem var(--mono); margin: .2rem .3rem 0 0; }
   button { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: .45rem .8rem; cursor: pointer; }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; padding: .6rem 1.1rem; }
   button:disabled { opacity: .6; cursor: wait; }
@@ -58,6 +51,10 @@
   .steps .text { overflow-wrap: anywhere; }
   code { font: .88em var(--mono); background: color-mix(in srgb, var(--rule) 45%, transparent); padding: .05em .3em; border-radius: 4px; }
   details { margin-top: 1rem; }
+  .how { margin: .35rem 0 0 1.75rem; } .how summary { font-size: .9rem; } .how p { margin: .4rem 0 0; color: var(--muted); font-size: .95rem; overflow-wrap: anywhere; }
+  .agent-steps { margin-top: .9rem; }
+  fieldset.hide { border: 0; padding: 0; margin: 0 0 1rem; } fieldset.hide legend { font-weight: 600; margin-bottom: .4rem; padding: 0; }
+  fieldset.hide label { display: flex; gap: .55rem; align-items: baseline; margin: .3rem 0; }
   summary { cursor: pointer; color: var(--muted); }
   .bar { position: fixed; inset: auto 0 0 0; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--rule); }
   .bar div { max-width: 46rem; margin: 0 auto; padding: .7rem 1.25rem; display: grid; grid-template-columns: 1fr auto auto; gap: .4rem .7rem; align-items: center; }
@@ -82,29 +79,11 @@ const api = (path, body) => fetch(`${path}?t=${encodeURIComponent(TOKEN)}`, body
   .then(async r => { const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data.error || `request failed (${r.status})`); return data; });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 // Step text from the setup record: `code` and *emphasis*, after escaping.
-const rich = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+const rich = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+// A step's short title ("5. **Protect the main branch (optional).** …") and the rest, its instructions.
+const splitStep = text => { const m = text.match(/^(\d+\.\s*)?\*\*([^*]+)\*\*\s*(.*)$/); return m ? { title: m[2].replace(/\.$/, ''), how: m[3] } : { title: text, how: '' }; };
 let state = null;
 
-// A list editor: chips with a remove button, an input to add, and optional suggestions.
-function listEditor(id, values, suggestions = [], placeholder = '') {
-  const holder = document.createElement('div');
-  holder.dataset.list = id;
-  const items = [...values];
-  const draw = () => {
-    holder.innerHTML = `<div class="chips">${items.map((v, i) => `<span class="chip">${esc(v)}<button type="button" data-remove="${i}" aria-label="Remove ${esc(v)}">×</button></span>`).join('') || '<span class="hint">None yet.</span>'}</div>
-      <div class="adder"><input type="text" placeholder="${esc(placeholder)}" aria-label="Add to ${esc(id)}"><button type="button">Add</button></div>
-      ${suggestions.filter(s => !items.includes(s)).length ? `<p class="suggest">Suggested: ${suggestions.filter(s => !items.includes(s)).map(s => `<button type="button" data-add="${esc(s)}">${esc(s)}</button>`).join('')}</p>` : ''}`;
-    const input = holder.querySelector('input');
-    const add = value => { value = value.trim(); if (value && !items.includes(value)) { items.push(value); changed(); draw(); holder.querySelector('input').focus(); } };
-    holder.querySelector('.adder button').onclick = () => add(input.value);
-    input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(input.value); } };
-    holder.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => { items.splice(Number(b.dataset.remove), 1); changed(); draw(); });
-    holder.querySelectorAll('[data-add]').forEach(b => b.onclick = () => add(b.dataset.add));
-  };
-  holder.values = () => [...items];
-  draw();
-  return holder;
-}
 const changed = () => { if (state?.adopted) statusLine.textContent = 'Unsaved changes.'; };
 const value = name => app.querySelector(`[name="${name}"]`)?.value ?? '';
 const picked = name => app.querySelector(`[name="${name}"]:checked`)?.value ?? '';
@@ -112,48 +91,38 @@ const show = (kind, html) => { const box = app.querySelector('#message'); box.cl
 
 const APPROVAL = {
   manual: ['You sign each round', 'You review what the agent did and sign a small file with your own key. Nothing is approved until you sign. Works on any GitHub plan, with one account.'],
-  'owner-merge': ['Your merge is the approval', 'You review each pull request and merge it yourself. Nothing to set up, but nothing proves it was you who merged, so the setup record says so. For one owner only.'],
-  enforced: ['GitHub enforces it', 'GitHub rules require your approval on every pull request. Needs a public repository or a paid plan, a separate account for the agent, and a passing protection check (setup step 9).'],
+  'owner-merge': ['Your merge is the approval', 'You review each pull request and merge it yourself. Nothing to set up, but nothing proves it was you who merged. For one owner only.'],
+  enforced: ['GitHub enforces it', 'GitHub rules require your approval on every pull request. Needs a public repository or a paid plan, a separate account for the agent, and a passing protection check.'],
 };
 const choice = (name, key, [title, text], checked, disabled = false) => `<label class="choice${disabled ? ' disabled' : ''}"><input type="radio" name="${name}" value="${key}"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''}><strong>${title}</strong><p>${text}</p></label>`;
+const ACCOUNT = { one: ['It works with my account', 'Simplest. GitHub cannot tell the agent\'s actions from yours, so the stricter mode is not available.'], worker: ['It has its own account', 'The agent publishes as itself, and the stricter mode becomes possible.'] };
+const accountFields = (worker = '') => `<div class="choices">${choice('account', 'one', ACCOUNT.one, !worker)}${choice('account', 'worker', ACCOUNT.worker, Boolean(worker))}</div>
+  <label class="field" id="worker-field"${worker ? '' : ' hidden'}><span>The agent's GitHub username</span><input type="text" name="worker" value="${esc(worker)}" autocomplete="off"></label>`;
+const wireAccount = () => app.querySelectorAll('[name=account]').forEach(r => r.addEventListener('change', () => { app.querySelector('#worker-field').hidden = picked('account') !== 'worker'; }));
 
 function renderAdopt() {
   const d = state.defaults;
   app.innerHTML = `<h1>Set up agent&#8209;workflow</h1>
-    <p class="lede">For <strong>${esc(state.name)}</strong>. Answer a few questions and press the button: the files are written into this project, and nothing is committed or pushed. You can change any of this later on the same page.</p>
-    ${d.warnings.length ? `<div class="message"><p class="warn">Before you start:</p>${d.warnings.map(w => `<p>${esc(w)}</p>`).join('')}</div>` : ''}
+    <p class="lede">For <strong>${esc(state.name)}</strong>. Four questions, then press the button. The files are written into this project; nothing is committed or pushed. You can change any answer later on this page.</p>
     <section><h2>The project on GitHub</h2>
       <label class="field"><span>Repository</span><input type="text" name="repository" value="${esc(d.repository)}" placeholder="owner/repository" autocomplete="off"><small>As it appears in its GitHub address.</small></label>
-      <label class="field"><span>Your GitHub username</span><input type="text" name="coordinator" value="${esc(d.coordinator)}" autocomplete="off"><small>You approve the work. Your username goes into CODEOWNERS.</small></label>
+      <label class="field"><span>Your GitHub username</span><input type="text" name="coordinator" value="${esc(d.coordinator)}" autocomplete="off"><small>You approve the agent's work.</small></label>
     </section>
-    <section><h2>The agent's account</h2>
-      <div class="choices">${choice('account', 'one', ['It works with my account', 'Simplest. GitHub cannot tell the agent\'s actions from yours, so the stricter enforced mode is not available.'], true)}${choice('account', 'worker', ['It has its own account', 'The agent publishes as itself, and enforced mode becomes possible later.'], false)}</div>
-      <label class="field" id="worker-field" hidden><span>The agent's GitHub username</span><input type="text" name="worker" autocomplete="off"></label>
-    </section>
+    <section><h2>The agent's account</h2>${accountFields()}</section>
     <section><h2>How you approve work</h2>
       <div class="choices">${choice('approval', 'manual', APPROVAL.manual, true)}${choice('approval', 'owner-merge', APPROVAL['owner-merge'], false)}</div>
-      <p class="hint">Enforced mode is switched on later, once GitHub's protections are in place.</p>
-    </section>
-    <section><h2>The code</h2>
-      <div class="choices">${choice('lane', 'existing', ['There is code already', 'The agent learns the codebase task by task instead of surveying it up front.'], d.lane === 'existing')}${choice('lane', 'new', ['A new project', 'Starting from an empty repository.'], d.lane === 'new')}</div>
-      <label class="field"><span>Paths that hold product code</span><small>Changes to these go through the full checks. Common patterns are covered already; add your stack's.</small></label>
-      <div id="production"></div>
+      <p class="hint">The stricter mode, where GitHub enforces your approval, can be switched on later.</p>
     </section>
     <section><h2>A page for your client</h2>
       <label class="choice"><input type="checkbox" name="client_page"><strong>Publish a progress page on GitHub Pages</strong><p>Plain words, no technical detail. A GitHub Pages site is public, even for a private repository. You can always make the page as a file instead and send it.</p></label>
     </section>
-    <section><h2>Workflow version</h2>
-      <label class="field"><span>Release</span><select name="version">${d.versions.map(v => `<option>${esc(v)}</option>`).join('')}</select><small>The newest release is first.</small></label>
-    </section>
     <div id="message" role="status" hidden></div>`;
-  const production = listEditor('production paths', [], d.production.map(p => p.glob), '**/*.dart');
-  app.querySelector('#production').append(production);
-  app.querySelectorAll('[name=account]').forEach(r => r.onchange = () => { app.querySelector('#worker-field').hidden = picked('account') !== 'worker'; });
+  wireAccount();
   bar.hidden = false; saveButton.textContent = 'Set up the project'; statusLine.textContent = 'Nothing has been written yet.';
   saveButton.onclick = async () => {
     saveButton.disabled = true; statusLine.textContent = 'Setting up…';
     try {
-      const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: picked('approval'), lane: picked('lane'), production: production.values(), client_page: app.querySelector('[name=client_page]').checked, version: value('version') });
+      const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: picked('approval'), lane: d.lane, production: d.production, client_page: app.querySelector('[name=client_page]').checked, version: d.version });
       if (!r.ok) { show('error', `<p>The setup script refused:</p><pre>${esc(r.output)}</pre>`); statusLine.textContent = 'Nothing was written.'; return; }
       state = await api('/api/state'); renderSettings();
       show('ok', '<p>The project is set up. Commit the new files to your main branch, then work through your steps above.</p>');
@@ -166,64 +135,51 @@ function renderSettings() {
   const s = state.settings, steps = state.checklist ?? [];
   const mine = steps.filter(x => x.who === 'owner'), agent = steps.filter(x => x.who === 'agent');
   const label = s.approval.label;
-  const isDefault = g => s.default_production.includes(g);
-  const defaults = s.production.filter(isDefault);
-  app.innerHTML = `<h1>${esc(s.project || state.name)}: setup and settings</h1>
-    <p class="lede">Saved straight into <code>docs/workflow/</code> in this project. Nothing is committed or pushed: a change here reaches the project through a pull request, like any other.</p>
+  const step = x => { const { title, how } = splitStep(x.text); return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-step="${x.index}"${x.done ? ' checked' : ''}><span class="text">${rich(title)}</span></label>${how ? `<details class="how"><summary>How</summary><p>${rich(how)}</p></details>` : ''}</li>`; };
+  app.innerHTML = `<h1>${esc(s.project || state.name)}</h1>
+    <p class="lede">Your setup and settings, saved into this project. Nothing is committed or pushed: a change reaches the project through a pull request, like any other.</p>
     <section><h2>Your setup steps</h2>
-      ${mine.length ? `<p class="hint">${mine.filter(x => x.done).length} of ${mine.length} done. Tick a step once you have done it.</p><ul class="steps">${mine.map(x => `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-step="${x.index}"${x.done ? ' checked' : ''}><span class="text">${rich(x.text)}</span></label></li>`).join('')}</ul>` : '<p class="hint">No owner steps are listed in the setup record.</p>'}
-      ${agent.length ? `<details><summary>The agent's steps (${agent.filter(x => x.done).length} of ${agent.length} done; the agent ticks these)</summary><ul class="steps">${agent.map(x => `<li class="${x.done ? 'done' : ''}"><span aria-hidden="true">${x.done ? '✓' : '○'}</span><span class="text">${rich(x.text)}</span></li>`).join('')}</ul></details>` : ''}
+      ${mine.length ? `<p class="hint">${mine.filter(x => x.done).length} of ${mine.length} done. Tick a step once you have done it.</p><ul class="steps">${mine.map(step).join('')}</ul>` : '<p class="hint">No owner steps are listed in the setup record.</p>'}
+      ${agent.length ? `<p class="hint agent-steps">${agent.some(x => !x.done) ? `The agent has ${agent.filter(x => !x.done).length} setup step${agent.filter(x => !x.done).length === 1 ? '' : 's'} of its own left. You don't need to do anything for them.` : 'The agent has finished its setup steps.'}</p>` : ''}
     </section>
     <section><h2>How you approve work</h2>
       <div class="choices">${['manual', 'owner-merge', 'enforced'].map(k => choice('label', k, APPROVAL[k], label === k, k === 'owner-merge' && s.shared)).join('')}</div>
+    </section>
+    <section><h2>Accounts</h2>
       <label class="field"><span>Your GitHub username</span><input type="text" name="approver" value="${esc(s.approval.approver)}" autocomplete="off"></label>
-      <label class="field"><span>The agent's GitHub account</span><input type="text" name="agent_identity" value="${esc(s.approval.agent_identity)}" autocomplete="off"><small>Leave empty if the agent works with your account.</small></label>
+      ${accountFields(s.approval.agent_identity)}
     </section>
     <section><h2>The project</h2>
       <label class="field"><span>Name</span><input type="text" name="project" value="${esc(s.project)}"></label>
-      <label class="field"><span>How anyone can tell it works</span><input type="text" name="measure" value="${esc(s.measure)}" placeholder="A customer can order a cake online and gets a confirmation email."><small>One sentence a non-technical person can check. It heads the status views.</small></label>
+      <label class="field"><span>How anyone can tell it works</span><input type="text" name="measure" value="${esc(s.measure)}" placeholder="A customer can order a cake online and gets a confirmation email."><small>One sentence a non-technical person can check.</small></label>
     </section>
-    <section><h2>Checks every change must pass</h2>
-      <p class="hint">Named exactly as your CI reports them. Work cannot start while this list is empty.</p>
-      <div id="checks"></div>
+    <section><h2>Your client's page</h2>
+      <label class="field"><span>Title</span><input type="text" name="client_title" value="${esc(s.client.title)}" placeholder="${esc(s.project)}"></label>
+      <label class="field"><span>Language</span><select name="client_language"><option value="en"${s.client.language === 'en' ? ' selected' : ''}>English</option><option value="ar" lang="ar"${s.client.language === 'ar' ? ' selected' : ''}>العربية (Arabic)</option></select></label>
+      ${s.milestones.length ? `<fieldset class="hide"><legend>Leave these stages off the page</legend>${s.milestones.map(m => `<label><input type="checkbox" name="exclude" value="${esc(m.id)}"${s.client.exclude.includes(m.id) ? ' checked' : ''}> ${esc(m.title)}</label>`).join('')}</fieldset>` : ''}
+      <p class="hint">${s.client.themed ? 'It uses your client\'s design system.' : 'It uses the default design; the agent can give it your client\'s design system.'}</p>
     </section>
-    <section><h2>Paths that hold product code</h2>
-      <p class="hint">Changes to these go through the full checks and review. Add your stack's patterns; the common ones are covered already.</p>
-      <div id="production"></div>
-      ${defaults.length ? `<details><summary>Covered by default (${defaults.length})</summary><div class="chips">${defaults.map(g => `<span class="chip">${esc(g)}</span>`).join('')}</div></details>` : ''}
-    </section>
-    <section><h2>The client page</h2>
-      <label class="field"><span>Title</span><input type="text" name="client_title" value="${esc(s.client.title)}" placeholder="${esc(s.project)}"><small>Shown at the top of <code>wf status --client</code>. Empty uses the project's name.</small></label>
-      ${s.milestones.length ? `<p class="hint">Stages to leave off the page:</p><div class="chips">${s.milestones.map(m => `<label class="chip"><input type="checkbox" name="exclude" value="${esc(m)}"${s.client.exclude.includes(m) ? ' checked' : ''}> ${esc(m)}</label>`).join('')}</div>` : ''}
-    </section>
-    <details><summary>Advanced</summary>
-      <label class="field"><span>Trusted branch</span><input type="text" name="trusted_branch" value="${esc(s.trusted_branch)}"><small>Where approved work lives. A change here also needs the same change in <code>.github/workflows/wf-status.yml</code>.</small></label>
-      <label class="choice"><input type="checkbox" name="derived_baselines"${s.approval.derived_baselines ? ' checked' : ''}><strong>Derived baselines (manual mode)</strong><p>Spare a signature where your other receipts already cover every change.</p></label>
-      <p class="hint">Workflow ${esc(s.workflow.version ?? '')} at <code>${esc(String(s.workflow.revision ?? '').slice(0, 12))}</code>, repository <code>${esc(s.repository)}</code>.</p>
-    </details>
     <div id="message" role="status" hidden></div>`;
-  const checks = listEditor('required checks', s.required_checks, state.suggested_checks, 'test');
-  const production = listEditor('production paths', s.production.filter(g => !isDefault(g)), [], '**/*.dart');
-  app.querySelector('#checks').append(checks); app.querySelector('#production').append(production);
-  app.querySelectorAll('input, select').forEach(i => { if (!i.dataset.step) i.addEventListener('input', changed); if (i.type === 'radio' || i.type === 'checkbox') i.addEventListener('change', changed); });
+  wireAccount();
+  app.querySelectorAll('input, select').forEach(i => { if (!i.dataset.step) { i.addEventListener('input', changed); i.addEventListener('change', changed); } });
   app.querySelectorAll('[data-step]').forEach(box => box.onchange = async () => {
     if (statusLine.textContent === 'Unsaved changes.') { box.checked = !box.checked; show('error', '<p>Save or undo your setting changes before ticking a step: ticking reloads the page.</p>'); return; }
-    const step = steps.find(x => x.index === Number(box.dataset.step));
-    try { await api('/api/step', { index: step.index, text: step.text, done: box.checked }); state = await api('/api/state'); renderSettings(); app.querySelector(`[data-step="${step.index}"]`)?.focus(); }
+    const x = steps.find(y => y.index === Number(box.dataset.step));
+    try { await api('/api/step', { index: x.index, text: x.text, done: box.checked }); state = await api('/api/state'); renderSettings(); app.querySelector(`[data-step="${x.index}"]`)?.focus(); }
     catch (e) { box.checked = !box.checked; show('error', `<p>${esc(e.message)}</p>`); }
   });
   bar.hidden = false; saveButton.textContent = 'Save settings'; statusLine.textContent = 'All saved.';
   saveButton.onclick = async () => {
-    if (picked('label') === 'enforced' && label !== 'enforced' && !confirm('Switch to enforced mode only once node .cache/agent-workflow/bin/wf-protect --project . --target enforced passes (setup step 9). Has it passed?')) return;
+    if (picked('label') === 'enforced' && label !== 'enforced' && !confirm('Switch to the stricter mode only once the protection check passes (step 9 of your setup steps). Has it passed?')) return;
     saveButton.disabled = true; statusLine.textContent = 'Saving…';
     try {
       const r = await api('/api/settings', {
-        approval: { label: picked('label'), approver: value('approver'), agent_identity: value('agent_identity'), derived_baselines: app.querySelector('[name=derived_baselines]').checked },
-        project: value('project'), measure: value('measure'), required_checks: checks.values(), production: [...defaults, ...production.values()], trusted_branch: value('trusted_branch'),
-        client: { title: value('client_title'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
+        approval: { label: picked('label'), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
+        project: value('project'), measure: value('measure'),
+        client: { title: value('client_title'), language: value('client_language'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
       });
       state = await api('/api/state'); renderSettings();
-      show('ok', `${r.changed.length ? `<p>Saved: ${r.changed.map(f => `<code>${esc(f)}</code>`).join(', ')}.</p>` : ''}${r.notes.map(n => `<p class="warn">${esc(n)}</p>`).join('')}<p>${esc(r.next)}</p>`);
+      show('ok', `${r.changed.length ? `<p>Saved.</p>` : ''}${r.notes.map(n => `<p class="warn">${esc(n)}</p>`).join('')}<p>${esc(r.next)}</p>`);
     } catch (e) { show('error', `<p>Not saved: ${esc(e.message)}</p>`); statusLine.textContent = 'Not saved.'; }
     finally { saveButton.disabled = false; saveButton.focus(); }
   };

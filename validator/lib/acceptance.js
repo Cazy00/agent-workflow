@@ -100,7 +100,7 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
   }
   for (const m of Array.isArray(old) ? old : []) if (!seen.has(key(m)) && !allowedRemovals.has(key(m))) errors.push(`removed required mapping ${key(m)}`);
   for (const d of ids.values()) if (d.method === 'automated' && requiredAcceptance.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
-  if (!execution && enforced) unverified.push('execution: no verification receipt; agents must substantiate the required test runs on the pull request; this validator has not authenticated them (enforced mode)');
+  if (!execution && enforced) unverified.push(`execution: no verification receipt; agents must substantiate the required test runs on the pull request; this validator has not authenticated them (${typeof enforced === 'string' ? enforced : 'enforced'} mode)`);
   else {
     if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {

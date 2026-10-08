@@ -191,7 +191,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   if (selected.length && (production.length || batch)) {
     const execution = trust?.claim('verification', candidate.name)?.execution;
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
-    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: trust?.mode === 'enforced' });
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: trust?.mode === 'enforced' && trust.label });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
     for (const item of acceptance.unverified ?? []) findings.push(`unverified: ${item}`);
   }
@@ -200,7 +200,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     taskIds: selected, classes, revision: candidate.name, changedLines, evidence: deliveryEvidence,
     requiredChecks: list(baselineRecords.profile?.data?.required_checks), ownerApproved });
   if (delegation.enabled) {
-    if (trust?.mode !== 'enforced') { findings.push('agent-operated routine delegation requires verified enforced-mode setup'); fail = true; }
+    if (trust?.mode !== 'enforced' || trust.protected !== true) { findings.push('agent-operated routine delegation requires verified enforced-mode setup'); fail = true; }
     if (!delegation.ok) fail = true;
     findings.push(...delegation.errors, ...delegation.unverified.map(x => `unverified: ${x}`));
   }
@@ -210,7 +210,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
       const purpose = category === 'enforcement' ? 'workflow-change' : 'governing-change';
       const receipt = trust?.claim(purpose, candidate.name);
       if (!receipt || !protectedPaths.every(p => receipt.paths?.includes(p))) {
-        if (trust?.mode === 'enforced' && !receipt) findings.push(`unverified: ${purpose}: no receipt; the code-owner review of this pull request is the approval for ${protectedPaths.join(', ')} (enforced mode)`);
+        if (trust?.mode === 'enforced' && !receipt) findings.push(`unverified: ${purpose}: no receipt; ${trust.route} is the approval for ${protectedPaths.join(', ')} (${trust.label} mode)`);
         else { findings.push(`${purpose} approval for the exact candidate and protected paths is required`); fail = true; }
       }
     }
@@ -220,7 +220,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   // so the owner can approve the tests before implementation starts (POLICY § 9).
   const acceptanceTests = classes.filter(c => c.acceptance_test && c.category !== 'governing').map(c => c.path);
   if (acceptanceTests.length) {
-    if (trust?.mode === 'enforced') findings.push(`unverified: governing-change: no receipt; the code-owner review of this pull request is the approval for the acceptance tests ${acceptanceTests.join(', ')} (enforced mode)`);
+    if (trust?.mode === 'enforced') findings.push(`unverified: governing-change: no receipt; ${trust.route} is the approval for the acceptance tests ${acceptanceTests.join(', ')} (${trust.label} mode)`);
     else {
       const missing = acceptanceTests.filter(p => !ownerApprovedTest({ trust, candidate, path: p }));
       if (missing.length) { findings.push(`acceptance tests ${missing.join(', ')} need the owner's governing-change receipt listing them, at this candidate or at an earlier revision in its history where they already had this content (POLICY § 9)`); fail = true; }

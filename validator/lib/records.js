@@ -11,7 +11,7 @@ export const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : 
 export const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
 // A task's branch: exactly its ID (the claim branch, procedures/execute.md), or the ID after an optional `codex/`
 // followed by `-` and a description.
-export const TASK_BRANCH = /^(?:codex\/)?(T-\d{4})(?:-|$)/;
+export const TASK_BRANCH = /^(?:(?:codex|claude)\/)?(T-\d{4})(?:-|$)/; // the tool prefixes Codex and Claude Code give branches
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const REQUIRED = {
   milestone: ['id', 'outcome', 'status', 'coordinator', 'scope', 'governing', 'acceptance', 'authority', 'limits', 'demonstration', 'stop_conditions', 'release_authority'],
@@ -24,7 +24,7 @@ const ENUMS = {
   // `signing: milestone` lets the coordinator work ahead of the owner's signatures inside the milestone and collect
   // them in one round at its end (procedures/approval-evidence.md *Milestone rounds*); `task` (the default) signs per task.
   milestone: { status: ['Draft', 'Authorised', 'Active', 'Blocked', 'Verified', 'Accepted', 'Released'], signing: ['task', 'milestone'] },
-  profile: { approval_label: ['enforced', 'manual'] },
+  profile: { approval_label: ['enforced', 'manual', 'owner-merge'] },
   task: { status: ['Draft', 'Ready', 'Active', 'Blocked', 'Done'] },
   decision: {
     status: ['Open', 'Proposed', 'Resolved'],

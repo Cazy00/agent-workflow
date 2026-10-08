@@ -39,7 +39,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: optional --delivery-evidence EXTERNAL_JSON and --pull-request NUMBER for an approved routine-delegation setup
-  Enforced mode (baseline config and profile both label the approval enforced) needs no trust options; manual mode needs all three.
+  Enforced and owner-merge modes (baseline config and profile both carry the label) need no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
   const r = gitRunner(repo, { maxBuffer: 16 * 1024 * 1024, literal: false })(...args);
@@ -164,7 +164,7 @@ async function main() {
       const raw = `${JSON.stringify(result.payloads, null, 2)}\n`;
       fs.writeFileSync(out, raw, { mode: 0o600, flag: 'wx' });
       const digest = createHash('sha256').update(raw).digest('hex');
-      console.log(JSON.stringify({ ...summary, file: out, sha256: digest, next: result.ok ? `sign it: node sign-round.mjs ${out} ${digest}` : 'do not sign: a check, a report or a mapped test failed; the payloads record what happened' , limitation: 'The checks are the candidate\'s own code; attest proves your machine ran them on this exact revision, not that they test enough.' }, null, 2));
+      console.log(JSON.stringify({ ...summary, file: out, sha256: digest, next: result.ok ? `sign it: wf-sign ${out} ${digest}` : 'do not sign: a check, a report or a mapped test failed; the payloads record what happened' , limitation: 'The checks are the candidate\'s own code; attest proves your machine ran them on this exact revision, not that they test enough.' }, null, 2));
       return result.ok ? 0 : 1;
     } finally { mirror.cleanup(); }
   }
@@ -190,12 +190,15 @@ async function main() {
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
   if (!o.baseline && !['records', 'status', 'next'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
-  // `wf next` defaults its baseline to the local trusted branch, named by the working tree's config.
+  // `wf next` defaults its baseline to the local trusted branch, named by the working tree's config. Right after
+  // bin/wf-adopt the adoption is not committed there yet: read the working tree then, and say so.
+  let uncommitted = null;
   if (!o.baseline && cmd === 'next') {
-    let branch = 'main';
-    try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; } catch { /* reported below */ }
+    let branch = 'main', adopted = false;
+    try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; adopted = true; } catch { /* reported below */ }
     const tip = gitRunner(repo)('rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`);
-    if (tip.status === 0) o.baseline = tip.stdout.trim();
+    if (tip.status === 0 && (!adopted || gitSource(repo, tip.stdout.trim()).read('docs/workflow/config.json') != null)) o.baseline = tip.stdout.trim();
+    else if (adopted) uncommitted = `the adoption is not on ${branch} yet, so this reads the working tree: commit the scaffold (docs/workflow/, scripts/wf, AGENTS.md, CLAUDE.md, .github/, .gitignore) to ${branch}`;
   }
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
@@ -239,6 +242,7 @@ async function main() {
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
     const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
+    if (uncommitted) view.note = uncommitted;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
   }
@@ -246,10 +250,12 @@ async function main() {
   // enforcement was verified at setup; the immutable baseline is then the approved baseline. Candidate copies of
   // these files are never consulted, so a candidate cannot switch modes; a directory baseline never qualifies.
   // Supplying the trust options runs the full receipt gate instead, exactly as in manual mode: no hybrid.
-  if (!trust && config.approval?.label === 'enforced' && baseline.kind === 'git') {
+  // Owner-merge mode takes the same route, labelled as unprotected (lib/trust.js).
+  const label = config.approval?.label;
+  if (!trust && ['enforced', 'owner-merge'].includes(label) && baseline.kind === 'git') {
     const profileLabel = loadAll(baseline, rd).profile?.data?.approval_label;
-    if (profileLabel !== 'enforced') throw new WfError('approval label differs between docs/workflow/config.json and the profile on the baseline');
-    trust = createEnforcedTrust({ baseline: baseline.name });
+    if (profileLabel !== label) throw new WfError('approval label differs between docs/workflow/config.json and the profile on the baseline');
+    trust = createEnforcedTrust({ baseline: baseline.name, label });
   }
   const changed = () => {
     if (o.changed.length) {
@@ -279,7 +285,7 @@ async function main() {
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   let result;
   if (cmd === 'closeout') {
-    if (!trust || trust.mode === 'enforced') throw new WfError('closeout is for manual mode and needs --trust-key, --receipts and --repository; in enforced mode merging the pull request is the approval');
+    if (!trust || trust.mode === 'enforced') throw new WfError(`closeout is for manual mode and needs --trust-key, --receipts and --repository; in ${trust?.label ?? 'enforced'} mode merging the pull request is the approval`);
     if (candidate.kind !== 'git') throw new WfError('closeout needs a committed --candidate: the revision the signed round ends at');
     // Closeout reads a verified mirror (lib/git.js): every object re-hashed, none of the clone's config, hooks or caches.
     // The local trusted branch and the printed fast-forward are the clone's own.
@@ -335,7 +341,7 @@ async function main() {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
       const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
       const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
-      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' });
+      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label });
       lifecycle.unverified = [...(lifecycle.unverified ?? []), ...(coverage.unverified ?? [])];
       if (!coverage.ok) { lifecycle.ok = false; lifecycle.errors.push(...coverage.errors); }
       if (cmd === 'acceptance') result = coverage;

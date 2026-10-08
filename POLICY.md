@@ -313,6 +313,10 @@ Verify the actual GitHub usernames during setup. Email addresses do not establis
 
 The owner reports that the computer is connected to the main account; worker authentication still requires configuration and verification.
 
+### One account
+
+An owner may instead let agents work with the owner's own account, recorded in the profile as an approved deviation. The separation below then does not apply, nothing on GitHub distinguishes the agent's actions from the owner's, and protections cannot carry approval, because GitHub never lets an author approve their own pull request. Approval then comes from receipts the owner signs with a key the agent cannot use, or, as the owner's knowing choice, from the owner's own merge (owner-merge mode, below), which proves nothing about who merged.
+
 ### Local separation
 
 Use:
@@ -385,6 +389,8 @@ A free-text Git author field does not prove approval. A signature is relevant on
 In manual mode the owner may choose two economies that keep every stage and protected-path receipt. The protected configuration may let a baseline follow from receipts already given: a revision whose every difference from the newest explicitly approved baseline carries the owner's receipt for that exact content is itself approved; only task and feedback records, such as a task marked Done, carry no signature of their own, as a records-only merge needs no owner review in enforced mode. A milestone may also collect its signatures in one round at its end: work continues on unsigned evidence meanwhile, nothing reaches the trusted branch before the round is signed and its gates rerun, and a result that relies on unsigned evidence is never approval.
 
 In manual mode the owner's machine can also produce the technical evidence itself (`wf attest`): it runs the approved checks on a fresh checkout of the exact candidate, confined so that candidate code cannot reach the signing key, and writes the verification and integration evidence the owner signs. The signature then records what the owner's own run observed, not an agent's report of its run. The owner's attention goes to intent (requirements, acceptance tests, protected changes) and outcomes (acceptance and release); the machines check the steps between.
+
+The owner may also choose **owner-merge** mode: the owner's own review and merge of each pull request counts as approval, without receipts or verified protections. It suits one account or a repository without rulesets. The gates still run and list what the owner must check before merging, but nothing establishes that the owner, not an agent, merged; the setup record states this, routine delegation is unavailable, and no one may describe the mode as protected or equivalent to enforcement. Agents never merge, approve or enable automatic merging in it.
 
 Check repository-plan support during setup. GitHub’s documented availability differs for public and private repositories. If required enforcement is unavailable, record the limitation and use an explicit alternative; do not claim equivalent protection. [GitHub availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 
@@ -679,13 +685,13 @@ Default setup timebox: **two working days**, unless the owner sets another limit
 The initial setup should establish:
 
 1. The project profile and source authority.
-2. Owner repository and worker access.
-3. Verified account separation.
+2. Owner repository, and worker access when the owner gives agents their own account.
+3. Verified account separation, or the owner's recorded choice of one account.
 4. Essential templates and procedures.
-5. Trusted gate execution and branch protections.
+5. Trusted gate execution, and branch protections where the repository's plan supports them.
 6. Acceptance traceability appropriate to the project.
 7. Required fixtures.
-8. A real approval-path test.
+8. Before approval relies on protections (enforced mode): the protections read back from GitHub, or, as stronger evidence, a real approval-path test.
 9. Assisted execution, or a runner if unattended operation is included in the promised capability.
 
 If this does not fit, explicitly narrow the initial supported scope, extend the budget, or retain assisted execution. Do not silently remove controls while claiming the full workflow is operating.

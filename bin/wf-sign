@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+// The owner's signing in manual mode (procedures/approval-evidence.md): make the key once, then sign each round.
+// It replaces the snippets the owner used to save by hand, and signs exactly as they did: Ed25519 over the UTF-8
+// bytes of JSON.stringify(payload). Run it only in the owner's own environment; an agent never signs, even with a key
+// of its own. The passphrase is what keeps the key from an agent that runs as the same user (one-account setups).
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+import { spawnSync } from 'node:child_process';
+import { createHash, createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
+
+const USAGE = `usage: wf-sign --keygen DIR
+       wf-sign ROUND_FILE SHA256 [--key PRIVATE_KEY] [--receipts FILE]
+  --keygen writes owner-signing-key.pem (passphrase-encrypted, 0600) and owner-public-key.pem into DIR, a directory
+    outside every Git checkout. Give the public key to the validator as --trust-key; keep the private key to yourself.
+  Signing checks that ROUND_FILE has the sha256 its brief names, signs every payload in it and merges the receipts
+    into --receipts (default $WF_RECEIPTS), replacing any with the same purpose and revision.
+  The key defaults to $OWNER_SIGNING_KEY. The passphrase comes from $OWNER_SIGNING_PASSPHRASE or is asked for.`;
+const fail = (message, code = 2) => { console.error(`wf-sign: ${message}`); process.exit(code); };
+
+function insideCheckout(dir) {
+  const r = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() === 'true';
+}
+
+// Asks on the terminal without echoing; the environment variable spares the question (and is how tests run).
+async function passphrase(question) {
+  if (process.env.OWNER_SIGNING_PASSPHRASE !== undefined) return process.env.OWNER_SIGNING_PASSPHRASE;
+  if (!process.stdin.isTTY) fail('no terminal to ask for the passphrase: set OWNER_SIGNING_PASSPHRASE in your own shell');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  process.stderr.write(question);
+  rl._writeToOutput = () => {}; // hide what is typed
+  const answer = await new Promise(resolve => rl.question('', resolve));
+  rl.close();
+  process.stderr.write('\n');
+  return answer;
+}
+
+const argv = process.argv.slice(2);
+if (!argv.length || argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); process.exit(argv.length ? 0 : 2); }
+
+if (argv[0] === '--keygen') {
+  if (argv.length !== 2) fail(USAGE);
+  const dir = path.resolve(argv[1]);
+  let existing = dir;
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  if (insideCheckout(existing)) fail(`${dir} is inside a Git checkout: keep the key outside every checkout, where neither a candidate nor a commit can reach it`);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const secret = path.join(dir, 'owner-signing-key.pem'), pub = path.join(dir, 'owner-public-key.pem');
+  for (const f of [secret, pub]) if (fs.existsSync(f)) fail(`${f} exists: a new key replaces the trust anchor, which is a deliberate owner step; move the old one first`);
+  const first = await passphrase('Passphrase for the new signing key: ');
+  if (first.length < 8) fail('use a passphrase of at least 8 characters: it is what keeps the key from an agent running as you');
+  if (process.env.OWNER_SIGNING_PASSPHRASE === undefined && await passphrase('Again: ') !== first) fail('the passphrases differ');
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519', {
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: first },
+  });
+  fs.writeFileSync(secret, privateKey, { mode: 0o600, flag: 'wx' });
+  fs.writeFileSync(pub, publicKey, { mode: 0o644, flag: 'wx' });
+  console.log(JSON.stringify({ ok: true, private_key: secret, public_key: pub, next: `export OWNER_SIGNING_KEY=${secret}; pass ${pub} as --trust-key (WF_OWNER_KEY)` }, null, 2));
+  process.exit(0);
+}
+
+const positional = [], options = {};
+for (let i = 0; i < argv.length; i++) {
+  if (['--key', '--receipts'].includes(argv[i]) && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+    if (options[argv[i]]) fail(`duplicate option: ${argv[i]}`);
+    options[argv[i]] = argv[++i];
+  } else if (argv[i].startsWith('--')) fail(`invalid option or missing value: ${argv[i]}\n${USAGE}`);
+  else positional.push(argv[i]);
+}
+if (positional.length !== 2) fail(USAGE);
+const [file, digest] = positional;
+const keyFile = options['--key'] ?? process.env.OWNER_SIGNING_KEY;
+const target = options['--receipts'] ?? process.env.WF_RECEIPTS;
+if (!keyFile) fail('give --key or set OWNER_SIGNING_KEY to your private key');
+if (!target) fail('give --receipts or set WF_RECEIPTS to your receipts file');
+if (!/^[0-9a-f]{64}$/.test(digest)) fail('SHA256 must be the 64-character digest the brief names');
+const raw = fs.readFileSync(file);
+if (createHash('sha256').update(raw).digest('hex') !== digest) fail('not the file the brief describes: its sha256 differs', 1);
+let items;
+try { items = JSON.parse(raw); } catch (e) { fail(`${file}: ${e.message}`); }
+if (!Array.isArray(items) || !items.length) fail(`${file} must be a nonempty JSON array of payloads`);
+const payloads = items.map(item => item?.payload ?? item);
+for (const p of payloads) if (!p || typeof p !== 'object' || typeof p.purpose !== 'string' || typeof p.revision !== 'string') fail('every payload needs a purpose and a revision');
+let key;
+try { key = createPrivateKey({ key: fs.readFileSync(keyFile), passphrase: await passphrase('Signing key passphrase: ') }); }
+catch (e) { fail(`cannot open the signing key: ${/decrypt|bad/i.test(e.message) ? 'wrong passphrase' : e.message}`, 1); }
+const signed = payloads.map(payload => ({ payload, signature: sign(null, Buffer.from(JSON.stringify(payload)), key).toString('base64') }));
+const same = (a, b) => a.payload?.purpose === b.payload.purpose && a.payload?.revision === b.payload.revision;
+const kept = (fs.existsSync(target) ? JSON.parse(fs.readFileSync(target, 'utf8')) : []).filter(r => !signed.some(s => same(r, s)));
+fs.writeFileSync(`${target}.tmp`, JSON.stringify([...kept, ...signed], null, 2) + '\n', { mode: 0o600 });
+fs.renameSync(`${target}.tmp`, target);
+console.log(JSON.stringify({ ok: true, receipts: target, signed: signed.map(s => `${s.payload.purpose} ${s.payload.revision.slice(0, 12)}`), kept: kept.length }, null, 2));

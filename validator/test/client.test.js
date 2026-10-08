@@ -264,7 +264,11 @@ test('Now, Next and decisions say the right thing in every state', t => {
   assert.match(html, /Everything in this stage is built and checked\. It is waiting for sign-off\./);
   assert.deepEqual(view.next, []);
   assert.match(html, /Then the next stage: <bdi>The bakery sees each day&#39;s orders\.<\/bdi>/);
-  assert.doesNotMatch(html, /Nothing else is planned yet/, 'never "nothing planned" beside the next stage');
+  assert.doesNotMatch(html, /<ol class="queue"/, 'no empty queue beside the next stage');
+  // Nothing in progress yet: an approved stage whose parts are all still to start.
+  status('M-0002', 'Authorised');
+  for (const id of ['T-0003', 'T-0004']) write(`docs/workflow/tasks/${id}.md`, fs.readFileSync(path.join(dir, `docs/workflow/tasks/${id}.md`), 'utf8').replace(/^status: .*$/m, 'status: Ready'));
+  assert.match(renderClient(evaluateClient({ source: dirSource(dir) })), /<h2 id="now">Now<\/h2>\s*<p>Nothing is being built at this moment; the next part starts soon\.<\/p>/);
 });
 
 test('Next lists at most four parts across stages, and part rows shrink at phone width', t => {
@@ -274,4 +278,5 @@ test('Next lists at most four parts across stages, and part rows shrink at phone
   assert.equal(view.next.length, 4);
   const html = renderClient(view);
   assert.match(html, /\.item \{ display: grid; grid-template-columns: 1\.25rem minmax\(0, 1fr\) auto;/, 'the name column can shrink, so the state never spills out of the card');
+  assert.match(html, /@media \(max-width: 26rem\) \{ \.item \{ grid-template-columns: 1\.25rem minmax\(0, 1fr\);[^}]*\} \.item \.state \{ grid-column: 2; \} \}/, 'on narrow phones the state goes under the name, so words are not broken');
 });

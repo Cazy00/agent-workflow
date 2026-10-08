@@ -32,13 +32,15 @@ const git = (repo, args, allowFailure = false) => {
   return r;
 };
 const show = (repo, rev, file) => { const r = git(repo, ['show', `${rev}:${file}`], true); return r.status === 0 ? r.stdout : null; };
+// Release tags, newest first by version number (git's own sort reads the `v` as a character).
+const releaseTags = (repo, ...args) => git(repo, ['tag', ...args], true).stdout.split('\n').filter(t => parseVersion(t).length === 3).sort((a, b) => compareVersions(b, a));
 
 // The release a revision is: its exact tag; between tags, for a target, the version its package.json is heading for (so
 // that release's steps apply), and for a pin, the last release it contains (so the next release's steps still apply).
 function releaseOf(repo, rev, { pin = false } = {}) {
-  const tag = git(repo, ['describe', '--tags', '--exact-match', rev], true).stdout.trim();
+  const tag = git(repo, ['describe', '--tags', '--match', 'v[0-9]*', '--exact-match', rev], true).stdout.trim();
   if (parseVersion(tag).length === 3) return { tag, version: tag };
-  const nearest = git(repo, ['describe', '--tags', '--abbrev=0', rev], true).stdout.trim();
+  const nearest = git(repo, ['describe', '--tags', '--match', 'v[0-9]*', '--abbrev=0', rev], true).stdout.trim();
   if (pin && parseVersion(nearest).length === 3) return { tag: null, version: nearest };
   let version = null;
   try { version = `v${JSON.parse(show(repo, rev, 'package.json')).version}`; } catch { /* below */ }
@@ -70,7 +72,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   const from = config.workflow?.revision;
   if (!SHA.test(from ?? '')) throw new Error('the project pins no full workflow revision (workflow.revision)');
   if (git(workflowRepo, ['cat-file', '-e', `${from}^{commit}`], true).status !== 0) throw new Error(`the workflow repository does not hold the project's pinned revision ${from.slice(0, 12)}: fetch its full history and tags (git fetch --tags)`);
-  const target = rev ?? git(workflowRepo, ['tag', '--sort=-v:refname'], true).stdout.split('\n').find(t => parseVersion(t).length === 3);
+  const target = rev ?? releaseTags(workflowRepo)[0];
   if (!target) throw new Error('no release tag found: pass --rev, or fetch the tags (git fetch --tags)');
   const resolved = git(workflowRepo, ['rev-parse', '--verify', '--end-of-options', `${target}^{commit}`], true);
   if (resolved.status !== 0) throw new Error(`--rev ${target} does not resolve to a commit in ${workflowRepo}`);
@@ -90,7 +92,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   // older target may predate upgrades.json), so the list comes from the newest release tag that contains the target and
   // holds one, else from the target itself: never from an unreleased commit, which could change what is done to a project.
   let manifest = {};
-  const released = git(workflowRepo, ['tag', '--sort=-v:refname', '--contains', to], true).stdout.split('\n').filter(t => parseVersion(t).length === 3);
+  const released = releaseTags(workflowRepo, '--contains', to);
   const listTag = released.find(t => show(workflowRepo, t, 'upgrades.json') !== null) ?? null;
   const listFrom = listTag ?? to;
   const raw = show(workflowRepo, listFrom, 'upgrades.json');
@@ -100,6 +102,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   const removeKeys = steps.flatMap(([, s]) => s.remove_config ?? []);
   const removeFiles = steps.flatMap(([, s]) => s.remove_files ?? []);
   const addFiles = new Set(steps.flatMap(([, s]) => s.add_files ?? []));
+  if (raw === null) warnings.push(`no released upgrades.json covers this target, so the steps from ${fromRelease.version} to ${toRelease.version} are not listed: read them in CHANGELOG.md`);
   const notes = [...warnings, ...steps.flatMap(([v, s]) => (s.notes ?? []).map(n => `${v}: ${n}`))];
 
   const changes = [];

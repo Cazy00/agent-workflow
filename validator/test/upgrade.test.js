@@ -123,7 +123,7 @@ test('versions compare by number, and every entry in upgrades.json is a release 
   assert.ok(Object.keys(manifest).some(v => v === `v${pkg.version}`), 'the release being made says what an upgrade to it changes');
 });
 
-test('an upgrade to an older release takes its steps from the checkout\'s newer list, and only up to that release (review N2)', t => {
+test('an upgrade to an older release takes its steps from the newest released list, and only up to that release (review N2)', t => {
   const r = releases(t, 'v1.10.1', { middle: 'v1.14.0' }); if (!r) return t.skip('not a Git checkout');
   fs.rmSync(path.join(r.project, '.github/workflows/wf-ci.yml'));
   git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
@@ -182,4 +182,21 @@ test('a pin between releases counts from the last release it contains (fix revie
   const plan = JSON.parse(r.up('--rev', 'v2.0.0', '--json').stdout);
   assert.equal(plan.from_version, 'v1.10.1');
   assert.ok(plan.notes.some(n => n.startsWith('v1.11.0: ')) && plan.notes.some(n => /workflow\.version says v1\.14\.0, but the pinned revision is after v1\.10\.1/.test(n)), plan.notes.join(' | '));
+});
+
+test('when no released list covers the target, the plan says so instead of looking like nothing to do (fix review N-r5-1)', t => {
+  const r = releases(t, 'v1.10.1', { middle: 'v1.14.0' }); if (!r) return t.skip('not a Git checkout');
+  git(r.wf, 'tag', '-d', 'v2.0.0'); // only v1.14.0, which has no upgrades.json, contains the target
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
+  const out = r.up('--rev', 'v1.14.0').stdout;
+  assert.match(out, /no released upgrades\.json covers this target, so the steps from v1\.10\.1 to v1\.14\.0 are not listed: read them in CHANGELOG\.md/);
+});
+
+test('release tags sort by version number and ignore tags that are not versions (fix review N-r5-2, N-r5-3)', t => {
+  const r = releases(t); if (!r) return t.skip('not a Git checkout');
+  git(r.wf, 'tag', '-a', '-m', 'a note', 'pilot', 'v2.0.0'); // a non-version annotated tag on the release commit
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
+  const plan = JSON.parse(r.up('--json').stdout); // no --rev: the newest release tag
+  assert.equal(plan.to_version, 'v2.0.0', 'the release is still named by its version tag');
+  assert.equal(plan.steps_from, 'release v2.0.0');
 });

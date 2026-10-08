@@ -61,7 +61,7 @@ export function createTrust({ publicKey, repository, envelopes = [], unsigned = 
 // Owner-merge mode (`label: 'owner-merge'`) is the same trust without the protections: the owner chose, on the
 // record, to count their own merge into the trusted branch as approval, for a repository with one account or no
 // rulesets. The gates run alike, but nothing shows that the owner, not the agent, merged, so `protected` is false
-// and anything that relies on GitHub enforcement (routine delegation) refuses it.
+// and nothing may describe it as protected.
 const ROUTES = {
   enforced: 'the code-owner review of this pull request',
   'owner-merge': "the owner's own review and merge of this pull request, which no protection enforces",

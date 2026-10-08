@@ -12,12 +12,11 @@ Read the repository `AGENTS.md`, then run `wf next`: it names the next action, t
 | Discover, resolve or assess readiness | `procedures/readiness.md` |
 | Implement, checkpoint or recover | `procedures/execute.md` |
 | Work in a project with two or more owners | `procedures/shared.md`, with the procedure for the action |
-| Use approved local batches or routine integration delegation | `procedures/delivery.md` |
 | Review candidate and test fidelity | `procedures/review.md` |
 | Present, accept or release | `procedures/accept-release.md` |
 | Stage, dry-run or close a manual-mode signing round | `procedures/approval-evidence.md` |
 | Deploy, handle an incident, maintain or upgrade | `procedures/operate.md` |
-| Report or maintain workflow | `procedures/maintenance.md` and `procedures/operations.md` |
+| Report or maintain workflow | `procedures/maintenance.md` |
 
 Paths above are relative to the workflow repository; adopting projects keep this folder and the procedures together under their recorded workflow installation and point their short repository guide there.
 

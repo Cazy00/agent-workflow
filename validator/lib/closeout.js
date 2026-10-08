@@ -85,7 +85,9 @@ function closeout({ repo, origin = repo, baseline, candidate, trust }) {
     try { base = gitSource(repo, g.from); cand = gitSource(repo, g.to); } catch (e) { step(name, false, [e.message]); continue; }
     const paths = changed(g.from, g.to);
     if (!paths) { step(name, false, ['cannot compute the task diff']); continue; }
-    const result = evaluateCi({ baseline: base, candidate: cand, ...(g.ids.length > 1 ? { tasks: g.ids } : { task: g.ids[0] }), trust, changed: paths });
+    // Several Done tasks naming one gated candidate are a batch, which v2.0.0 removed: one pull request carries one task.
+    if (g.ids.length > 1) { step(name, false, ['these tasks share one gated candidate (a batch, removed in v2.0.0): one pull request carries one task, so gate each task on its own candidate']); continue; }
+    const result = evaluateCi({ baseline: base, candidate: cand, task: g.ids[0], trust, changed: paths });
     step(name, result.verdict === 'pass', result.verdict === 'pass' ? [] : result.findings.filter(f => !/^(planning|production|generated|governing|enforcement): /.test(f)));
   }
   // Every production or generated change in the round lies inside a gated candidate: none between them or after the last.

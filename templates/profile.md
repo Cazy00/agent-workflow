@@ -38,7 +38,7 @@ Confirmed architecture, environments, dependencies, data, unresolved technical c
 Governing sources · decision owners · delegated choices · reserved decisions · permitted assumptions · authority by lifecycle stage (deployment, incidents, maintenance, upgrades) where it differs from the defaults in `procedures/operate.md`. With two or more `owners`: who approves what, and who approves when one of them is away (`procedures/shared.md`).
 
 ## Delivery
-Verification commands · review and approval arrangement · deployment ownership · operational responsibilities. Optional batching environment/rollback and routine integration delegation (narrow scope, limits, agent-attested evidence assurance and stop conditions) follow `procedures/delivery.md`; otherwise retain the default approval route. Integration permission never implies production deployment authority.
+Verification commands · review and approval arrangement · deployment ownership · operational responsibilities. For owner-merge, the checkpoint the owner chose. Integration permission never implies production deployment authority.
 
 Milestones in order, one line each: ID, the journey or outcome it delivers (`procedures/readiness.md`), what it needs first. A forecast, revised as work teaches; only an authorised milestone record grants authority. Batch edits into the change that plans the next milestone (`procedures/execute.md`).
 
@@ -58,7 +58,5 @@ For app verification: startup commands, test URL/environment, supported authenti
 
 ## Workflow configuration
 Adopted version and revision · project settings · approved deviations · setup budget · optional tooling.
-
-Central reporting, if the owner adopts it: what `procedures/operations.md` asks the profile to record.
 
 ## Unknowns

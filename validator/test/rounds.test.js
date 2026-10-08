@@ -163,6 +163,52 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
+test('closeout refuses tasks that share one gated candidate, a batch removed in v2.0.0 (MAINT-0011 review S1)', t => {
+  const p = round(t);
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002'));
+  const E = p.commit('T-0002: recorded Done against the same candidate');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', E]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const batch = r.json.steps.find(s => /wf ci for T-0001, T-0002/.test(s.name));
+  assert.ok(batch && !batch.ok && /one pull request carries one task/.test(batch.detail.join(' ')), JSON.stringify(r.json.steps));
+});
+
+test('closeout refuses a records-only candidate two Done tasks share, which passed before v2.0.0 with no per-task gate (MAINT-0011 fix review)', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-rounds-batch-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
+  const write = (p, text) => { fs.mkdirSync(path.dirname(path.join(repo, p)), { recursive: true }); fs.writeFileSync(path.join(repo, p), text); };
+  const read = p => fs.readFileSync(path.join(repo, p), 'utf8');
+  const edit = (p, fn) => write(p, fn(read(p)));
+  const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const commit = m => { git('add', '-A'); git('commit', '-qm', m); return git('rev-parse', 'HEAD'); };
+  const second = 'docs/workflow/tasks/T-0002.md';
+  git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
+  edit('docs/workflow/config.json', x => { const c = JSON.parse(x); return JSON.stringify({ ...c, repository, approval: { ...c.approval, derived_baselines: true } }, null, 2); });
+  const initial = commit('initial');
+  edit(taskPath, x => x.replaceAll('fixture-rev', initial));
+  write(second, read(taskPath).replaceAll('T-0001', 'T-0002'));
+  const B = commit('authorised baseline');
+  git('checkout', '-q', '-b', 'work');
+  for (const p of [taskPath, second]) edit(p, x => x.replace(`governing_baseline_revision: ${initial}`, `governing_baseline_revision: ${B}`).replace(/^baseline_revision:.*$/m, `baseline_revision: ${B}`));
+  write('docs/workflow/inbox/note.md', 'a planning note, no production change\n');
+  const C = commit('both tasks: a records-only candidate');
+  for (const p of [taskPath, second]) edit(p, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C}`));
+  const D = commit('T-0001, T-0002: recorded Done against one candidate');
+  const keys = generateKeyPairSync('ed25519');
+  const key = path.join(temp, 'owner.pem'); fs.writeFileSync(key, keys.publicKey.export({ type: 'spki', format: 'pem' }));
+  const check = { environment: 'isolated', checks: [{ name: 'unit', result: 'passed', evidence: 'evidence/log.txt' }] };
+  const claims = [{ purpose: 'baseline', revision: B }, { purpose: 'verification', revision: C, ...check, execution: { revision: C, tests: [] } }, { purpose: 'integration', revision: C, ...check }, { purpose: 'review', revision: C, reviewer: 'independent', implementer: 'agent', separate_context: 'fresh', evidence: 'evidence/log.txt', coverage: REVIEW, findings: [] }];
+  const receipts = path.join(temp, 'receipts.json');
+  fs.writeFileSync(receipts, JSON.stringify(claims.map(c => { const p = { ...c, repository, expires_at: '2099-01-01T00:00:00Z' }; return { payload: p, signature: sign(null, Buffer.from(JSON.stringify(p)), keys.privateKey).toString('base64') }; })));
+  const r = spawnSync(process.execPath, [cli, 'closeout', '--baseline', B, '--candidate', D, '--repo', repo, '--trust-key', key, '--receipts', receipts, '--repository', repository, '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.ok(!out.fast_forward, 'no fast-forward is printed');
+  assert.ok(out.steps.some(s => !s.ok && /wf ci for T-0001, T-0002/.test(s.name) && /one pull request carries one task/.test((s.detail ?? []).join(' '))), JSON.stringify(out.steps));
+});
+
 test('closeout refuses a round with a missing receipt, an unapproved end or a non-fast-forward', t => {
   const p = round(t);
   p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C).filter(c => c.purpose !== 'integration')]);

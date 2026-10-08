@@ -92,13 +92,10 @@ export function loadConfig(source) {
       if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone or plan');
       if (config.approval.label !== 'owner-merge') throw new Error('approval.checkpoint applies only to owner-merge approval; manual and enforced modes keep their own approval route');
     }
-    if (config.delegation !== undefined) {
-      const d = config.delegation;
-      if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||
-          !d.routine || typeof d.routine !== 'object' || Array.isArray(d.routine) || typeof d.routine.enabled !== 'boolean') {
-        throw new Error('delegation must contain routine with an explicit boolean enabled');
-      }
-    }
+    // Removed in v2.0.0 (MAINT-0011). Their disabled defaults, which every scaffold since v1.8.0 wrote, are ignored until
+    // bin/wf-upgrade removes them; an enabled one is refused, since it would otherwise stop applying without a word.
+    if (config.delegation?.routine?.enabled === true) throw new Error('delegation.routine was removed in v2.0.0: an owner-merge checkpoint lets the agent merge instead; bin/wf-upgrade removes the key');
+    if (config.delivery?.batching) throw new Error('delivery.batching was removed in v2.0.0: one pull request carries one task; bin/wf-upgrade removes the key');
     return config;
   } catch (e) { throw new WfError(`docs/workflow/config.json: ${e.message}`); }
 }

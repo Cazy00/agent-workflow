@@ -98,6 +98,13 @@ test('moving the workflow pin alone leaves readiness fresh; any other config or 
  p.edit('docs/workflow/config.json',s=>{const c=JSON.parse(s);c.paths.production.push('lib/**');return JSON.stringify(c,null,2);});p.commit();
  assert.ok(p.run().reasons.some(s=>s.includes('stale')),'a path class change is governing');
 });
+test('an upgrade that drops the config keys no release reads leaves readiness fresh (MAINT-0011)',t=>{
+ const p=setup(t);
+ p.edit('docs/workflow/config.json',s=>JSON.stringify({...JSON.parse(s),delivery:{batching:null},delegation:{routine:{enabled:false}},execution:{mode:'assisted'},setup_budget_days:2},null,2));p.commit();
+ assert.equal(p.run().outcome,'Ready','adding the unread keys is not a governing change either');
+ p.edit('docs/workflow/config.json',s=>{const c=JSON.parse(s);for(const k of ['delivery','delegation','execution','setup_budget_days'])delete c[k];c.workflow={...c.workflow,revision:'b'.repeat(40)};return JSON.stringify(c,null,2);});p.commit();
+ assert.equal(p.run().outcome,'Ready',p.run().reasons.join(' | '));
+});
 test('a profile change other than the pin stales readiness',t=>{
  const p=setup(t);p.edit('docs/workflow/profile.md',s=>s.replace('required_checks: [unit]','required_checks: [unit, lint]'));p.commit();
  assert.ok(p.run().reasons.some(s=>s.includes('stale')));

@@ -7,7 +7,7 @@ import { safeEnv, workTreeRoot } from './git.js';
 import { loadAll, loadConfig, list, WfError } from './records.js';
 export function prepareReview({ repo, baseline, candidate, tasks, evidence = [] }) {
   if (!/^[0-9a-f]{40,64}$/.test(baseline ?? '') || !/^[0-9a-f]{40,64}$/.test(candidate ?? '')) throw new WfError('review-packet requires exact committed --baseline and --candidate SHAs');
-  if (!Array.isArray(tasks) || !tasks.length || tasks.some(t => !/^T-\d{4}$/.test(t)) || new Set(tasks).size !== tasks.length) throw new WfError('review-packet requires distinct --task or --tasks IDs');
+  if (!Array.isArray(tasks) || !tasks.length || tasks.some(t => !/^T-\d{4}$/.test(t)) || new Set(tasks).size !== tasks.length) throw new WfError('review-packet requires --task T-NNNN');
   const git = (...args) => {
     const r = spawnSync('git', ['--no-optional-locks', '-C', repo, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: safeEnv(workTreeRoot(repo)) });
     if (r.status === 1 && args[0] === 'config' && args.includes('--get-regexp')) return '';

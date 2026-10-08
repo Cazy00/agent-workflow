@@ -14,7 +14,6 @@
     "agent_identity": "",
     "derived_baselines": false
   },
-  "setup_budget_days": 2,
   "paths": {
     "enforcement": [
       ".github/**",
@@ -79,17 +78,5 @@
       "evidence/**"
     ]
   },
-  "repository": "",
-  "execution": {
-    "mode": "assisted",
-    "runner_adopted": false
-  },
-  "delivery": {
-    "batching": null
-  },
-  "delegation": {
-    "routine": {
-      "enabled": false
-    }
-  }
+  "repository": ""
 }

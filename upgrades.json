@@ -1,0 +1,27 @@
+{
+  "v1.10.1": {
+    "notes": [
+      "CLAUDE.md: add the Compact Instructions section from templates/claude/compact-instructions.md (a governing change)."
+    ]
+  },
+  "v1.11.0": {
+    "add_files": [".github/workflows/wf-ci.yml"],
+    "notes": [
+      "CODEOWNERS: bin/wf-adopt now writes .github/CODEOWNERS (`* @OWNER`, then `/docs/workflow/tasks/` and `/docs/workflow/feedback/`); add one if the project has none (procedures/setup.md step 5).",
+      "A single-owner manual-mode project: bin/wf-protect --apply turns auto-merge off, so replace the AGENTS.md sentence that turns it on with the new scaffold's (a governing change)."
+    ]
+  },
+  "v1.14.0": {
+    "notes": [
+      "Enforced and owner-merge projects: a production pull request needs the delivery evidence block in its description (procedures/execute.md); the refreshed .github/workflows/wf-ci.yml reads it.",
+      "Owner-merge projects: choose a checkpoint (milestone, change or plan) with bin/wf-setup, and replace AGENTS.md's merge sentence with the new scaffold's, before the agent may merge."
+    ]
+  },
+  "v2.0.0": {
+    "remove_config": ["delegation", "delivery", "execution", "setup_budget_days"],
+    "notes": [
+      "Central reporting is removed: delete its external operations config and private runtime directory if you made them (they live outside the repository), and the profile's central-reporting lines under Workflow configuration.",
+      "Routine delegation is removed: if CODEOWNERS un-owned routine paths for it, own them again (`* @OWNER`)."
+    ]
+  }
+}

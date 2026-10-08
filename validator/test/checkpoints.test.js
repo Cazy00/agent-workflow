@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirSource } from '../lib/index.js';
 import { evaluateNext } from '../lib/next.js';
 import { evaluateStatus } from '../lib/status.js';
-import { parseDeliveryEvidence } from '../lib/github-approval.js';
+import { parseDeliveryEvidence } from '../lib/delivery-evidence.js';
 
 // MAINT-0010: in the pull-request modes (owner-merge, enforced) the quality gates hold as they do in manual mode: a
 // production change needs the agent's delivery evidence for the exact candidate (checks, the tests run, an independent

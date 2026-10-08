@@ -7,7 +7,7 @@ import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance } from './acceptance.js';
-import { evaluateDelegation, evidenceErrors } from './delegation.js';
+import { evidenceErrors } from './delivery-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
@@ -94,7 +94,7 @@ export function ownerApprovedTest({ trust, candidate, path }) {
   return false;
 }
 
-export function evaluateCi({ baseline, candidate = baseline, task, tasks, changed = [], trust = null, changedLines = null, deliveryEvidence = null, ownerApproved = false }) {
+export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -135,38 +135,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   }
 
   const production = classes.filter((c) => ['production', 'generated'].includes(c.category)).map((c) => c.path);
-  const selected = tasks ?? (task ? [task] : []);
-  if (!Array.isArray(selected) || selected.some(id => !/^T-\d{4}$/.test(id)) || new Set(selected).size !== selected.length) {
-    throw new WfError('tasks must be distinct T-NNNN IDs');
-  }
-  if (task && tasks) throw new WfError('use task or tasks, not both');
-  const batch = selected.length > 1;
+  if (task != null && !/^T-\d{4}$/.test(task)) throw new WfError('task must be a T-NNNN ID');
+  const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
-  const readinessByTask = {};
   let readiness = null;
-  const assigned = new Map(selected.map(id => [id, []]));
-  if (batch) {
-    const policy = config.delivery?.batching;
-    if (!policy || !Number.isInteger(policy.max_tasks) || policy.max_tasks < selected.length || policy.max_tasks > 20 ||
-        typeof policy.environment !== 'string' || !policy.environment.trim() || typeof policy.rollback !== 'string' || !policy.rollback.trim()) {
-      findings.push('batch integration needs approved baseline delivery.batching: max_tasks (2..20), environment and rollback'); fail = true;
-    }
-    const records = selected.map(id => candidateRecords.tasks.get(id)?.data);
-    if (records.some(r => !r) || new Set(records.map(r => r?.milestone)).size !== 1 || new Set(records.map(r => r?.owner)).size !== 1) {
-      findings.push('a batch requires existing tasks in one milestone with one implementing owner'); fail = true;
-    }
-    if (trust?.mode !== 'enforced') {
-      const reviewed = trust?.claim('review', candidate.name)?.tasks;
-      if (!Array.isArray(reviewed) || selected.some(id => !reviewed.includes(id))) { findings.push('the candidate review receipt must cover every task in the batch'); fail = true; }
-    }
-  }
-  for (const p of production) {
-    const owners = batch ? selected.filter(id => list(candidateRecords.tasks.get(id)?.data?.scope).some(s => within(p, s))) : selected;
-    if (owners.length !== 1) { findings.push(`production path ${p} must belong to exactly one selected task (found ${owners.length})`); fail = true; }
-    else assigned.get(owners[0]).push(p);
-  }
-  if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task/--tasks)'); fail = true; }
+  if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
   // The pull-request modes (enforced, owner-merge) hold the quality gates as manual mode does (MAINT-0010): a production
   // change needs the agent's delivery evidence for this exact candidate, checked like a receipt: the required checks
   // passed, every mapped test ran once and passed, and a review in a separate context covered every area with each
@@ -174,7 +148,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   // checked, not its truth; the owner's merge or code-owner review still carries the approval.
   const prMode = trust?.mode === 'enforced';
   let attested = null;
-  const covered = prMode && selected.length > 0 && (production.length > 0 || batch);
+  const covered = prMode && selected.length > 0 && production.length > 0;
   if (covered) {
     const owners = [...new Set(selected.map(id => candidateRecords.tasks.get(id)?.data?.owner))];
     const requiredChecks = list(baselineRecords.profile?.data?.required_checks);
@@ -182,7 +156,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
       findings.push('delivery evidence for this candidate is missing: post it in the pull request description (procedures/execute.md *Checkpoints and task records*); the `wf ci` check reruns when the description is edited');
       fail = true;
     } else {
-      const errors = evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, allowAccepted: true });
+      const errors = evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks });
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;
     }
@@ -190,12 +164,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   // What the evidence covers is no longer referred to the pull request review: it is checked, or its absence fails.
   const receiptless = item => covered && /^(?:(?:verification|review|integration): no receipt|execution: no verification receipt)/.test(item);
   for (const id of selected) {
-    const paths = assigned.get(id);
-    if (!production.length && !batch) continue;
-    if (batch && !paths.length) { findings.push(`batch task ${id} owns no changed production paths; omit it`); fail = true; }
+    const paths = production;
+    if (!production.length) continue;
     const gate = evaluateReadiness({ baseline, candidate, task: id, trust, changed: paths, stage: 'integrate' });
-    readinessByTask[id] = gate;
-    if (!batch) readiness = gate;
+    readiness = gate;
     findings.push(`readiness ${id}: ${gate.outcome}`);
     for (const r of gate.reasons) findings.push(`  ${r}`);
     const baselineStatus = baselineRecords.tasks.get(id)?.data?.status;
@@ -214,21 +186,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     for (const item of lifecycle.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
   if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
-  if (selected.length && (production.length || batch)) {
+  if (selected.length && production.length) {
     const execution = trust?.claim('verification', candidate.name)?.execution ?? attested?.verification?.execution;
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
     const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
-  }
-  const delegation = evaluateDelegation({ config,
-    baselineTasks: [...baselineRecords.tasks.values()].map(r => r.data), tasks: [...candidateRecords.tasks.values()].map(r => r.data),
-    taskIds: selected, classes, revision: candidate.name, changedLines, evidence: deliveryEvidence,
-    requiredChecks: list(baselineRecords.profile?.data?.required_checks), ownerApproved });
-  if (delegation.enabled) {
-    if (trust?.mode !== 'enforced' || trust.protected !== true) { findings.push('agent-operated routine delegation requires verified enforced-mode setup'); fail = true; }
-    if (!delegation.ok) fail = true;
-    findings.push(...delegation.errors, ...delegation.unverified.map(x => `unverified: ${x}`));
   }
   for (const category of ['governing', 'enforcement']) {
     const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
@@ -281,5 +244,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons } : {}), ...(delegation.enabled ? { delegation } : {}), ...(batch ? { tasks: selected, readinessByTask } : {}), records: records.counts };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons } : {}), records: records.counts };
 }

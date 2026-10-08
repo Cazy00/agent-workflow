@@ -9,9 +9,7 @@ import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
-import { runOperations } from './operations.js';
-import { prepareNodeEvidence } from './lib/evidence.js';
-import { parseDeliveryEvidence, readOwnerApproval, readDeliveryEvidence } from './lib/github-approval.js';
+import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
@@ -21,10 +19,10 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
-  [--task T-0001 | --tasks T-0001,T-0002 (ci/review-packet)] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
+  [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
@@ -33,15 +31,12 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
-  report|runtime --operations-config FILE --state EXTERNAL_DIR --repo DIR --record FILE
-  report --action deliver|status --report-id UUID (same external config/state)
-  prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
     status --client [--candidate REV]: the same records as one plain-language HTML page for a client (no IDs, people or reasons)
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: --delivery-evidence EXTERNAL_FILE (JSON, or a pull request description holding the marked block) is required for a
-    production change in enforced and owner-merge modes; --pull-request NUMBER is for an approved routine-delegation setup
+    production change in enforced and owner-merge modes
   Enforced and owner-merge modes (baseline config and profile both carry the label) need no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
@@ -69,12 +64,11 @@ async function main() {
     } else if (!cmd) cmd = a;
     else throw new WfError(`unexpected argument: ${a}`);
   }
-  if ((o['delivery-evidence'] || o['pull-request']) && cmd !== 'ci') throw new WfError('--delivery-evidence and --pull-request are only for ci');
+  if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['pull-requests'] || o['trust-key'])) throw new WfError('--client is only for status, alone: it prints the client page as HTML');
-  if (o.tasks && (!['ci', 'review-packet'].includes(cmd) || o.task)) throw new WfError('--tasks is only for ci/review-packet and cannot be combined with --task');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
-    const result = prepareReview({ repo: path.resolve(o.repo ?? process.cwd()), baseline: o.baseline, candidate: o.candidate, tasks: o.tasks?.split(',') ?? (o.task ? [o.task] : []), evidence: o.evidence });
+    const result = prepareReview({ repo: path.resolve(o.repo ?? process.cwd()), baseline: o.baseline, candidate: o.candidate, tasks: o.task ? [o.task] : [], evidence: o.evidence });
     console.log(JSON.stringify(result, null, 2));
     return 0;
   }
@@ -177,17 +171,6 @@ async function main() {
     const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
-  }
-  if (cmd === 'prepare-evidence') {
-    if (!o['raw-log']) throw new WfError('--raw-log is required');
-    const result = prepareNodeEvidence({raw:fs.readFileSync(o['raw-log'],'utf8'),revision:o.candidate,repository:o.repository,environment:o.environment,checkName:o['check-name'],expiresAt:o['expires-at'],projectRoot:fs.realpathSync(o.repo ?? process.cwd())});
-    console.log(JSON.stringify(result,null,2));
-    return result.ok ? 0 : 1;
-  }
-  if (['report','runtime'].includes(cmd)) {
-    const result = await runOperations(cmd,o);
-    console.log(JSON.stringify(result,null,2));
-    return result.status && result.status !== 'delivered' ? 1 : ['exhausted','unknown'].includes(result.budget_status) ? 1 : 0;
   }
   const repo = path.resolve(o.repo ?? process.cwd()); // Git calls find the real root themselves (lib/git.js)
   const source = spec => {
@@ -313,37 +296,17 @@ async function main() {
   else if (cmd === 'ci') {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
     const paths = changed();
-    let changedLines = null, deliveryEvidence = null, ownerApproval = null, evidenceSource = null;
-    // The agent's delivery evidence: required for a production change in the pull-request modes, and read by routine
-    // delegation. JSON, a marked comment, or a pull request description holding the marked block (lib/github-approval.js).
+    // The agent's delivery evidence, required for a production change in the pull-request modes: JSON, a marked comment,
+    // or a pull request description holding the marked block (lib/delivery-evidence.js).
+    let deliveryEvidence = null;
     if (o['delivery-evidence']) {
       const file = fs.realpathSync(o['delivery-evidence']);
       const relative = path.relative(fs.realpathSync(repo), file);
       if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
       if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
       deliveryEvidence = parseDeliveryEvidence(fs.readFileSync(file, 'utf8'));
-      if (deliveryEvidence !== null) evidenceSource = file;
     }
-    if (config.delegation?.routine?.enabled === true) {
-      if (candidate.kind !== 'git' || baseline.kind !== 'git') throw new WfError('routine delegation requires committed baseline and candidate');
-      const stats = git(repo, 'diff-tree', '-r', '--no-renames', '--numstat', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
-      changedLines = 0;
-      for (const line of stats) {
-        const m = line.match(/^(\d+|-)\t(\d+|-)\t/s);
-        if (!m || m[1] === '-' || m[2] === '-') { changedLines = null; break; }
-        changedLines += Number(m[1]) + Number(m[2]);
-      }
-      if (o['pull-request']) {
-        ownerApproval = readOwnerApproval({ repository: config.repository, pullRequest: o['pull-request'], revision: candidate.name, baseline: baseline.name, branch: config.trusted_branch, approver: config.approval?.approver, worker: config.approval?.agent_identity });
-        if (!ownerApproval.candidate_matches) throw new WfError(ownerApproval.reason);
-        if (deliveryEvidence == null) { // the quality gate needs it even when the owner approved the exact head
-          const collected = readDeliveryEvidence({ repository: config.repository, pullRequest: o['pull-request'], worker: config.approval?.agent_identity });
-          deliveryEvidence = collected.evidence; evidenceSource = collected.source;
-        }
-      }
-    }
-    result = evaluateCi({ baseline, candidate, ...(o.tasks ? { tasks: o.tasks.split(',') } : { task: taskId() }), trust, changed: paths, changedLines, deliveryEvidence, ownerApproved: ownerApproval?.approved === true });
-    if (result.delegation) { result.delegation.owner_approval = ownerApproval; result.delegation.evidence_source = evidenceSource; }
+    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence });
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }

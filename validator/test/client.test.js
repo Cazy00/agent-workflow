@@ -138,7 +138,9 @@ test('a theme dresses the page in the client\'s design system, and Arabic turns 
     const html = r.stdout;
     assert.match(html, /<html lang="ar" dir="rtl">/);
     assert.match(html, /<title>بُن الكيف: سير العمل<\/title>/);
-    assert.match(html, /<h1>نعمل الآن على: Online ordering\.<\/h1>/);
+    assert.match(html, /<h1>نعمل الآن على: <bdi>Online ordering<\/bdi>\.<\/h1>/, 'English record text keeps its direction in Arabic');
+    assert.match(html, /<h3><bdi>Online ordering<\/bdi><\/h3>/);
+    assert.match(html, /آخر تحديث: \d{1,2} أكتوبر 2026\./, 'an Arabic date with Western digits');
     assert.match(html, /المراحل المسلّمة: 1 من 3\./);
     assert.match(html, /الأجزاء المنجزة: 2 من 4، والمتوقفة: 1/);
     assert.match(html, /--brand: #174A7C;/); assert.match(html, /--page: #FBF8F4;/); assert.match(html, /--radius: 14px;/);
@@ -164,4 +166,29 @@ test('without a theme the page keeps the default design, in both languages', t =
   assert.match(arabic, /<html lang="ar" dir="rtl">/);
   assert.match(arabic, /<h2 id="stages">المراحل<\/h2>/);
   assert.match(arabic, /prefers-color-scheme: dark/);
+});
+
+test('theme limits and edges: the 2 MB budget before reading, file types, a partial dark set, a band without a logo', t => {
+  const dir = project(t);
+  const configPath = path.join(dir, 'docs/workflow/config.json');
+  const setTheme = theme => { const c = JSON.parse(fs.readFileSync(configPath, 'utf8')); c.client = { theme }; fs.writeFileSync(configPath, JSON.stringify(c)); };
+  fs.mkdirSync(path.join(dir, 'docs/workflow/client'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs/workflow/client/big.woff2'), Buffer.alloc(2 * 1024 * 1024 + 1));
+  fs.writeFileSync(path.join(dir, 'docs/workflow/client/logo.gif'), 'GIF89a');
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'records']]) assert.equal(spawnSync('git', ['-C', dir, ...args]).status, 0);
+  setTheme({ fonts: { files: [{ family: 'Big', file: 'docs/workflow/client/big.woff2' }] } });
+  for (const candidate of [[], ['--candidate', 'HEAD']]) {
+    if (candidate.length) { spawnSync('git', ['-C', dir, 'add', '.']); spawnSync('git', ['-C', dir, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'theme']); }
+    const r = spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir, ...candidate], { encoding: 'utf8' });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /exceed 2 MB/, 'refused as too large, from the working tree and from a commit');
+  }
+  setTheme({ logo: 'docs/workflow/client/logo.gif' });
+  assert.throws(() => evaluateClient({ source: dirSource(dir) }), /must be one of svg, png, jpg, jpeg, webp/);
+  setTheme({ colors: { brand: '#174A7C' }, dark: { page: '#101418' } });
+  const html = renderClient(evaluateClient({ source: dirSource(dir) }));
+  const dark = html.match(/prefers-color-scheme: dark\) \{ :root \{ ([^}]*) \}/)[1];
+  assert.match(dark, /--page: #101418;/); assert.match(dark, /--text: #e4ebe8;/, 'colours a dark set leaves out come from the default dark palette');
+  assert.equal(html.match(/>shop</g)?.length, 1, 'a band without a logo names the project once');
+  assert.match(html, /<div class="band"><div class="inner"><p>shop<\/p>/);
 });

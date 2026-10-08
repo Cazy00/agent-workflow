@@ -79,10 +79,12 @@ const LIMIT = 2 * 1024 * 1024;
 function embed(source, file, kinds, budget) {
   const ext = file.split('.').pop().toLowerCase();
   if (!kinds.includes(ext)) throw new Error(`client.theme: ${file} must be one of ${kinds.join(', ')}`);
-  const bytes = source.readBuffer?.(file) ?? null;
+  const tooBig = () => new Error('client.theme: the fonts and logo together exceed 2 MB; use woff2 files and fewer weights');
+  let bytes;
+  try { bytes = source.readBuffer?.(file, LIMIT - budget.used) ?? null; } catch (e) { if (e.code === 'TOO_LARGE') throw tooBig(); throw e; }
   if (!bytes) throw new Error(`client.theme: ${file} is not a file in ${source.name}`);
   budget.used += bytes.length;
-  if (budget.used > LIMIT) throw new Error('client.theme: the fonts and logo together exceed 2 MB; use woff2 files and fewer weights');
+  if (budget.used > LIMIT) throw tooBig();
   return `data:${MIME[ext]};base64,${bytes.toString('base64')}`;
 }
 
@@ -134,7 +136,7 @@ export function evaluateClient({ source, updated = null }) {
   const budget = { used: 0 };
   const look = theme ? {
     colors: theme.colors ?? {},
-    dark: theme.dark && typeof theme.dark === 'object' ? theme.dark : null,
+    dark: theme.dark && typeof theme.dark === 'object' ? { ...DARK, ...theme.dark } : null, // keys it leaves out stay readable
     fonts: { text: theme.fonts?.text ?? null, display: theme.fonts?.display ?? null, faces: (theme.fonts?.files ?? []).map(f => ({ family: f.family, weight: f.weight ?? 400, url: embed(source, f.file, ['woff2', 'woff', 'ttf', 'otf'], budget) })) },
     logo: theme.logo ? embed(source, theme.logo, ['svg', 'png', 'jpg', 'jpeg', 'webp'], budget) : null,
     radius: theme.radius ?? null,
@@ -142,7 +144,7 @@ export function evaluateClient({ source, updated = null }) {
   return {
     language, title: typeof client.title === 'string' && client.title.trim() ? client.title.trim() : profile.project ?? 'Project',
     goal: profile.measure ?? null,
-    headline, delivered, total: stages.length,
+    headline, headline_title: current?.title ?? (!current && delivered !== stages.length ? upNext?.title : null) ?? null, delivered, total: stages.length,
     current: current ? stages.indexOf(current) : null,
     stages, updated, look,
   };
@@ -151,6 +153,8 @@ export function evaluateClient({ source, updated = null }) {
 // Sentence case inside an English sentence, unless the title starts with what looks like a proper noun.
 function lowerFirst(text) { return /^[A-Z][a-z]/.test(text) && !/^[A-Z][a-z]+[A-Z]/.test(text) ? text[0].toLowerCase() + text.slice(1) : text; }
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// Record text keeps its own direction inside a page of the other language (an English title on an Arabic page).
+const bdi = value => `<bdi>${esc(value)}</bdi>`;
 
 // The default design's tokens, which a theme's colours replace one by one.
 const LIGHT = { page: '#f2f5f1', surface: '#fbfcfa', text: '#1e2b2f', muted: '#5a6a6d', line: '#d3dbd4', done: '#2e6b4f', active: '#2f4fb0', review: '#8a5e0e', planned: '#8a9799', brand: null, on_brand: '#ffffff' };
@@ -176,6 +180,8 @@ export function renderClient(view) {
   const displayFont = look?.fonts.display ? `${family(look.fonts.display)}, ${textFont}` : look?.fonts.text ? textFont : serif;
   const faces = (look?.fonts.faces ?? []).map(f => `@font-face { font-family: ${family(f.family)}; font-weight: ${Number(f.weight)}; font-display: swap; src: url(${f.url}); }`).join('\n  ');
   const band = Boolean(light.brand);
+  const t = view.headline_title;
+  const headline = t && view.headline.includes(t) ? esc(view.headline).replace(esc(t), bdi(t)) : esc(view.headline);
   const stage = (s, i) => {
     const pct = s.parts ? Math.round((s.parts.done / s.parts.total) * 100) : s.finished ? 100 : 0;
     const progress = s.parts
@@ -185,9 +191,9 @@ export function renderClient(view) {
         <span class="marker" aria-hidden="true">${s.finished ? '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>' : i + 1}</span>
         <div class="body">
           <p class="status"><span class="visually-hidden">${esc(say.position(i + 1, view.stages.length))}</span>${esc(s.status)}</p>
-          <h3>${esc(s.title)}</h3>
-          ${s.outcome ? `<p class="outcome">${esc(s.outcome)}</p>` : ''}
-          ${s.measure && !s.finished ? `<p class="measure">${esc(say.measure)} ${esc(s.measure)}</p>` : ''}
+          <h3>${bdi(s.title)}</h3>
+          ${s.outcome ? `<p class="outcome">${bdi(s.outcome)}</p>` : ''}
+          ${s.measure && !s.finished ? `<p class="measure">${esc(say.measure)} ${bdi(s.measure)}</p>` : ''}
           ${progress}
         </div>
       </li>`;
@@ -209,7 +215,7 @@ export function renderClient(view) {
   }
   ${dark ? `@media (prefers-color-scheme: dark) { :root { ${vars(dark)} } }` : ''}
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--page); color: var(--text); font: 17px/1.6 var(--text-font); }
+  body { margin: 0; background: var(--page); color: var(--text); font: 17px/1.55 var(--text-font); }
   :lang(ar) body { line-height: 1.8; }
   main { max-width: 44rem; margin: 0 auto; padding: 3.5rem 1.25rem 4rem; }
   .band { background: var(--brand); color: var(--on-brand); }
@@ -219,7 +225,8 @@ export function renderClient(view) {
   header { margin-bottom: 2.75rem; }
   .logo { display: block; height: 3rem; width: auto; margin-bottom: 1.25rem; }
   .project { margin: 0 0 .9rem; color: var(--muted); font-size: 1rem; }
-  h1 { margin: 0; font: 400 clamp(1.9rem, 5vw, 2.6rem)/1.25 var(--display-font); text-wrap: balance; }
+  h1 { margin: 0; font: 400 clamp(1.9rem, 5vw, 2.6rem)/1.18 var(--display-font); letter-spacing: -.01em; text-wrap: balance; }
+  :lang(ar) h1 { line-height: 1.3; letter-spacing: 0; } :lang(ar) h3 { line-height: 1.45; }
   ${look?.fonts.display ? 'h1, h3 { font-weight: 700; }' : ''}
   .summary { margin: 1.1rem 0 0; font-size: 1.05rem; }
   .goal { margin: .6rem 0 0; color: var(--muted); max-width: 36rem; }
@@ -239,7 +246,7 @@ export function renderClient(view) {
   .body { padding-top: .2rem; min-width: 0; }
   .status { margin: 0; font-size: .9rem; font-weight: 600; color: var(--muted); }
   .done .status { color: var(--done); } .active .status { color: var(--active); } .review .status { color: var(--review); }
-  h3 { margin: .15rem 0 0; font: 400 1.35rem/1.35 var(--display-font); }
+  h3 { margin: .15rem 0 0; font: 400 1.35rem/1.3 var(--display-font); }
   .done h3 { font-size: 1.15rem; }
   .outcome, .measure { margin: .35rem 0 0; color: var(--muted); }
   .current .body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.15rem 1.1rem; margin-top: -.35rem; }
@@ -260,10 +267,10 @@ ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.l
 <main>
   <header>
     ${!band && look?.logo ? `<img class="logo" src="${look.logo}" alt="${esc(view.title)}">` : ''}
-    ${band && look.logo ? '' : `<p class="project">${esc(view.title)}</p>`}
-    <h1>${esc(view.headline)}</h1>
+    ${band ? '' : `<p class="project">${esc(view.title)}</p>`}
+    <h1>${headline}</h1>
     ${view.total ? `<p class="summary">${esc(say.summary(view.delivered, view.total))}</p>` : ''}
-    ${view.goal ? `<p class="goal">${esc(say.goal)} ${esc(view.goal)}</p>` : ''}
+    ${view.goal ? `<p class="goal">${esc(say.goal)} ${bdi(view.goal)}</p>` : ''}
   </header>
   ${view.stages.length ? `<section aria-labelledby="stages">
     <h2 id="stages">${esc(say.stages)}</h2>

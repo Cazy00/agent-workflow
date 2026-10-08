@@ -99,7 +99,10 @@ test('wf status --client prints the page; the option is refused elsewhere; clien
     assert.equal(refused.status, 2, refused.stdout + refused.stderr);
     assert.match(refused.stderr, /--client is only for status/);
   }
-  for (const [client, message] of [[{ colour: 'red' }, /only title and exclude/], [{ exclude: ['T-0001'] }, /milestone IDs/], [{ title: 3 }, /client.title must be a string/]]) {
+  for (const [client, message] of [[{ colour: 'red' }, /client may contain only title, exclude, language, theme/], [{ language: 'fr' }, /en or ar/],
+    [{ theme: { colors: { brand: 'red; } body { display: none' } } }, /hex colour/], [{ theme: { fonts: { text: 'X"; } * { color: red' } } }, /plain font name/],
+    [{ theme: { logo: '../secret.svg' } }, /inside the repository/], [{ theme: { fonts: { files: [{ family: 'Zain', file: '/etc/passwd' }] } } }, /inside the repository/],
+    [{ theme: { radius: 99 } }, /0 to 40/], [{ theme: { shadow: 'big' } }, /client.theme may contain only/], [{ exclude: ['T-0001'] }, /milestone IDs/], [{ title: 3 }, /client.title must be a string/]]) {
     assert.throws(() => loadConfig(dirSource(project(t, { client }))), message);
   }
 });
@@ -117,4 +120,48 @@ test('wf-adopt installs the Pages workflow only on request, with a public-page w
   assert.match(workflow, /branches: \[main\]/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
   assert.match(workflow, /scripts\/wf status --client/);
   assert.match(fs.readFileSync(path.join(paged, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] Optional: turn on GitHub Pages .* The page is public, even for a private repository/m);
+});
+
+// The client's design system and language (MAINT-0008 follow-up): colours, fonts and logo from `client.theme`, Arabic and
+// right-to-left from `client.language`. The default design is unchanged without them.
+test('a theme dresses the page in the client\'s design system, and Arabic turns it right-to-left', t => {
+  const theme = { colors: { brand: '#174A7C', on_brand: '#FFFFFF', page: '#FBF8F4', active: '#174A7C' }, fonts: { text: 'IBM Plex Sans Arabic', display: 'Zain', files: [{ family: 'Zain', weight: 700, file: 'docs/workflow/client/Zain-Bold.woff2' }] }, logo: 'docs/workflow/client/logo.svg', radius: 14 };
+  const dir = project(t, { client: { title: 'بُن الكيف', language: 'ar', theme } });
+  fs.mkdirSync(path.join(dir, 'docs/workflow/client'), { recursive: true });
+  const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff, 0x10, 0x80]); // binary, not UTF-8
+  fs.writeFileSync(path.join(dir, 'docs/workflow/client/Zain-Bold.woff2'), font);
+  fs.writeFileSync(path.join(dir, 'docs/workflow/client/logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>');
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'records']]) assert.equal(spawnSync('git', ['-C', dir, ...args]).status, 0);
+  for (const candidate of [[], ['--candidate', 'HEAD']]) {
+    const r = spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir, ...candidate], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const html = r.stdout;
+    assert.match(html, /<html lang="ar" dir="rtl">/);
+    assert.match(html, /<title>بُن الكيف: سير العمل<\/title>/);
+    assert.match(html, /<h1>نعمل الآن على: Online ordering\.<\/h1>/);
+    assert.match(html, /المراحل المسلّمة: 1 من 3\./);
+    assert.match(html, /الأجزاء المنجزة: 2 من 4، والمتوقفة: 1/);
+    assert.match(html, /--brand: #174A7C;/); assert.match(html, /--page: #FBF8F4;/); assert.match(html, /--radius: 14px;/);
+    assert.ok(html.includes(`src: url(data:font/woff2;base64,${font.toString('base64')})`), 'the font is embedded byte for byte, from the working tree and from a commit');
+    assert.match(html, /<div class="band"><div class="inner"><img src="data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+" alt="بُن الكيف">/);
+    assert.match(html, /color-scheme: light;/); assert.doesNotMatch(html, /prefers-color-scheme: dark/, 'a brand palette has no invented dark mode');
+    assert.match(html, /inset-inline-start/); assert.doesNotMatch(html, /\bleft:/, 'logical properties only, so the route mirrors');
+    assert.doesNotMatch(html, /<script|https?:\/\/(?!www\.w3\.org)/, 'still self-contained');
+  }
+  fs.rmSync(path.join(dir, 'docs/workflow/client/logo.svg'));
+  const missing = spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir], { encoding: 'utf8' });
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /client.theme: docs\/workflow\/client\/logo.svg is not a file/);
+});
+
+test('without a theme the page keeps the default design, in both languages', t => {
+  const html = renderClient(evaluateClient({ source: dirSource(project(t)) }));
+  assert.match(html, /<html lang="en" dir="ltr">/);
+  assert.match(html, /--page: #f2f5f1;/);
+  assert.match(html, /prefers-color-scheme: dark/);
+  assert.doesNotMatch(html, /class="band"|@font-face/);
+  const arabic = renderClient(evaluateClient({ source: dirSource(project(t, { client: { language: 'ar' } })) }));
+  assert.match(arabic, /<html lang="ar" dir="rtl">/);
+  assert.match(arabic, /<h2 id="stages">المراحل<\/h2>/);
+  assert.match(arabic, /prefers-color-scheme: dark/);
 });

@@ -75,21 +75,29 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   const resolved = git(workflowRepo, ['rev-parse', '--verify', '--end-of-options', `${target}^{commit}`], true);
   if (resolved.status !== 0) throw new Error(`--rev ${target} does not resolve to a commit in ${workflowRepo}`);
   const to = resolved.stdout.trim();
-  const fromRelease = { version: parseVersion(config.workflow?.version).length === 3 ? config.workflow.version : releaseOf(workflowRepo, from).version };
+  // The pinned revision's own tag is the truth; a hand-edited version that disagrees with it is reported, not trusted.
+  const pinned = releaseOf(workflowRepo, from);
+  const recorded = parseVersion(config.workflow?.version).length === 3 ? config.workflow.version : null;
+  const fromRelease = { version: pinned.tag ?? recorded ?? pinned.version };
+  const warnings = [];
+  if (pinned.tag && recorded && compareVersions(pinned.tag, recorded) !== 0) warnings.push(`workflow.version says ${recorded}, but the pinned revision is ${pinned.tag}; the upgrade goes from ${pinned.tag}`);
   const toRelease = releaseOf(workflowRepo, to);
   if (!fromRelease.version || !toRelease.version) throw new Error('cannot tell which releases the pinned and target revisions are');
-  if (to === from) return { project, from, to, from_version: fromRelease.version, to_version: toRelease.version, current: true, changes: [], notes: [], left: [] };
+  if (to === from) return { project, from, to, from_version: fromRelease.version, to_version: toRelease.version, current: true, changes: [], notes: warnings, left: [] };
   if (git(workflowRepo, ['merge-base', '--is-ancestor', from, to], true).status !== 0) throw new Error(`the target ${to.slice(0, 12)} does not contain the pinned revision ${from.slice(0, 12)}: a pin moves forward only`);
 
-  // What the releases after the pin, up to and including the target, ask for.
+  // What the releases after the pin, up to and including the target, ask for. Later releases document earlier ones, so
+  // the list comes from this checkout's HEAD when it contains the target (an older target may predate upgrades.json).
   let manifest = {};
-  const raw = show(workflowRepo, to, 'upgrades.json');
+  const head = git(workflowRepo, ['rev-parse', 'HEAD'], true).stdout.trim();
+  const listFrom = SHA.test(head) && git(workflowRepo, ['merge-base', '--is-ancestor', to, head], true).status === 0 && show(workflowRepo, head, 'upgrades.json') !== null ? head : to;
+  const raw = show(workflowRepo, listFrom, 'upgrades.json');
   if (raw !== null) { try { manifest = JSON.parse(raw); } catch { throw new Error('the target release\'s upgrades.json is not valid JSON'); } }
   const steps = Object.entries(manifest).filter(([v]) => parseVersion(v).length === 3 && compareVersions(v, fromRelease.version) > 0 && compareVersions(v, toRelease.version) <= 0).sort(([a], [b]) => compareVersions(a, b));
   const removeKeys = steps.flatMap(([, s]) => s.remove_config ?? []);
   const removeFiles = steps.flatMap(([, s]) => s.remove_files ?? []);
   const addFiles = new Set(steps.flatMap(([, s]) => s.add_files ?? []));
-  const notes = steps.flatMap(([v, s]) => (s.notes ?? []).map(n => `${v}: ${n}`));
+  const notes = [...warnings, ...steps.flatMap(([v, s]) => (s.notes ?? []).map(n => `${v}: ${n}`))];
 
   const changes = [];
   const left = [];
@@ -133,7 +141,8 @@ export function planUpgrade({ project, workflowRepo, rev }) {
 // Writes the plan. Refuses when a file it would change has uncommitted edits, so nothing of the owner's is overwritten.
 export function applyUpgrade(plan) {
   const dirty = git(plan.project, ['status', '--porcelain', '--', ...plan.changes.map(c => c.path)], true);
-  if (dirty.status === 0 && dirty.stdout.trim()) throw new Error(`commit or stash these first; the upgrade would change them:\n${dirty.stdout.trimEnd()}`);
+  if (dirty.status !== 0) throw new Error('cannot tell whether the files it would change have uncommitted edits (git status failed): --apply needs the project\'s Git checkout');
+  if (dirty.stdout.trim()) throw new Error(`commit or stash these first; the upgrade would change them:\n${dirty.stdout.trimEnd()}`);
   for (const c of plan.changes) {
     const full = path.join(plan.project, c.path);
     if (c.action === 'remove') fs.rmSync(full, { recursive: true, force: true });

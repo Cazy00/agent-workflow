@@ -163,6 +163,17 @@ test('closeout re-runs the round\'s gates on the signed receipts and prints the 
   assert.equal(p.git('rev-parse', 'main'), p.B, 'closeout moves nothing');
 });
 
+test('closeout refuses tasks that share one gated candidate, a batch removed in v2.0.0 (MAINT-0011 review S1)', t => {
+  const p = round(t);
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002'));
+  const E = p.commit('T-0002: recorded Done against the same candidate');
+  p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  const r = p.run(['closeout', '--baseline', p.B, '--candidate', E]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const batch = r.json.steps.find(s => /wf ci for T-0001, T-0002/.test(s.name));
+  assert.ok(batch && !batch.ok && /one pull request carries one task/.test(batch.detail.join(' ')), JSON.stringify(r.json.steps));
+});
+
 test('closeout refuses a round with a missing receipt, an unapproved end or a non-fast-forward', t => {
   const p = round(t);
   p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C).filter(c => c.purpose !== 'integration')]);

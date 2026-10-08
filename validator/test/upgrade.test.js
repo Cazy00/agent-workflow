@@ -16,7 +16,7 @@ const adopt = path.join(root, 'bin/wf-adopt');
 const run = (cmd, args, cwd) => spawnSync(cmd, args, { encoding: 'utf8', cwd });
 const git = (dir, ...args) => { const r = run('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
 
-function releases(t, oldTag = 'v1.10.1') {
+function releases(t, oldTag = 'v1.10.1', { middle = null } = {}) {
   if (run('git', ['-C', root, 'rev-parse', 'HEAD']).status !== 0) return null;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-upgrade-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
@@ -29,7 +29,9 @@ function releases(t, oldTag = 'v1.10.1') {
   edit('templates/claude/agents/independent-reviewer.md', x => `${x}\nAn older line.\n`);
   edit('config.default.json', x => JSON.stringify({ ...JSON.parse(x), setup_budget_days: 2, execution: { mode: 'assisted', runner_adopted: false }, delivery: { batching: null }, delegation: { routine: { enabled: false } } }, null, 2) + '\n');
   edit('package.json', x => x.replace(/"version": "[^"]+"/, `"version": "${oldTag.slice(1)}"`));
+  git(wf, 'rm', '-q', 'upgrades.json'); // releases before v2.0.0 had none
   git(wf, 'commit', '-qam', 'an older release'); git(wf, 'tag', '-f', oldTag);
+  if (middle) { edit('package.json', x => x.replace(/"version": "[^"]+"/, `"version": "${middle.slice(1)}"`)); git(wf, 'commit', '-qam', 'a release between'); git(wf, 'tag', '-f', middle); }
   git(wf, 'checkout', '-q', head, '--', '.'); git(wf, 'commit', '-qm', 'this release'); git(wf, 'tag', '-f', 'v2.0.0');
   const project = path.join(temp, 'project');
   fs.mkdirSync(project); git(project, 'init', '-q');
@@ -118,4 +120,37 @@ test('versions compare by number, and every entry in upgrades.json is a release 
   }
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.ok(Object.keys(manifest).some(v => v === `v${pkg.version}`), 'the release being made says what an upgrade to it changes');
+});
+
+test('an upgrade to an older release takes its steps from the checkout\'s newer list, and only up to that release (review N2)', t => {
+  const r = releases(t, 'v1.10.1', { middle: 'v1.14.0' }); if (!r) return t.skip('not a Git checkout');
+  fs.rmSync(path.join(r.project, '.github/workflows/wf-ci.yml'));
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
+  const plan = JSON.parse(r.up('--rev', 'v1.14.0', '--json').stdout);
+  assert.deepEqual([plan.from_version, plan.to_version], ['v1.10.1', 'v1.14.0']);
+  assert.ok(plan.notes.some(n => n.startsWith('v1.11.0: ')) && plan.notes.some(n => n.startsWith('v1.14.0: ')), plan.notes.join(' | '));
+  assert.ok(!plan.notes.some(n => n.startsWith('v2.0.0: ')), 'nothing past the target');
+  assert.deepEqual(plan.removed_config, [], 'v2.0.0 removals wait for v2.0.0');
+  assert.ok(plan.changes.some(c => c.action === 'add' && c.path === '.github/workflows/wf-ci.yml'));
+});
+
+test('--apply refuses when git cannot say whether files have uncommitted edits (review N1)', t => {
+  const r = releases(t); if (!r) return t.skip('not a Git checkout');
+  const copy = path.join(r.temp, 'no-git'); fs.cpSync(r.project, copy, { recursive: true }); fs.rmSync(path.join(copy, '.git'), { recursive: true, force: true });
+  const before = read(copy, 'docs/workflow/config.json');
+  const result = run(process.execPath, [upgrade, '--project', copy, '--workflow-repo', r.wf, '--rev', 'v2.0.0', '--apply']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /git status failed/);
+  assert.equal(read(copy, 'docs/workflow/config.json'), before, 'nothing written');
+});
+
+test('the pinned revision\'s tag outranks a workflow.version that disagrees with it, and the plan says so (review N3)', t => {
+  const r = releases(t); if (!r) return t.skip('not a Git checkout');
+  const file = path.join(r.project, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(file, 'utf8')); config.workflow.version = 'v1.12.0'; fs.writeFileSync(file, JSON.stringify(config, null, 2));
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted, version edited by hand');
+  const plan = JSON.parse(r.up('--rev', 'v2.0.0', '--json').stdout);
+  assert.equal(plan.from_version, 'v1.10.1');
+  assert.ok(plan.notes.some(n => /workflow\.version says v1\.12\.0, but the pinned revision is v1\.10\.1/.test(n)), plan.notes.join(' | '));
+  assert.ok(plan.notes.some(n => n.startsWith('v1.11.0: ')), 'steps after the real pin are kept');
 });

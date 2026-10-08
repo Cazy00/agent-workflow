@@ -6,7 +6,7 @@ Default timebox: two working days. Use `templates/setup.md`; record actual time 
 
 ## Who does what
 
-Each step is tagged **script**, **agent** or **owner**. The agent performs the script step and the agent steps, writes the owner steps into the setup record as a checklist stating what each needs, posts that, and stops. It never attempts, retries or waits on an owner step, and never asks for credentials, keys or protection changes to be handed to it. Owner steps need the owner's accounts and cannot be delegated. `bin/wf-adopt` performs the script step and writes the checklist for the arrangement chosen below; `bin/wf-protect` and `bin/wf-sign` turn the owner's GitHub and key steps into one command each.
+Each step is tagged **script**, **agent** or **owner**. The agent performs the script step and the agent steps, writes the owner steps into the setup record as a checklist stating what each needs, posts that, and stops. It never attempts, retries or waits on an owner step, and never asks for credentials, keys or protection changes to be handed to it. Owner steps need the owner's accounts and cannot be delegated. `bin/wf-adopt` performs the script step and writes the checklist for the arrangement chosen below; `bin/wf-protect` and `bin/wf-sign` turn the owner's GitHub and key steps into one command each, and `bin/wf-setup` offers the scaffold's choices, the settings and the owner's checklist as a local page.
 
 ## Choose the arrangement
 

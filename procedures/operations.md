@@ -1,6 +1,6 @@
 # Assisted operations and central reporting
 
-This implements the owner's central-feedback direction from the adoption proposal. It adds no unattended runner, approval source or deployment authority. The supplied POLICY stays verbatim. An adopting project's approved profile records the central destination/data boundary and any deviation from local feedback storage once; routine reports within that authority do not ask permission again. Existing projects retain their adopted process until explicit migration.
+This implements the owner's central-feedback direction from the adoption proposal. It adds no unattended runner, approval source or deployment authority. The supplied POLICY stays verbatim. An adopting project's approved profile records, once, under *Workflow configuration*: the central destination (`Cazy00/agent-workflow`) and its public fixed-catalog data categories (worker activity and timing included); the expected worker and the tested issue route; approved tool versions; the external operations configuration and private runtime directory, as references, never tokens; whether central issues replace local feedback bodies (handoffs keep UUID/URL references); the authorised collector, test reporter, cost limits and optional feedback cadence. Routine reports within that authority do not ask permission again. Existing projects retain their adopted process until explicit migration.
 
 ## Provision once per project
 

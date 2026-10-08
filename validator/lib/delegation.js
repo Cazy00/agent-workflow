@@ -118,7 +118,9 @@ const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && new Set(a
 const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verification', 'integration', 'review'];
 
 // Agent-attested evidence for the exact candidate. Every problem is an error; nothing becomes `unverified`.
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks }) {
+// `allowAccepted`: the pull-request quality gate (ci.js) accepts a finding the agent accepted with a stated resolution and
+// leaves its merge to the owner; the routine lane never does.
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, allowAccepted = false }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -153,7 +155,10 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   }
   for (const area of REVIEW_AREAS) if (!Array.isArray(r.coverage) || !r.coverage.includes(area)) errors.push(`review did not cover ${area}`);
   if (!Array.isArray(r.findings)) errors.push('review findings are missing');
-  else for (const f of r.findings) if (!isObject(f) || f.status !== 'resolved' || typeof f.resolution !== 'string' || !f.resolution.trim()) errors.push(`review finding ${JSON.stringify(f?.id)} is not resolved (accepted risks need the owner)`);
+  else for (const f of r.findings) {
+    const dealt = isObject(f) && (f.status === 'resolved' || (allowAccepted && f.status === 'accepted')) && typeof f.resolution === 'string' && f.resolution.trim();
+    if (!dealt) errors.push(`review finding ${JSON.stringify(f?.id)} is not ${allowAccepted ? 'resolved, or accepted with a resolution' : 'resolved (accepted risks need the owner)'}`);
+  }
   if (!sameSet(r.tasks, taskIds)) errors.push('review must cover exactly the candidate\'s tasks');
   if (!reference(r.report)) errors.push('review needs an https reference to its report');
   return errors;

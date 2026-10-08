@@ -11,15 +11,15 @@ Start, two-working-day timebox (or approved alternative), agent allowance (defau
 | Accounts: worker username verified, or one account recorded as the owner's choice | |
 | With a worker: separate clones; author, Git transport and API identities | |
 | With a worker: per-route credentials, no owner fallback | |
-| Tool entry discovery: Codex / Claude Code | |
+| Tool entry discovery, for each tool the owner uses (Claude Code, Codex) | |
 | Protected requirements, decisions, acceptance, enforcement, CI, CODEOWNERS | |
 | Plan support (rulesets available or not), admin restrictions, stale approvals, no bypass (`wf-protect` read-back) | |
 | Trusted validator revision and external trust anchor | |
-| Approval mode (manual, owner-merge, enforced) and what it does not prove | |
+| Approval mode (owner-merge with its checkpoint, manual, enforced) and what it does not prove | |
 | Acceptance mapping and reporter | |
 | Required checks in the profile; each a required status check, branches up to date | |
 | Shared project, if any: each person's worker and tools, `CODEOWNERS`, who approves what and when one is away | |
-| Gate / acceptance / identity / session fixtures | |
+| Setup check: `wf records` and `wf next` on the committed setup (the release's tests ran the fixtures) | |
 | Before enforced: protection read-back, or the real approval-path exercise | |
 | Observed pilot | |
 

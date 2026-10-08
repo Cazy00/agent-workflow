@@ -11,7 +11,7 @@ import { evaluateAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { runOperations } from './operations.js';
 import { prepareNodeEvidence } from './lib/evidence.js';
-import { readOwnerApproval, readDeliveryEvidence } from './lib/github-approval.js';
+import { parseDeliveryEvidence, readOwnerApproval, readDeliveryEvidence } from './lib/github-approval.js';
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
@@ -40,7 +40,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     status --client [--candidate REV]: the same records as one plain-language HTML page for a client (no IDs, people or reasons)
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
-  ci: optional --delivery-evidence EXTERNAL_JSON and --pull-request NUMBER for an approved routine-delegation setup
+  ci: --delivery-evidence EXTERNAL_FILE (JSON, or a pull request description holding the marked block) is required for a
+    production change in enforced and owner-merge modes; --pull-request NUMBER is for an approved routine-delegation setup
   Enforced and owner-merge modes (baseline config and profile both carry the label) need no trust options; manual mode needs all three.
   Directory sources and --changed are diagnostic inputs, not trusted integration evidence.`;
 const git = (repo, ...args) => {
@@ -313,6 +314,16 @@ async function main() {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
     const paths = changed();
     let changedLines = null, deliveryEvidence = null, ownerApproval = null, evidenceSource = null;
+    // The agent's delivery evidence: required for a production change in the pull-request modes, and read by routine
+    // delegation. JSON, a marked comment, or a pull request description holding the marked block (lib/github-approval.js).
+    if (o['delivery-evidence']) {
+      const file = fs.realpathSync(o['delivery-evidence']);
+      const relative = path.relative(fs.realpathSync(repo), file);
+      if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
+      if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
+      deliveryEvidence = parseDeliveryEvidence(fs.readFileSync(file, 'utf8'));
+      if (deliveryEvidence !== null) evidenceSource = file;
+    }
     if (config.delegation?.routine?.enabled === true) {
       if (candidate.kind !== 'git' || baseline.kind !== 'git') throw new WfError('routine delegation requires committed baseline and candidate');
       const stats = git(repo, 'diff-tree', '-r', '--no-renames', '--numstat', '-z', baseline.name, candidate.name, '--').split('\0').filter(Boolean);
@@ -322,17 +333,10 @@ async function main() {
         if (!m || m[1] === '-' || m[2] === '-') { changedLines = null; break; }
         changedLines += Number(m[1]) + Number(m[2]);
       }
-      if (o['delivery-evidence']) {
-        const file = fs.realpathSync(o['delivery-evidence']);
-        const relative = path.relative(fs.realpathSync(repo), file);
-        if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
-        if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
-        deliveryEvidence = JSON.parse(fs.readFileSync(file, 'utf8')); evidenceSource = file;
-      }
       if (o['pull-request']) {
         ownerApproval = readOwnerApproval({ repository: config.repository, pullRequest: o['pull-request'], revision: candidate.name, baseline: baseline.name, branch: config.trusted_branch, approver: config.approval?.approver, worker: config.approval?.agent_identity });
         if (!ownerApproval.candidate_matches) throw new WfError(ownerApproval.reason);
-        if (!o['delivery-evidence'] && !ownerApproval.approved) {
+        if (deliveryEvidence == null) { // the quality gate needs it even when the owner approved the exact head
           const collected = readDeliveryEvidence({ repository: config.repository, pullRequest: o['pull-request'], worker: config.approval?.agent_identity });
           deliveryEvidence = collected.evidence; evidenceSource = collected.source;
         }

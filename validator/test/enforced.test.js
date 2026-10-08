@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, evaluateReadiness, createEnforcedTrust } from '../lib/index.js';
 import { evaluateLifecycle } from '../lib/lifecycle.js';
+import { deliveryEvidence } from './helpers.js';
 
 // Enforced approval mode (POLICY § 7, SCHEMA.md "Approval receipts"): setup verified GitHub protection and
 // recorded `enforced` in the baseline's config and profile. The immutable authoritative baseline is then the
@@ -31,20 +32,28 @@ function setup(t, { label = 'enforced', profileLabel = label, decisionOpen = fal
   edit(taskPath, x => x.replace(`governing_baseline_revision: ${initial}`, `governing_baseline_revision: ${baseline}`));
   write('src/a.js', 'export const result = 1;\n');
   git('add', '.'); git('commit', '-qm', 'T-0001: candidate'); const candidate = git('rev-parse', 'HEAD');
-  const run = (cmd, { candidate: cand = candidate, args = [] } = {}) => spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', cand, '--task', 'T-0001', '--json', ...args], { encoding: 'utf8' });
+  // `evidence`: also pass the agent's delivery evidence for the candidate, which ci needs for a production change.
+  const run = (cmd, { candidate: cand = candidate, args = [], evidence = false } = {}) => {
+    const extra = [];
+    if (evidence) { const file = path.join(temp, 'evidence.json'); fs.writeFileSync(file, JSON.stringify(deliveryEvidence(cand))); extra.push('--delivery-evidence', file); }
+    return spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', cand, '--task', 'T-0001', '--json', ...extra, ...args], { encoding: 'utf8' });
+  };
   return { repo, git, edit, write, baseline, candidate, run };
 }
 
-test('enforced mode: readiness, ci and lifecycle pass without receipts and list what the pull request review covers', t => {
+test('enforced mode: readiness and lifecycle pass without receipts; ci checks the agent\'s evidence and lists what it cannot verify', t => {
   const p = setup(t);
   const readiness = p.run('readiness');
   assert.equal(readiness.status, 0, readiness.stdout + readiness.stderr);
   assert.equal(JSON.parse(readiness.stdout).outcome, 'Ready');
-  const ci = p.run('ci');
+  assert.equal(p.run('ci').status, 1, 'a production change needs the delivery evidence (MAINT-0010)');
+  const ci = p.run('ci', { evidence: true });
   assert.equal(ci.status, 0, ci.stdout + ci.stderr);
   const out = JSON.parse(ci.stdout);
   assert.equal(out.verdict, 'pass');
-  for (const purpose of ['verification', 'review', 'integration', 'execution']) assert.ok(out.findings.some(f => f.startsWith(`unverified: ${purpose}:`)), `${purpose} listed as unverified: ${out.findings.join(' | ')}`);
+  assert.ok(out.findings.some(f => f.startsWith('unverified: verification, review and integration: agent-attested delivery evidence')), out.findings.join(' | '));
+  const lifecycle = JSON.parse(p.run('lifecycle').stdout);
+  for (const purpose of ['verification', 'review']) assert.ok(lifecycle.unverified.some(f => f.startsWith(`${purpose}:`)), `${purpose} listed as unverified by lifecycle: ${lifecycle.unverified.join(' | ')}`);
   const accept = p.run('lifecycle', { args: ['--stage', 'accept'] });
   assert.equal(accept.status, 0, accept.stdout + accept.stderr);
   assert.ok(JSON.parse(accept.stdout).unverified.some(u => u.startsWith('acceptance:')));
@@ -78,7 +87,7 @@ test('enforced mode: a protected-path change is referred to code-owner review in
   const p = setup(t);
   p.write('AGENTS.md', '# guide\n');
   p.git('add', '.'); p.git('commit', '-qm', 'T-0001: governing change');
-  const r = p.run('ci', { candidate: p.git('rev-parse', 'HEAD') });
+  const r = p.run('ci', { candidate: p.git('rev-parse', 'HEAD'), evidence: true });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const out = JSON.parse(r.stdout);
   assert.equal(out.verdict, 'pass');
@@ -147,15 +156,15 @@ test('enforced trust is bound to the exact baseline and supplies no receipts of 
 // in enforced mode, and every unverified item names that route and the mode, so nobody mistakes it for protection.
 test('owner-merge mode: the gates pass without receipts and name the owner\'s own merge as the approval', t => {
   const p = setup(t, { label: 'owner-merge' });
-  const ci = p.run('ci');
+  const ci = p.run('ci', { evidence: true });
   assert.equal(ci.status, 0, ci.stdout + ci.stderr);
   const out = JSON.parse(ci.stdout);
   assert.equal(out.verdict, 'pass');
-  assert.ok(out.findings.some(f => f.startsWith('unverified: execution:') && f.endsWith('(owner-merge mode)')), out.findings.join(' | '));
+  assert.ok(out.findings.some(f => f.startsWith('unverified: verification, review and integration: agent-attested') && f.endsWith('(owner-merge mode)')), out.findings.join(' | '));
   assert.ok(!out.findings.some(f => /\(enforced mode\)/.test(f)), 'never reported as enforced');
   p.write('AGENTS.md', '# guide\n');
   p.git('add', '.'); p.git('commit', '-qm', 'T-0001: governing change');
-  const governing = JSON.parse(p.run('ci', { candidate: p.git('rev-parse', 'HEAD') }).stdout);
+  const governing = JSON.parse(p.run('ci', { candidate: p.git('rev-parse', 'HEAD'), evidence: true }).stdout);
   assert.ok(governing.findings.some(f => f.startsWith('unverified: governing-change:') && f.includes("the owner's own review and merge of this pull request, which no protection enforces") && f.includes('(owner-merge mode)')), governing.findings.join(' | '));
   const next = spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--json'], { encoding: 'utf8' });
   assert.equal(next.status, 0, next.stdout + next.stderr);
@@ -192,7 +201,8 @@ test('owner-merge mode is refused for a project with several owners, by the reco
 
 test('a Claude Code task branch names its task, as a Codex one does', t => {
   const p = setup(t, { label: 'owner-merge' });
-  const r = spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--branch', 'claude/T-0001-work', '--json'], { encoding: 'utf8' });
+  const file = path.join(p.repo, '..', 'evidence.json'); fs.writeFileSync(file, JSON.stringify(deliveryEvidence(p.candidate)));
+  const r = spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--branch', 'claude/T-0001-work', '--delivery-evidence', file, '--json'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.ok(JSON.parse(r.stdout).findings.some(f => f.startsWith('readiness T-0001:')));
 });

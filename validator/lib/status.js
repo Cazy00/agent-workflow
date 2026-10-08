@@ -149,7 +149,8 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
   let setupOpen = null;
   if (setupText) {
     const [ownerPart, agentPart = ''] = setupText.split(/^## Agent steps/m);
-    const count = s => (s.match(/^- \[ \]/gm) ?? []).length;
+    // Steps under an `### Optional` heading are suggestions: they never count as waiting on anyone.
+    const count = s => (s.split(/^### Optional\b.*$/m)[0].match(/^- \[ \]/gm) ?? []).length;
     setupOpen = { owner: count(ownerPart), agent: count(agentPart) };
     if (setupOpen.owner) waiting.push({ kind: 'setup', item: `${rd}/setup.md`, owner: 'owner', detail: `${setupOpen.owner} owner setup step(s) unchecked` });
     if (setupOpen.agent) waiting.push({ kind: 'setup', item: `${rd}/setup.md`, owner: 'agent', detail: `${setupOpen.agent} agent setup step(s) unchecked` });

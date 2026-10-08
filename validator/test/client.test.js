@@ -125,7 +125,7 @@ test('wf-adopt installs the Pages workflow only on request, with a public-page w
   const workflow = fs.readFileSync(path.join(paged, '.github/workflows/wf-client-page.yml'), 'utf8');
   assert.match(workflow, /branches: \[main\]/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
   assert.match(workflow, /scripts\/wf status --client/);
-  assert.match(fs.readFileSync(path.join(paged, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] \*\*Turn on the client page \(optional\)\.\*\* Turn on GitHub Pages .* The page is public, even for a private repository/m);
+  assert.match(fs.readFileSync(path.join(paged, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] \*\*Turn on the client page\.\*\* Turn on GitHub Pages .* The page is public, even for a private repository/m);
 });
 
 // The client's design system and language (MAINT-0008 follow-up): colours, fonts and logo from `client.theme`, Arabic and

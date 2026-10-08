@@ -34,14 +34,19 @@ test('front matter edits replace or add a line and leave the rest alone', () => 
 
 test('the adopt form becomes wf-adopt arguments, and bad answers are refused', () => {
   const good = { repository: 'acme/shop', coordinator: 'owner', approval: 'owner-merge', worker: 'agent-bot', lane: 'existing', production: ['**/*.{dart,vue}', '**/*.{dart,vue}'], client_page: true, version: 'v1.11.0' };
-  assert.deepEqual(adoptArguments(good, '/p'), ['--project', '/p', '--repository', 'acme/shop', '--coordinator', 'owner', '--rev', 'v1.11.0', '--approval', 'owner-merge', '--worker', 'agent-bot', '--lane', 'existing', '--production', '**/*.{dart,vue}', '--client-page']);
-  for (const [change, message] of [[{ repository: 'shop' }, /OWNER\/REPOSITORY/], [{ coordinator: 'two words' }, /not a valid username/], [{ approval: 'enforced' }, /how you approve/], [{ lane: 'maybe' }, /already has code/], [{ worker: 'bad name' }, /agent's GitHub account/]]) {
+  assert.deepEqual(adoptArguments(good, '/p'), ['--project', '/p', '--repository', 'acme/shop', '--coordinator', 'owner', '--rev', 'v1.11.0', '--approval', 'owner-merge', '--checkpoint', 'milestone', '--worker', 'agent-bot', '--lane', 'existing', '--production', '**/*.{dart,vue}', '--client-page']);
+  // MAINT-0010: the page asks when the agent stops (the checkpoint); a signing key is the stricter option, without one.
+  assert.deepEqual(adoptArguments({ ...good, checkpoint: 'plan' }, '/p').slice(8, 12), ['--approval', 'owner-merge', '--checkpoint', 'plan']);
+  const { approval: _a, ...noApproval } = good;
+  assert.deepEqual(adoptArguments(noApproval, '/p').slice(8, 12), ['--approval', 'owner-merge', '--checkpoint', 'milestone'], 'owner-merge with a milestone checkpoint by default');
+  assert.ok(!adoptArguments({ ...good, approval: 'manual', checkpoint: 'plan' }, '/p').includes('--checkpoint'), 'manual mode has no checkpoint');
+  for (const [change, message] of [[{ repository: 'shop' }, /OWNER\/REPOSITORY/], [{ coordinator: 'two words' }, /not a valid username/], [{ approval: 'enforced' }, /how you approve/], [{ checkpoint: 'sometimes' }, /when the agent stops/], [{ lane: 'maybe' }, /already has code/], [{ worker: 'bad name' }, /agent's GitHub account/]]) {
     assert.throws(() => adoptArguments({ ...good, ...change }, '/p'), message);
   }
 });
 
 test('saving settings writes config and profile together, keeps the approval label in sync, and keeps the body', t => {
-  const dir = project(t);
+  const dir = project(t, '--approval', 'manual');
   const bodyBefore = read(dir, 'docs/workflow/profile.md').split('\n---\n').slice(1).join('\n---\n');
   const r = saveSettings({ project: dir, form: form({ dir, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '', derived_baselines: false }, measure: 'A customer can order online.', required_checks: ['test', 'lint'], production: [...loadConfig(dirSource(dir)).paths.production, '**/*.{dart,vue}'], client: { title: 'Shop', exclude: ['M-0001'] } }) });
   assert.deepEqual(r.changed, ['docs/workflow/config.json', 'docs/workflow/profile.md']);
@@ -77,7 +82,7 @@ test('saving refuses what the workflow would reject, and writes nothing then', t
 });
 
 test('saving works once the project has acceptance examples and test mappings (MAINT-0009 review B1)', t => {
-  const dir = project(t);
+  const dir = project(t, '--approval', 'manual');
   const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
   write('docs/specs/orders.md', '# Orders\n');
   write('tests/acceptance/orders.test.js', "test('AC-001-1 a customer orders', () => {});\n");
@@ -89,7 +94,7 @@ test('saving works once the project has acceptance examples and test mappings (M
 });
 
 test('switching to enforced needs both accounts and records the matching mechanism; dependent files are named', t => {
-  const dir = project(t, '--worker', 'agent-bot');
+  const dir = project(t, '--worker', 'agent-bot', '--approval', 'manual');
   assert.throws(() => saveSettings({ project: dir, form: form({ dir, approval: { label: 'enforced', approver: '', agent_identity: 'agent-bot' } }) }), /needs your GitHub username/);
   const r = saveSettings({ project: dir, form: form({ dir, approval: { label: 'enforced', approver: 'owner-2', agent_identity: 'agent-bot' }, trusted_branch: 'trunk' }) });
   const config = loadConfig(dirSource(dir));
@@ -100,7 +105,7 @@ test('switching to enforced needs both accounts and records the matching mechani
   assert.match(notes, /Tell the agent to update CODEOWNERS/);
   assert.match(notes, /change it in the GitHub workflows/);
   assert.doesNotMatch(notes, /your setup steps/, 'the enforced switch follows its own step, not a rewrite of the checklist');
-  const merge = project(t);
+  const merge = project(t, '--approval', 'manual');
   assert.match(saveSettings({ project: merge, form: form({ dir: merge, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' } }) }).notes.join(' '), /Tell the agent to update its instructions on merging \(AGENTS\.md\) and your setup steps to match/);
 });
 
@@ -134,7 +139,7 @@ test('the page sends only what it shows, and saving keeps the agent\'s settings 
 test('the owner ticks their own steps; agent steps and a stale page are refused', t => {
   const dir = project(t);
   const lines = read(dir, 'docs/workflow/setup.md').split('\n');
-  const pilot = lines.findIndex(l => l.includes('11. **Watch the first milestone.**'));
+  const pilot = lines.findIndex(l => l.includes('5. **Protect the main branch.**')); // an optional step can be ticked too
   const agent = lines.findIndex(l => l.startsWith('- [ ] 1. **Write the project profile.**'));
   const text = lines[pilot].slice(6);
   tickStep({ project: dir, index: pilot, done: true, text });
@@ -187,7 +192,7 @@ test('only this server\'s own page, with its token, can read or change anything'
   assert.equal(state.defaults.warnings, undefined, 'the inspection\'s technical warnings stay with the agent');
   const adopted = JSON.parse((await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({ repository: 'acme/shop', coordinator: 'owner', approval: 'owner-merge', lane: 'new', production: [], version: release }) })).body);
   assert.equal(adopted.ok, true, adopted.output);
-  assert.equal(loadConfig(dirSource(dir)).approval.label, 'owner-merge');
+  assert.deepEqual([loadConfig(dirSource(dir)).approval.label, loadConfig(dirSource(dir)).approval.checkpoint], ['owner-merge', 'milestone']);
   const again = await request(port, { method: 'POST', path: `/api/adopt?t=${token}`, headers: json, body: JSON.stringify({}) });
   assert.equal(again.status, 400);
   assert.match(again.body, /adopted already/);
@@ -210,4 +215,27 @@ test('a copy of the workflow behind its own release cannot set a project up, and
   assert.deepEqual([state.defaults.release.outdated, state.defaults.release.newest], [true, 'v1.0.0']);
   assert.throws(() => adopt({ project: dir, workflowRepo: copy, form: { repository: 'acme/shop', coordinator: 'owner', approval: 'manual', lane: 'new', version: 'v1.0.0' } }), /git pull --tags/);
   assert.ok(!fs.existsSync(path.join(dir, 'docs/workflow')), 'nothing is written');
+});
+
+test('the checkpoint is saved with owner-merge, dropped with another mode, checked, and explained', t => {
+  const dir = project(t);
+  const save = approval => saveSettings({ project: dir, form: form({ dir, approval: { approver: 'owner', agent_identity: '', ...approval } }) });
+  const plan = save({ label: 'owner-merge', checkpoint: 'plan' });
+  assert.match(plan.notes.join(' '), /works through every milestone you have approved without stopping/);
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, 'plan');
+  assert.equal(save({ label: 'owner-merge' }).changed.length, 0, 'a form without a checkpoint keeps the one there');
+  assert.throws(() => save({ label: 'owner-merge', checkpoint: 'sometimes' }), /when the agent stops/);
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, 'plan', 'nothing written on a refusal');
+  save({ label: 'manual', checkpoint: 'plan' });
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, undefined, 'manual mode has no checkpoint');
+  save({ label: 'owner-merge' });
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, 'milestone', 'switching to owner-merge without a pick takes the scaffold\'s default (MAINT-0010 review S1)');
+});
+
+test('a legacy owner-merge project without a checkpoint keeps none on an unrelated save', t => {
+  const dir = project(t);
+  const file = path.join(dir, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(file, 'utf8')); delete config.approval.checkpoint; fs.writeFileSync(file, JSON.stringify(config, null, 2));
+  saveSettings({ project: dir, form: form({ dir, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, measure: 'A customer can order online.' }) });
+  assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, undefined);
 });

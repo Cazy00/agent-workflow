@@ -132,7 +132,7 @@ test('inspection of an adopted repository reports the adoption and collisions an
   const { data } = report(dir);
   assert.deepEqual(snapshot(dir), before);
   assert.equal(data.adoption.repository, 'fixture/project');
-  assert.equal(data.adoption.approval_label, 'manual');
+  assert.equal(data.adoption.approval_label, 'owner-merge', 'one owner adopts with owner-merge by default (MAINT-0010)');
   assert.match(data.adoption.workflow.revision, /^[0-9a-f]{40}$/);
   assert.ok(data.warnings.some(w => /already adopted/.test(w)));
   assert.equal(data.next, null);

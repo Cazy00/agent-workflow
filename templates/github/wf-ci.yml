@@ -9,11 +9,13 @@
 # copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
 # (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
 # before merging. It runs with a read-only token and no secrets. In enforced and owner-merge modes it runs the
-# integration gate (`wf ci`); in manual mode the owner's signed receipts are checked on the owner's machine
-# (`wf closeout`), so here it checks the records only.
+# integration gate (`wf ci`), which needs the agent's delivery evidence for a production change: it reads it from the
+# pull request description, so editing the description reruns this check on the same head. In manual mode the
+# owner's signed receipts are checked on the owner's machine (`wf closeout`), so here it checks the records only.
 name: wf
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 concurrency:
@@ -55,6 +57,8 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.head_ref }}
+          # Untrusted text: passed through the environment into a file, never into the script itself.
+          DESCRIPTION: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
           wf() { node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" "$@"; }
@@ -62,6 +66,22 @@ jobs:
             echo "manual mode: checking the records; the owner's receipts are checked by wf closeout"
             wf records --candidate "$HEAD_SHA"
           else
-            # The task comes from the branch name (T-0001-…, codex/T-0001-…, claude/T-0001-…).
-            wf ci --baseline "$BASE" --candidate "$HEAD_SHA" --branch "$HEAD_REF"
+            # The task comes from the branch name (T-0001-…, codex/T-0001-…, claude/T-0001-…); the delivery evidence
+            # from the description's marked block (procedures/execute.md *Checkpoints and task records*).
+            printf '%s' "$DESCRIPTION" > "$RUNNER_TEMP/pr-description.md"
+            code=0
+            wf ci --baseline "$BASE" --candidate "$HEAD_SHA" --branch "$HEAD_REF" --delivery-evidence "$RUNNER_TEMP/pr-description.md" > "$RUNNER_TEMP/ci.json" || code=$?
+            cat "$RUNNER_TEMP/ci.json"
+            # Who merges, and why, on the run's summary and as a notice beside the check (owner-merge mode).
+            node -e '
+              const fs = require("fs");
+              let r;
+              try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### wf ci could not run\nIts reason is in the log.\n"); process.exit(0); }
+              const fails = r.verdict === "fail" ? r.findings.filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: )/.test(f)) : [];
+              const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
+              if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
+              if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+            ' "$RUNNER_TEMP/ci.json" || true
+            exit "$code"
           fi

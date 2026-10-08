@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { dirSource, list, listedOwners, loadAll, loadConfig, validateRecords } from '../validator/lib/index.js';
 import { parseFrontMatter } from '../validator/lib/frontmatter.js';
 import { DETAIL, LANGUAGES, titleOf } from '../validator/lib/client.js';
+import { CHECKPOINTS } from '../validator/lib/checkpoint.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -71,15 +72,19 @@ export function setFrontMatter(text, values) {
   return lines.join('\n');
 }
 
-// Owner and agent setup steps, as the setup record lists them; the owner's can be ticked here.
+// Owner and agent setup steps, as the setup record lists them; the owner's can be ticked here. Steps under an
+// `### Optional` heading are suggestions, which `wf status` never counts as waiting.
 function checklist(text) {
   if (!text) return null;
   const lines = text.split('\n');
   const agentAt = lines.findIndex(l => /^## Agent steps/.test(l));
   const steps = [];
+  let optional = false;
   lines.forEach((line, index) => {
+    if (/^## /.test(line)) optional = false;
+    if (/^### Optional\b/.test(line)) optional = true;
     const m = line.match(/^- \[( |x|X)\] (.*)$/);
-    if (m) steps.push({ index, who: agentAt !== -1 && index > agentAt ? 'agent' : 'owner', done: m[1] !== ' ', text: m[2] });
+    if (m) steps.push({ index, who: agentAt !== -1 && index > agentAt ? 'agent' : 'owner', optional, done: m[1] !== ' ', text: m[2] });
   });
   return steps;
 }
@@ -117,7 +122,7 @@ export async function readState({ project, workflowRepo }) {
   const milestones = [...loadAll(source, rd).milestones.values()].filter(r => r.data?.id).sort((a, b) => a.data.id.localeCompare(b.data.id));
   state.settings = {
     owners, shared: owners.length >= 2,
-    approval: { label: config.approval?.label ?? 'manual', approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true },
+    approval: { label: config.approval?.label ?? 'manual', checkpoint: config.approval?.checkpoint ?? null, approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true },
     project: profile.project ?? '', measure: profile.measure ?? '',
     client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', detail: config.client?.detail ?? 'full', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
     milestones: milestones.map(r => ({ id: r.data.id, title: titleOf(r) ?? r.data.outcome ?? r.data.id })),
@@ -136,8 +141,15 @@ export function adoptArguments(form, project) {
   const version = oneLine(form.version || 'HEAD', 'version');
   if (!VERSION.test(version) || version.startsWith('-')) throw new Error('choose a workflow release');
   args.push('--repository', repository, '--coordinator', coordinator, '--rev', version);
-  if (!['manual', 'owner-merge'].includes(form.approval)) throw new Error('choose how you approve work');
-  args.push('--approval', form.approval);
+  // The page's main question is when the agent stops for you (the checkpoint); signed receipts are the stricter option.
+  const approval = form.approval ?? 'owner-merge';
+  if (!['manual', 'owner-merge'].includes(approval)) throw new Error('choose how you approve work');
+  args.push('--approval', approval);
+  if (approval === 'owner-merge') {
+    const checkpoint = form.checkpoint ?? 'milestone';
+    if (!CHECKPOINTS.includes(checkpoint)) throw new Error('choose when the agent stops for you');
+    args.push('--checkpoint', checkpoint);
+  }
   if (form.worker) { const w = oneLine(form.worker, 'the agent\'s account'); if (!USERNAME.test(w)) throw new Error('the agent\'s GitHub account is not a valid username'); args.push('--worker', w); }
   if (!['new', 'existing'].includes(form.lane)) throw new Error('say whether the repository already has code');
   args.push('--lane', form.lane);
@@ -190,6 +202,14 @@ export function saveSettings({ project, form }) {
   next.trusted_branch = branch;
   next.approval = { ...(next.approval ?? {}), label, approver, agent_identity: worker };
   if (form.approval && Object.hasOwn(form.approval, 'derived_baselines')) next.approval.derived_baselines = form.approval.derived_baselines === true;
+  // The checkpoint belongs to owner-merge alone: kept as it was unless the form sends one, and dropped with another mode.
+  const checkpoint = form.approval && Object.hasOwn(form.approval, 'checkpoint') ? form.approval.checkpoint : config.approval?.checkpoint;
+  if (label !== 'owner-merge') delete next.approval.checkpoint;
+  else if (checkpoint == null && (config.approval?.label ?? 'manual') !== 'owner-merge') next.approval.checkpoint = 'milestone'; // a switch takes the scaffold's default
+  else if (checkpoint != null) {
+    if (!CHECKPOINTS.includes(checkpoint)) throw new Error('choose when the agent stops for you: milestone, change or plan');
+    next.approval.checkpoint = checkpoint;
+  }
   if (MECHANISM[label]) next.approval.mechanism = MECHANISM[label];
   if (has('production')) next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
   const title = Object.hasOwn(client, 'title') ? oneLine(client.title, 'the client page title') : config.client?.title ?? '';
@@ -230,6 +250,12 @@ export function saveSettings({ project, form }) {
     : label === 'owner-merge'
       ? 'Your own merge is now the approval, and nothing proves who merged. Tell the agent to update its instructions on merging (AGENTS.md) and your setup steps to match, in the same pull request.'
       : `Receipts you sign are now the approval. Tell the agent to update ${was === 'enforced' ? 'its instructions on merging (AGENTS.md) and ' : ''}your setup steps to match, in the same pull request.`);
+  const STOPS = {
+    milestone: 'The agent now merges each piece of work once its checks and independent review pass, and stops at the end of each milestone until you accept it.',
+    change: 'You now merge every pull request yourself, and the agent stops at the end of each milestone until you accept it.',
+    plan: 'The agent now works through every milestone you have approved without stopping, merging each piece of work once its checks and independent review pass.',
+  };
+  if (label === 'owner-merge' && next.approval.checkpoint && next.approval.checkpoint !== (config.approval?.label === 'owner-merge' ? config.approval?.checkpoint : undefined)) notes.push(`${STOPS[next.approval.checkpoint]} It takes effect once you merge this change.`);
   if (worker !== (config.approval?.agent_identity ?? '')) notes.push('The agent\'s account changed. Tell the agent to update its account instructions and your setup steps to match.');
   if (approver !== (config.approval?.approver ?? '')) notes.push('Your username changed. Tell the agent to update CODEOWNERS to name you, in the same pull request.');
   if (JSON.stringify(values.required_checks) !== JSON.stringify(list(before.required_checks))) notes.push('The required checks changed. Once this is approved, rerun the protection command so GitHub requires them too.');

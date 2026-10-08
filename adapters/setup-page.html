@@ -89,9 +89,17 @@ const value = name => app.querySelector(`[name="${name}"]`)?.value ?? '';
 const picked = name => app.querySelector(`[name="${name}"]:checked`)?.value ?? '';
 const show = (kind, html) => { const box = app.querySelector('#message'); box.className = `message ${kind}`; box.innerHTML = html; box.hidden = false; box.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' }); };
 
+// The main question: when the agent stops for you (owner-merge's checkpoint). The same checks and independent review
+// run in every one; only your stops differ.
+const PRESETS = {
+  milestone: ['Review each milestone (recommended)', 'The agent merges each piece of work once its checks, tests and independent review pass, then stops when a milestone is finished so you can try it. The next one starts once you accept it.'],
+  change: ['Review every change', 'You read and merge every pull request yourself. The agent also stops at the end of each milestone.'],
+  plan: ['Review when the plan is done', 'The agent works through every milestone you have approved without stopping, and you accept them when you like. Approve one milestone at a time if you want shorter runs.'],
+};
+const PRESET_HINT = 'Whichever you choose, changes to your plan, requirements, acceptance tests or the workflow wait for you, and the same checks and independent review run.';
 const APPROVAL = {
-  manual: ['You sign each round', 'You review what the agent did and sign a small file with your own key. Nothing is approved until you sign. Works on any GitHub plan, with one account.'],
-  'owner-merge': ['Your merge is the approval', 'You review each pull request and merge it yourself. Nothing to set up, but nothing proves it was you who merged. For one owner only.'],
+  'owner-merge': ['Your merge', 'Your merges, and the agent\'s within the stops you chose, are the approval. Nothing to set up, but nothing proves who merged. For one owner only.'],
+  manual: ['Your signing key', 'You sign each round of work with a key only you can use; nothing is approved until you sign. Slower: you approve every change. Works on any GitHub plan, with one account.'],
   enforced: ['GitHub enforces it', 'GitHub rules require your approval on every pull request. Needs a public repository or a paid plan, a separate account for the agent, and a passing protection check.'],
 };
 const choice = (name, key, [title, text], checked, disabled = false) => `<label class="choice${disabled ? ' disabled' : ''}"><input type="radio" name="${name}" value="${key}"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''}><strong>${title}</strong><p>${text}</p></label>`;
@@ -108,11 +116,14 @@ function renderAdopt() {
       <label class="field"><span>Repository</span><input type="text" name="repository" value="${esc(d.repository)}" placeholder="owner/repository" autocomplete="off"><small>As it appears in its GitHub address.</small></label>
       <label class="field"><span>Your GitHub username</span><input type="text" name="coordinator" value="${esc(d.coordinator)}" autocomplete="off"><small>You approve the agent's work.</small></label>
     </section>
-    <section><h2>The agent's account</h2>${accountFields()}</section>
-    <section><h2>How you approve work</h2>
-      <div class="choices">${choice('approval', 'manual', APPROVAL.manual, true)}${choice('approval', 'owner-merge', APPROVAL['owner-merge'], false)}</div>
-      <p class="hint">The stricter mode, where GitHub enforces your approval, can be switched on later.</p>
+    <section><h2>When should the agent stop for you?</h2>
+      <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], k === 'milestone')).join('')}</div>
+      <p class="hint">${PRESET_HINT}</p>
+      <details><summary>Stricter proof</summary>
+        <label class="choice"><input type="checkbox" name="signed"><strong>Prove each approval with your own signing key</strong><p>${APPROVAL.manual[1]} The stops above then don't apply. The strictest mode, where GitHub enforces your approval, can be switched on later.</p></label>
+      </details>
     </section>
+    <section><h2>The agent's account</h2>${accountFields()}</section>
     <section><h2>A page for your client</h2>
       <label class="choice"><input type="checkbox" name="client_page"><strong>Publish a progress page on GitHub Pages</strong><p>Plain words, no technical detail. A GitHub Pages site is public, even for a private repository. You can always make the page as a file instead and send it.</p></label>
     </section>
@@ -126,10 +137,11 @@ function renderAdopt() {
   saveButton.onclick = async () => {
     saveButton.disabled = true; statusLine.textContent = 'Setting up…';
     try {
-      const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: picked('approval'), lane: d.lane, production: d.production, client_page: app.querySelector('[name=client_page]').checked, version: d.version });
+      const r = await api('/api/adopt', { repository: value('repository'), coordinator: value('coordinator'), worker: picked('account') === 'worker' ? value('worker') : '', approval: app.querySelector('[name=signed]').checked ? 'manual' : 'owner-merge', checkpoint: picked('checkpoint'), lane: d.lane, production: d.production, client_page: app.querySelector('[name=client_page]').checked, version: d.version });
       if (!r.ok) { show('error', `<p>The setup script refused:</p><pre>${esc(r.output)}</pre>`); statusLine.textContent = 'Nothing was written.'; return; }
       state = await api('/api/state'); renderSettings();
-      show('ok', `<p>The project is set up with agent&#8209;workflow ${esc(d.version)}. Commit the new files to your main branch, or ask the agent to, then work through your steps above.</p>`);
+      const required = (state.checklist ?? []).filter(x => x.who === 'owner' && !x.optional).length;
+      show('ok', `<p>The project is set up with agent&#8209;workflow ${esc(d.version)}. Commit the new files to your main branch, or ask the agent to, ${required ? 'then work through your steps above.' : 'then hand the project to the agent: nothing else is needed from you before it starts.'}</p>`);
     } catch (e) { show('error', `<p>${esc(e.message)}</p>`); statusLine.textContent = 'Nothing was written.'; }
     finally { saveButton.disabled = Boolean(d.release.outdated); }
   };
@@ -137,17 +149,27 @@ function renderAdopt() {
 
 function renderSettings() {
   const s = state.settings, steps = state.checklist ?? [];
-  const mine = steps.filter(x => x.who === 'owner'), agent = steps.filter(x => x.who === 'agent');
+  const all = steps.filter(x => x.who === 'owner'), agent = steps.filter(x => x.who === 'agent');
+  const mine = all.filter(x => !x.optional), extra = all.filter(x => x.optional);
   const label = s.approval.label;
   const step = x => { const { title, how } = splitStep(x.text); return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-step="${x.index}"${x.done ? ' checked' : ''}><span class="text">${rich(title)}</span></label>${how ? `<details class="how"><summary>How</summary><p>${rich(how)}</p></details>` : ''}</li>`; };
   app.innerHTML = `<h1>${esc(s.project || state.name)}</h1>
     <p class="lede">Your setup and settings, saved into this project. Nothing is committed or pushed: a change reaches the project through a pull request, like any other.</p>
     <section><h2>Your setup steps</h2>
-      ${mine.length ? `<p class="hint">${mine.filter(x => x.done).length} of ${mine.length} done. Tick a step once you have done it.</p><ul class="steps">${mine.map(step).join('')}</ul>` : '<p class="hint">No owner steps are listed in the setup record.</p>'}
+      ${mine.length ? `<p class="hint">${mine.filter(x => x.done).length} of ${mine.length} done. Tick a step once you have done it.</p><ul class="steps">${mine.map(step).join('')}</ul>` : '<p class="hint">Nothing is required of you before the agent starts.</p>'}
+      ${extra.length ? `<details${extra.some(x => x.done) ? ' open' : ''}><summary>Optional (${extra.filter(x => x.done).length} of ${extra.length} done)</summary><ul class="steps">${extra.map(step).join('')}</ul></details>` : ''}
       ${agent.length ? `<p class="hint agent-steps">${agent.some(x => !x.done) ? `The agent has ${agent.filter(x => !x.done).length} setup step${agent.filter(x => !x.done).length === 1 ? '' : 's'} of its own left. You don't need to do anything for them.` : 'The agent has finished its setup steps.'}</p>` : ''}
     </section>
-    <section><h2>How you approve work</h2>
-      <div class="choices">${['manual', 'owner-merge', 'enforced'].map(k => choice('label', k, APPROVAL[k], label === k, k === 'owner-merge' && s.shared)).join('')}</div>
+    <section id="presets"${label === 'owner-merge' ? '' : ' hidden'}><h2>When the agent stops for you</h2>
+      ${label === 'owner-merge' && !s.approval.checkpoint ? '<p class="hint">Not chosen yet: you merge every pull request, and the agent does not stop between milestones. Pick one to change that.</p>' : ''}
+      <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], label === 'owner-merge' ? s.approval.checkpoint === k : k === 'milestone')).join('')}</div>
+      <p class="hint">${PRESET_HINT}</p>
+    </section>
+    <section><h2>How approval is proven</h2>
+      ${label === 'owner-merge' ? '' : `<p class="hint">You approve every change, ${label === 'manual' ? 'with your signing key' : 'through GitHub\'s code-owner review'}.</p>`}
+      <details${label === 'owner-merge' ? '' : ' open'}><summary>${label === 'owner-merge' ? 'By your merge. Stricter options' : 'Change how'}</summary>
+        <div class="choices">${['owner-merge', 'manual', 'enforced'].map(k => choice('label', k, APPROVAL[k], label === k, k === 'owner-merge' && s.shared)).join('')}</div>
+      </details>
     </section>
     <section><h2>Accounts</h2>
       <label class="field"><span>Your GitHub username</span><input type="text" name="approver" value="${esc(s.approval.approver)}" autocomplete="off"></label>
@@ -166,6 +188,7 @@ function renderSettings() {
     </section>
     <div id="message" role="status" hidden></div>`;
   wireAccount();
+  app.querySelectorAll('[name=label]').forEach(r => r.addEventListener('change', () => { app.querySelector('#presets').hidden = picked('label') !== 'owner-merge'; }));
   app.querySelectorAll('input, select').forEach(i => { if (!i.dataset.step) { i.addEventListener('input', changed); i.addEventListener('change', changed); } });
   app.querySelectorAll('[data-step]').forEach(box => box.onchange = async () => {
     if (statusLine.textContent === 'Unsaved changes.') { box.checked = !box.checked; show('error', '<p>Save or undo your setting changes before ticking a step: ticking reloads the page.</p>'); return; }
@@ -179,7 +202,8 @@ function renderSettings() {
     saveButton.disabled = true; statusLine.textContent = 'Saving…';
     try {
       const r = await api('/api/settings', {
-        approval: { label: picked('label'), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
+        // A project without a checkpoint shows none picked and keeps none until the owner picks one.
+        approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
         project: value('project'), measure: value('measure'),
         client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
       });

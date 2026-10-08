@@ -14,7 +14,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirSource, list, listedOwners, loadAll, loadConfig, validateRecords } from '../validator/lib/index.js';
 import { parseFrontMatter } from '../validator/lib/frontmatter.js';
-import { LANGUAGES, titleOf } from '../validator/lib/client.js';
+import { DETAIL, LANGUAGES, titleOf } from '../validator/lib/client.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -119,7 +119,7 @@ export async function readState({ project, workflowRepo }) {
     owners, shared: owners.length >= 2,
     approval: { label: config.approval?.label ?? 'manual', approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true },
     project: profile.project ?? '', measure: profile.measure ?? '',
-    client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
+    client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', detail: config.client?.detail ?? 'full', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
     milestones: milestones.map(r => ({ id: r.data.id, title: titleOf(r) ?? r.data.outcome ?? r.data.id })),
   };
   state.checklist = checklist(source.read(`${rd}/setup.md`));
@@ -183,6 +183,8 @@ export function saveSettings({ project, form }) {
   for (const id of exclude) if (!MILESTONE.test(id)) throw new Error(`hidden stages must be milestone IDs like M-0001 (got ${id})`);
   const language = Object.hasOwn(client, 'language') ? client.language : config.client?.language;
   if (language !== undefined && !LANGUAGES.includes(language)) throw new Error(`the client page language must be one of ${LANGUAGES.join(', ')}`);
+  const detail = Object.hasOwn(client, 'detail') ? client.detail : config.client?.detail;
+  if (detail !== undefined && !DETAIL.includes(detail)) throw new Error(`how much the client page shows must be one of ${DETAIL.join(', ')}`);
 
   const next = structuredClone(config);
   next.trusted_branch = branch;
@@ -191,9 +193,10 @@ export function saveSettings({ project, form }) {
   if (MECHANISM[label]) next.approval.mechanism = MECHANISM[label];
   if (has('production')) next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
   const title = Object.hasOwn(client, 'title') ? oneLine(client.title, 'the client page title') : config.client?.title ?? '';
-  const { title: _t, exclude: _e, language: _l, ...kept } = config.client ?? {}; // the theme and anything else stay
+  const { title: _t, exclude: _e, language: _l, detail: _d, ...kept } = config.client ?? {}; // the theme and anything else stay
+  const keepDetail = detail && (detail !== 'full' || config.client?.detail === 'full'); // everything is the default
   const keepLanguage = language && (language !== 'en' || config.client?.language === 'en'); // English is the default
-  next.client = { ...(title ? { title } : {}), ...(keepLanguage ? { language } : {}), ...(exclude.length ? { exclude } : {}), ...kept };
+  next.client = { ...(title ? { title } : {}), ...(keepLanguage ? { language } : {}), ...(keepDetail ? { detail } : {}), ...(exclude.length ? { exclude } : {}), ...kept };
   if (!Object.keys(next.client).length) delete next.client;
   const values = {
     project: (has('project') ? oneLine(form.project, 'the project name') : '') || before.project,

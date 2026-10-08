@@ -25,8 +25,12 @@ function project(t, { client, extraMilestones = [] } = {}) {
   milestone('M-0002', 'Active', 'Online ordering', 'Customers choose a cake and pay by card.', ['T-0001', 'T-0002', 'T-0003', 'T-0004']);
   milestone('M-0003', 'Draft', 'coherent journey or demonstrable technical outcome', 'The bakery sees each day\'s orders.');
   for (const [id, status, title] of extraMilestones) milestone(id, status, title, `${title}.`);
-  const task = (id, status) => write(`docs/workflow/tasks/${id}.md`, `---\nrecord: task\nid: ${id}\ntitle: Secret task ${id} for bob-worker\nstatus: ${status}\nmilestone: M-0002\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nresume_condition: decision D-0007 on the card provider\n---\n# ${id}\n`);
+  // Plain task titles, except T-0002, whose title is a developer's and whose client_title is what the client reads.
+  const NAMES = { 'T-0001': 'title: Choose a cake', 'T-0002': 'title: Stripe PaymentIntent webhook for bob-worker\nclient_title: Pay by card', 'T-0003': 'title: Email the receipt', 'T-0004': 'title: Gift message\ndecisions: [D-0007]' };
+  const task = (id, status) => write(`docs/workflow/tasks/${id}.md`, `---\nrecord: task\nid: ${id}\n${NAMES[id]}\nstatus: ${status}\nmilestone: M-0002\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nresume_condition: decision D-0007 on the card provider\n---\n# ${id}\n`);
   task('T-0001', 'Done'); task('T-0002', 'Done'); task('T-0003', 'Active'); task('T-0004', 'Blocked');
+  write('docs/workflow/decisions/D-0007.md', '---\nrecord: decision\nid: D-0007\nquestion: Which gift wrap options do we offer?\ntype: decision\nowner: alice-owner\naffects: []\nrequired_before: implement\nstatus: Proposed\n---\n# D-0007\n');
+  write('docs/workflow/decisions/D-0008.md', '---\nrecord: decision\nid: D-0008\nquestion: Internal hosting provider choice\ntype: decision\nowner: alice-owner\naffects: [src/server]\nrequired_before: implement\nstatus: Open\n---\n# D-0008\n');
   return dir;
 }
 
@@ -74,7 +78,9 @@ test('the page carries no IDs, people, branches or reasons, and escapes record t
   const text = fs.readFileSync(path.join(dir, 'docs/workflow/milestones/M-0002.md'), 'utf8').replace('Online ordering', 'Online <script>alert(1)</script> ordering');
   fs.writeFileSync(path.join(dir, 'docs/workflow/milestones/M-0002.md'), text);
   const html = renderClient(evaluateClient({ source: dirSource(dir), updated: '2026-10-08T10:00:00Z' }));
-  for (const leak of ['M-000', 'T-000', 'D-0007', 'alice-owner', 'bob-worker', 'Secret task', 'card provider', 'Daily', 'bakery sees']) assert.ok(!html.includes(leak), `leaked ${leak}`);
+  for (const leak of ['M-000', 'T-000', 'D-000', 'alice-owner', 'bob-worker', 'Stripe', 'card provider', 'Internal hosting', 'src/server', 'Daily', 'bakery sees']) assert.ok(!html.includes(leak), `leaked ${leak}`);
+  assert.match(html, /<bdi>Pay by card<\/bdi>/, 'a task\'s client_title is what the client reads');
+  assert.match(html, /<p class="question"><bdi>Which gift wrap options do we offer\?<\/bdi><\/p><p class="meta">An answer is proposed and waiting for approval\. Holds up: <bdi>Gift message<\/bdi><\/p>/, 'a decision shows while it holds up a part on the page');
   assert.ok(!html.includes('<script>'), 'record text is escaped');
   assert.match(html, /Online &lt;script&gt;alert\(1\)&lt;\/script&gt; ordering/);
   assert.match(html, /<title>Layla&#39;s &lt;Bakery&gt;: progress<\/title>/);
@@ -99,7 +105,7 @@ test('wf status --client prints the page; the option is refused elsewhere; clien
     assert.equal(refused.status, 2, refused.stdout + refused.stderr);
     assert.match(refused.stderr, /--client is only for status/);
   }
-  for (const [client, message] of [[{ colour: 'red' }, /client may contain only title, exclude, language, theme/], [{ language: 'fr' }, /en or ar/],
+  for (const [client, message] of [[{ colour: 'red' }, /client may contain only title, exclude, language, detail, theme/], [{ language: 'fr' }, /en or ar/],
     [{ theme: { colors: { brand: 'red; } body { display: none' } } }, /hex colour/], [{ theme: { fonts: { text: 'X"; } * { color: red' } } }, /plain font name/],
     [{ theme: { logo: '../secret.svg' } }, /inside the repository/], [{ theme: { fonts: { files: [{ family: 'Zain', file: '/etc/passwd' }] } } }, /inside the repository/],
     [{ theme: { radius: 99 } }, /0 to 40/], [{ theme: { shadow: 'big' } }, /client.theme may contain only/], [{ exclude: ['T-0001'] }, /milestone IDs/], [{ title: 3 }, /client.title must be a string/]]) {
@@ -191,4 +197,42 @@ test('theme limits and edges: the 2 MB budget before reading, file types, a part
   assert.match(dark, /--page: #101418;/); assert.match(dark, /--text: #e4ebe8;/, 'colours a dark set leaves out come from the default dark palette');
   assert.equal(html.match(/>shop</g)?.length, 1, 'a band without a logo names the project once');
   assert.match(html, /<div class="band"><div class="inner"><p>shop<\/p>/);
+});
+
+// The page's depth (MAINT-0008 follow-up): what is being worked on now, what comes next and in what order, what waits on
+// a decision, and each stage's parts with their state, plan order and work added along the way.
+test('the page shows now, next, what waits on a decision, and each stage\'s parts in plan order', t => {
+  const dir = project(t, { extraMilestones: [['M-0004', 'Draft', 'Gift cards']] });
+  const write = (rel, body) => fs.writeFileSync(path.join(dir, rel), body);
+  write('docs/workflow/tasks/T-0005.md', '---\nrecord: task\nid: T-0005\ntitle: Order tracking page\nstatus: Ready\nmilestone: M-0002\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\n---\n# T\n');
+  write('docs/workflow/tasks/T-0006.md', '---\nrecord: task\nid: T-0006\ntitle: Design the gift card\nstatus: Draft\nmilestone: M-0004\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\n---\n# T\n');
+  const view = evaluateClient({ source: dirSource(dir) });
+  assert.deepEqual(view.now, { stage: 'Online ordering', review: false, items: ['Email the receipt'] });
+  assert.deepEqual(view.next, [{ title: 'Order tracking page', stage: 'Online ordering' }, { title: 'Design the gift card', stage: 'Gift cards' }]);
+  assert.equal(view.then, 'The bakery sees each day\'s orders.');
+  assert.deepEqual(view.overall, { done: 2, total: 6 }, 'parts across the stages still open');
+  const ordering = view.stages[1];
+  assert.deepEqual(ordering.items.map(i => [i.title, i.state, i.added]), [['Choose a cake', 'done', false], ['Pay by card', 'done', false], ['Email the receipt', 'active', false], ['Gift message', 'hold', false], ['Order tracking page', 'next', true]], 'the plan\'s order, then work added along the way');
+  assert.deepEqual(view.waiting.map(d => d.holds), [['Gift message']], 'a decision about nothing on the page is not shown');
+  const html = renderClient(view);
+  assert.match(html, /<h2 id="now">Now<\/h2>/); assert.match(html, /<h2 id="next">Next<\/h2>/); assert.match(html, /<h2 id="waiting">Waiting on a decision<\/h2>/);
+  assert.match(html, /Design the gift card<\/bdi> <span class="where">in <bdi>Gift cards<\/bdi>/);
+  assert.match(html, /<span class="tag">added along the way<\/span>/);
+  assert.match(html, /<details class="more"><summary>The 1 part of this stage<\/summary>/, 'other stages fold their parts away');
+  assert.match(html, /<summary>How a stage moves<\/summary>/);
+  // Narrower detail: parts without decisions, or stages only, as before.
+  const set = detail => { const c = JSON.parse(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8')); c.client = { detail }; fs.writeFileSync(path.join(dir, 'docs/workflow/config.json'), JSON.stringify(c)); };
+  set('parts');
+  const parts = renderClient(evaluateClient({ source: dirSource(dir) }));
+  assert.doesNotMatch(parts, /Waiting on a decision|gift wrap/); assert.match(parts, /Email the receipt/);
+  set('stages');
+  const stages = renderClient(evaluateClient({ source: dirSource(dir) }));
+  for (const absent of ['Email the receipt', 'id="now"', 'id="next"', 'gift wrap', 'class="items"']) assert.ok(!stages.includes(absent), absent);
+  assert.match(stages, /2 of 5 parts done, 1 on hold/);
+  assert.throws(() => { set('everything'); evaluateClient({ source: dirSource(dir) }); }, /stages, parts or full/);
+});
+
+test('the deeper page speaks Arabic too', t => {
+  const html = renderClient(evaluateClient({ source: dirSource(project(t, { client: { language: 'ar' } })) }));
+  for (const words of ['<h2 id="now">الآن</h2>', '<h2 id="next">التالي</h2>', '<h2 id="waiting">بانتظار قرار</h2>', 'هناك إجابة مقترحة بانتظار الموافقة. يؤخر:', '<span class="state">قيد التنفيذ</span>', '<summary>كيف تتقدم المرحلة</summary>', 'الأجزاء المنجزة في المراحل المفتوحة: 2 من 4.']) assert.ok(html.includes(words), words);
 });

@@ -159,6 +159,7 @@ function renderSettings() {
     </section>
     <section><h2>Your client's page</h2>
       <label class="field"><span>Title</span><input type="text" name="client_title" value="${esc(s.client.title)}" placeholder="${esc(s.project)}"></label>
+      <label class="field"><span>How much it shows</span><select name="client_detail"><option value="full"${s.client.detail === 'full' ? ' selected' : ''}>Everything: what's happening now, what's next, decisions waiting, every stage and its parts</option><option value="parts"${s.client.detail === 'parts' ? ' selected' : ''}>Stages and their parts, without decisions</option><option value="stages"${s.client.detail === 'stages' ? ' selected' : ''}>Stages only</option></select></label>
       <label class="field"><span>Language</span><select name="client_language"><option value="en"${s.client.language === 'en' ? ' selected' : ''}>English</option><option value="ar" lang="ar"${s.client.language === 'ar' ? ' selected' : ''}>العربية (Arabic)</option></select></label>
       ${s.milestones.length ? `<fieldset class="hide"><legend>Leave these stages off the page</legend>${s.milestones.map(m => `<label><input type="checkbox" name="exclude" value="${esc(m.id)}"${s.client.exclude.includes(m.id) ? ' checked' : ''}> ${esc(m.title)}</label>`).join('')}</fieldset>` : ''}
       <p class="hint">${s.client.themed ? 'It uses your client\'s design system.' : 'It uses the default design; the agent can give it your client\'s design system.'}</p>
@@ -180,7 +181,7 @@ function renderSettings() {
       const r = await api('/api/settings', {
         approval: { label: picked('label'), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
         project: value('project'), measure: value('measure'),
-        client: { title: value('client_title'), language: value('client_language'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
+        client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
       });
       state = await api('/api/state'); renderSettings();
       show('ok', `${r.changed.length ? `<p>Saved.</p>` : ''}${r.notes.map(n => `<p class="warn">${esc(n)}</p>`).join('')}<p>${esc(r.next)}</p>`);

@@ -116,17 +116,18 @@ test('the page sends only what it shows, and saving keeps the agent\'s settings 
   fs.writeFileSync(path.join(dir, 'docs/workflow/profile.md'), read(dir, 'docs/workflow/profile.md').replace('required_checks: []', 'required_checks: [test]'));
   fs.writeFileSync(path.join(dir, 'docs/workflow/milestones/M-0001.md'), '---\nrecord: milestone\nid: M-0001\noutcome: Customers order online.\nstatus: Draft\ncoordinator: agent\nowner: owner\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nauthority: owner\nlimits: x\ndemonstration: x\nstop_conditions: x\nrelease_authority: owner\ntasks: []\n---\n# M-0001 — Online ordering\n');
   // Exactly what the page sends.
-  saveSettings({ project: dir, form: { approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, project: 'shop', measure: 'A customer can order online.', client: { title: 'Shop', language: 'ar', exclude: ['M-0001'] } } });
+  saveSettings({ project: dir, form: { approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, project: 'shop', measure: 'A customer can order online.', client: { title: 'Shop', language: 'ar', detail: 'parts', exclude: ['M-0001'] } } });
   const after = loadConfig(dirSource(dir));
   assert.ok(after.paths.production.includes('**/*.dart'), 'code paths are the agent\'s, untouched');
   assert.deepEqual([after.trusted_branch, after.approval.derived_baselines], ['trunk', true], 'the trusted branch and derived baselines are kept');
-  assert.deepEqual(after.client, { title: 'Shop', language: 'ar', exclude: ['M-0001'], theme: { colors: { brand: '#174A7C' } } }, 'the theme is kept');
+  assert.deepEqual(after.client, { title: 'Shop', language: 'ar', detail: 'parts', exclude: ['M-0001'], theme: { colors: { brand: '#174A7C' } } }, 'the theme is kept');
+  assert.throws(() => saveSettings({ project: dir, form: { approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, client: { detail: 'everything' } } }), /how much the client page shows/);
   assert.match(read(dir, 'docs/workflow/profile.md'), /^required_checks: \[test\]$/m, 'required checks are the agent\'s, untouched');
   assert.throws(() => saveSettings({ project: dir, form: { approval: { label: 'manual', approver: 'owner', agent_identity: '' }, client: { language: 'fr' } } }), /language must be one of en, ar/);
   const { readState } = await import('../../adapters/setup.mjs');
   const state = await readState({ project: dir, workflowRepo: root });
   assert.deepEqual(state.settings.milestones, [{ id: 'M-0001', title: 'Online ordering' }], 'stages are named, not numbered');
-  assert.deepEqual([state.settings.client.language, state.settings.client.themed], ['ar', true]);
+  assert.deepEqual([state.settings.client.language, state.settings.client.detail, state.settings.client.themed], ['ar', 'parts', true]);
   assert.equal(state.suggested_checks, undefined, 'no inspection once adopted');
 });
 

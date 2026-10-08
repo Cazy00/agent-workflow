@@ -50,10 +50,10 @@ export function safeEnv(root, { bare = false, protocols = 'none' } = {}) {
   return env;
 }
 // run(...args) -> spawnSync result, from the real root with the safe environment.
-export function gitRunner(repo, { timeout = 30000, maxBuffer = 64 * 1024 * 1024, literal = true } = {}) {
+export function gitRunner(repo, { timeout = 30000, maxBuffer = 64 * 1024 * 1024, literal = true, encoding = 'utf8' } = {}) {
   const { root, bare } = repoLayout(repo);
   const env = safeEnv(root, { bare });
-  return (...args) => spawnSync('git', [...(literal ? ['--literal-pathspecs'] : []), '-C', root, ...args], { encoding: 'utf8', timeout, maxBuffer, env });
+  return (...args) => spawnSync('git', [...(literal ? ['--literal-pathspecs'] : []), '-C', root, ...args], { encoding, timeout, maxBuffer, env });
 }
 
 // A bare mirror of the repository's refs in a new temporary directory, built through Git's transport so every object

@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+// The setup page (MAINT-0009): adopt the workflow, or change its settings later, from a page in your browser.
+// It serves adapters/setup-page.html on 127.0.0.1 with a token for this run, writes only the project's workflow files,
+// and never commits, pushes or approves. See adapters/setup.mjs.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createSetupServer } from '../adapters/setup.mjs';
+
+const USAGE = `usage: wf-setup --project DIR [--port N] [--no-open]
+  Opens a local page to set up the workflow in DIR (when it is not adopted yet) or to change its settings.
+  Saving writes docs/workflow/ files only; commit them through a pull request. Press Ctrl+C or "Close setup" to stop.`;
+const fail = message => { console.error(`wf-setup: ${message}`); process.exit(2); };
+const o = { open: true };
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--no-open') o.open = false;
+  else if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+  else if (['--project', '--port'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) o[a.slice(2)] = argv[++i];
+  else fail(`invalid option or missing value: ${a}\n${USAGE}`);
+}
+if (!o.project) fail(`--project is required\n${USAGE}`);
+const project = path.resolve(o.project);
+if (!fs.existsSync(project) || !fs.statSync(project).isDirectory()) fail(`project directory not found: ${project}`);
+const port = o.port === undefined ? 0 : Number(o.port);
+if (!Number.isInteger(port) || port < 0 || port > 65535) fail('--port must be a port number');
+// The workflow checkout this script belongs to: the scaffold and templates come from it.
+const workflowRepo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+const { server, token } = createSetupServer({ project, workflowRepo, onQuit: () => { console.log('Setup closed.'); server.close(); process.exit(0); } });
+server.on('error', e => fail(e.message));
+server.listen(port, '127.0.0.1', () => {
+  const url = `http://127.0.0.1:${server.address().port}/?t=${token}`;
+  console.log(`Setup page for ${project}:\n  ${url}\nKeep this address to yourself; press Ctrl+C to stop.`);
+  if (!o.open) return;
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => console.log('Open the address above in your browser.')).unref();
+});

@@ -20,6 +20,7 @@ import { evaluateCloseout } from './lib/closeout.js';
 import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
+import { evaluateClient, renderClient } from './lib/client.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'report', 'runtime', 'prepare-evidence', 'delivery-check', 'review-packet'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'tasks', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'operations-config', 'state', 'action', 'report-id', 'raw-log', 'environment', 'check-name', 'expires-at', 'delivery-session', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'pull-request', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
@@ -36,6 +37,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   report --action deliver|status --report-id UUID (same external config/state)
   prepare-evidence --raw-log FILE --candidate SHA --repository OWNER/REPO --environment NAME --check-name NAME --expires-at ISO
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
+    status --client [--candidate REV]: the same records as one plain-language HTML page for a client (no IDs, people or reasons)
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: optional --delivery-evidence EXTERNAL_JSON and --pull-request NUMBER for an approved routine-delegation setup
@@ -54,6 +56,7 @@ async function main() {
     const a = argv[i];
     if (a === '--json') { o.json = true; continue; }
     if (a === '--unsandboxed') { o.unsandboxed = true; continue; }
+    if (a === '--client') { o.client = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -66,6 +69,7 @@ async function main() {
     else throw new WfError(`unexpected argument: ${a}`);
   }
   if ((o['delivery-evidence'] || o['pull-request']) && cmd !== 'ci') throw new WfError('--delivery-evidence and --pull-request are only for ci');
+  if (o.client && (cmd !== 'status' || o.json || o['pull-requests'] || o['trust-key'])) throw new WfError('--client is only for status, alone: it prints the client page as HTML');
   if (o.tasks && (!['ci', 'review-packet'].includes(cmd) || o.task)) throw new WfError('--tasks is only for ci/review-packet and cannot be combined with --task');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
@@ -221,6 +225,12 @@ async function main() {
     baseTrust = createTrust({ publicKey: fs.readFileSync(keyPath, 'utf8'), repository: o.repository, envelopes, unsigned });
     trust = withDerivedBaselines(baseTrust, repo);
     if (config.repository !== o.repository) throw new WfError('repository identity differs from approved project config');
+  }
+  // The client page (MAINT-0008): plain-language progress as one HTML file, from the candidate's records.
+  if (cmd === 'status' && o.client) {
+    const date = candidate.kind === 'git' ? gitRunner(repo)('show', '-s', '--no-show-signature', '--format=%cI', candidate.name, '--') : null;
+    process.stdout.write(renderClient(evaluateClient({ source: candidate, updated: date?.status === 0 ? date.stdout.trim() : new Date().toISOString() })));
+    return 0;
   }
   // The derived view grants nothing. With the trust options it also reports a trusted branch that moved past approval.
   if (cmd === 'status') {

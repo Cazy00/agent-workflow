@@ -36,6 +36,46 @@ const ENUMS = {
 const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
 export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|integrate|accept|release)$/;
 
+// The client page's settings (`wf status --client`). A theme's values reach CSS, so each is checked to be only what it
+// says: a hex colour, a plain font name, a repository path, a number. Paths are read through the source, which refuses
+// anything outside the repository.
+const plainObject = v => v && typeof v === 'object' && !Array.isArray(v);
+const only = (value, keys, where) => { if (!plainObject(value) || Object.keys(value).some(k => !keys.includes(k))) throw new Error(`${where} may contain only ${keys.join(', ')}`); };
+const COLOR_KEYS = ['page', 'surface', 'text', 'muted', 'line', 'done', 'active', 'review', 'planned', 'brand', 'on_brand'];
+function colors(value, where) {
+  only(value, COLOR_KEYS, where);
+  for (const [k, v] of Object.entries(value)) if (typeof v !== 'string' || !/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error(`${where}.${k} must be a hex colour like #174A7C`);
+}
+const FONT = /^[A-Za-z0-9][A-Za-z0-9 \-]{0,59}$/;
+const repoPath = (v, where) => { if (typeof v !== 'string' || !v || v.startsWith('/') || v.split('/').some(p => p === '..' || p === '.' || p === '') || /[\\\0]/.test(v)) throw new Error(`${where} must be a path inside the repository`); };
+function validateClientConfig(c) {
+  only(c, ['title', 'exclude', 'language', 'detail', 'theme'], 'client');
+  if (c.detail !== undefined && !['stages', 'parts', 'full'].includes(c.detail)) throw new Error('client.detail must be stages, parts or full');
+  if (c.title !== undefined && typeof c.title !== 'string') throw new Error('client.title must be a string');
+  if (c.exclude !== undefined && (!Array.isArray(c.exclude) || c.exclude.some(id => !/^M-\d{4}$/.test(id)))) throw new Error('client.exclude must list milestone IDs like M-0001');
+  if (c.language !== undefined && !['en', 'ar'].includes(c.language)) throw new Error('client.language must be en or ar');
+  if (c.theme === undefined) return;
+  only(c.theme, ['colors', 'dark', 'fonts', 'logo', 'radius'], 'client.theme');
+  const t = c.theme;
+  if (t.colors !== undefined) colors(t.colors, 'client.theme.colors');
+  if (t.dark !== undefined && t.dark !== false) colors(t.dark, 'client.theme.dark');
+  if (t.fonts !== undefined) {
+    only(t.fonts, ['text', 'display', 'files'], 'client.theme.fonts');
+    for (const k of ['text', 'display']) if (t.fonts[k] !== undefined && (typeof t.fonts[k] !== 'string' || !FONT.test(t.fonts[k]))) throw new Error(`client.theme.fonts.${k} must be a plain font name`);
+    if (t.fonts.files !== undefined) {
+      if (!Array.isArray(t.fonts.files) || t.fonts.files.length > 8) throw new Error('client.theme.fonts.files must list at most 8 font files');
+      t.fonts.files.forEach((f, i) => {
+        only(f, ['family', 'weight', 'file'], `client.theme.fonts.files[${i}]`);
+        if (typeof f.family !== 'string' || !FONT.test(f.family)) throw new Error(`client.theme.fonts.files[${i}].family must be a plain font name`);
+        if (f.weight !== undefined && (!Number.isInteger(f.weight) || f.weight < 100 || f.weight > 900)) throw new Error(`client.theme.fonts.files[${i}].weight must be 100 to 900`);
+        repoPath(f.file, `client.theme.fonts.files[${i}].file`);
+      });
+    }
+  }
+  if (t.logo !== undefined) repoPath(t.logo, 'client.theme.logo');
+  if (t.radius !== undefined && (typeof t.radius !== 'number' || t.radius < 0 || t.radius > 40)) throw new Error('client.theme.radius must be 0 to 40');
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
@@ -45,6 +85,7 @@ export function loadConfig(source) {
     const tests = config.paths?.acceptance_tests;
     if (tests !== undefined && (!Array.isArray(tests) || tests.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('paths.acceptance_tests must be an array of glob strings');
     validateAttestConfig(config.attest);
+    if (config.client !== undefined) validateClientConfig(config.client);
     if (config.delegation !== undefined) {
       const d = config.delegation;
       if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||

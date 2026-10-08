@@ -27,7 +27,7 @@ function setup(t, { eligible = true, enabled = true, blocked = false } = {}) {
   write('src/ui/StatusBadge.js', 'export const label = "Ready";\n');
   git('add', '.'); git('commit', '-qm', 'T-0001 candidate'); const candidate = git('rev-parse', 'HEAD');
   const checks = { revision: candidate, environment: 'isolated fixture', checks: [{ name: 'unit', result: 'passed', reference: 'https://github.com/fixture/project/actions/runs/1' }] };
-  const evidence = { schema: 'agent-workflow/delivery-evidence@1', candidate, assurance: 'agent-attested', tasks: ['T-0001'], verification: checks, integration: checks, review: { reviewer: 'reviewer', implementer: 'agent', separate_context: true, context: { provider: 'fixture', context_id: 'separate-1', inherited_context: false, candidate, launch_evidence: 'https://github.com/fixture/project/pull/1#issuecomment-1' }, coverage: ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'], findings: [], tasks: ['T-0001'], report: 'https://github.com/fixture/project/pull/1#issuecomment-2' } };
+  const evidence = { schema: 'agent-workflow/delivery-evidence@1', candidate, assurance: 'agent-attested', tasks: ['T-0001'], verification: { ...checks, execution: { revision: candidate, tests: [] } }, integration: checks, review: { reviewer: 'reviewer', implementer: 'agent', separate_context: true, context: { provider: 'fixture', context_id: 'separate-1', inherited_context: false, candidate, launch_evidence: 'https://github.com/fixture/project/pull/1#issuecomment-1' }, coverage: ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'], findings: [], tasks: ['T-0001'], report: 'https://github.com/fixture/project/pull/1#issuecomment-2' } };
   const evidenceFile = path.join(root, 'evidence.json');
   const saveEvidence = value => fs.writeFileSync(evidenceFile, JSON.stringify(value)); saveEvidence(evidence);
   const stateFile = path.join(root, 'github.json');
@@ -63,6 +63,8 @@ test('GitHub worker comment supplies data, while forged owner fields or inherite
 test('an ineligible candidate needs actual exact-head owner approval; worker approval cannot substitute', t => {
   const p = setup(t, { eligible: false });
   assert.equal(p.run(['--delivery-evidence', p.evidenceFile]).status, 1);
+  // The quality gate still needs the agent's evidence when the owner approves (MAINT-0010): it comes from the comment.
+  p.state.comments = [{ id: 3, user: { login: 'agent' }, body: '<!-- agent-workflow:delivery-evidence@1 -->\n' + JSON.stringify(p.evidence) }];
   p.state.reviews = [{ id: 10, user: { login: 'agent' }, state: 'APPROVED', commit_id: p.candidate, submitted_at: '2026-09-30T00:00:00Z' }]; p.saveGithub();
   assert.equal(p.run(['--pull-request', '1']).status, 1);
   p.state.reviews[0].user.login = 'owner'; p.saveGithub();
@@ -81,7 +83,8 @@ test('a post-review commit invalidates external evidence and authenticated appro
 test('candidate opt-in has no effect on a baseline where delegation is off', t => {
   const p = setup(t, { enabled: false });
   p.edit('docs/workflow/config.json', x => { const c = JSON.parse(x); c.delegation.routine.enabled = true; return JSON.stringify(c); }); p.git('add', '.'); p.git('commit', '-qm', 'T-0001 candidate opt-in');
-  const r = p.run();
+  p.saveEvidence(JSON.parse(JSON.stringify(p.evidence).replaceAll(p.candidate, p.git('rev-parse', 'HEAD'))));
+  const r = p.run(['--delivery-evidence', p.evidenceFile]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(JSON.parse(r.stdout).delegation, undefined);
   assert.match(r.stdout, /workflow-change.*code-owner review/, 'still needs existing protected approval');

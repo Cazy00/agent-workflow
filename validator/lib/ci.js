@@ -7,7 +7,8 @@ import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance } from './acceptance.js';
-import { evaluateDelegation } from './delegation.js';
+import { evaluateDelegation, evidenceErrors } from './delegation.js';
+import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
@@ -164,6 +165,28 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     else assigned.get(owners[0]).push(p);
   }
   if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task/--tasks)'); fail = true; }
+  // The pull-request modes (enforced, owner-merge) hold the quality gates as manual mode does (MAINT-0010): a production
+  // change needs the agent's delivery evidence for this exact candidate, checked like a receipt: the required checks
+  // passed, every mapped test ran once and passed, and a review in a separate context covered every area with each
+  // finding resolved or accepted with a resolution. It is the agent's own report: its completeness and revision are
+  // checked, not its truth; the owner's merge or code-owner review still carries the approval.
+  const prMode = trust?.mode === 'enforced';
+  let attested = null;
+  const covered = prMode && selected.length > 0 && (production.length > 0 || batch);
+  if (covered) {
+    const owners = [...new Set(selected.map(id => candidateRecords.tasks.get(id)?.data?.owner))];
+    const requiredChecks = list(baselineRecords.profile?.data?.required_checks);
+    if (deliveryEvidence == null) {
+      findings.push('delivery evidence for this candidate is missing: post it in the pull request description (procedures/execute.md *Checkpoints and task records*); the `wf ci` check reruns when the description is edited');
+      fail = true;
+    } else {
+      const errors = evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, allowAccepted: true });
+      for (const e of errors) findings.push(`delivery evidence: ${e}`);
+      if (errors.length) fail = true; else attested = deliveryEvidence;
+    }
+  }
+  // What the evidence covers is no longer referred to the pull request review: it is checked, or its absence fails.
+  const receiptless = item => covered && /^(?:(?:verification|review|integration): no receipt|execution: no verification receipt)/.test(item);
   for (const id of selected) {
     const paths = assigned.get(id);
     if (!production.length && !batch) continue;
@@ -186,14 +209,15 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
     const t = candidateRecords.tasks.get(id)?.data ?? {};
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(baselineRecords.profile?.data?.required_checks), trust, stage: 'integrate' });
     for (const error of lifecycle.errors) { findings.push(error); fail = true; }
-    for (const item of lifecycle.unverified ?? []) findings.push(`unverified: ${item}`);
+    for (const item of lifecycle.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
+  if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
   if (selected.length && (production.length || batch)) {
-    const execution = trust?.claim('verification', candidate.name)?.execution;
+    const execution = trust?.claim('verification', candidate.name)?.execution ?? attested?.verification?.execution;
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
-    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: trust?.mode === 'enforced' && trust.label });
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
-    for (const item of acceptance.unverified ?? []) findings.push(`unverified: ${item}`);
+    for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
   const delegation = evaluateDelegation({ config,
     baselineTasks: [...baselineRecords.tasks.values()].map(r => r.data), tasks: [...candidateRecords.tasks.values()].map(r => r.data),
@@ -226,9 +250,30 @@ export function evaluateCi({ baseline, candidate = baseline, task, tasks, change
       if (missing.length) { findings.push(`acceptance tests ${missing.join(', ')} need the owner's governing-change receipt listing them, at this candidate or at an earlier revision in its history where they already had this content (POLICY § 9)`); fail = true; }
     }
   }
+  // Owner-merge: who merges this pull request. The baseline's checkpoint decides whether the agent may merge at all;
+  // anything that changes what the owner approved (the plan, requirements, acceptance tests, the workflow), a review
+  // finding accepted rather than fixed, or a task in a milestone still waiting for an earlier acceptance needs the owner.
+  let merge = null;
+  const ownerReasons = [];
+  if (trust?.label === 'owner-merge') {
+    const checkpoint = checkpointOf(config);
+    const of = category => classes.filter(c => c.category === category).map(c => c.path);
+    if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
+    if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
+    if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
+    if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
+    const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted').map(f => f.id);
+    if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.join(', ')}`);
+    const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
+    for (const id of selected) {
+      const m = candidateRecords.tasks.get(id)?.data?.milestone;
+      if (hold?.held.has(m)) ownerReasons.push(`${id} belongs to ${m}, which waits for the owner's acceptance of ${hold.first}`);
+    }
+    merge = ownerReasons.length ? 'owner' : 'agent';
+  }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(delegation.enabled ? { delegation } : {}), ...(batch ? { tasks: selected, readinessByTask } : {}), records: records.counts };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons } : {}), ...(delegation.enabled ? { delegation } : {}), ...(batch ? { tasks: selected, readinessByTask } : {}), records: records.counts };
 }

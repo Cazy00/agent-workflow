@@ -298,20 +298,13 @@ Read-only verification or research can produce useful progress without changing 
 
 ## 7. Separate repository ownership, worker access, and approval
 
-### Account arrangement for Monta’s projects
-
-| Purpose | Account reference |
-|---|---|
-| Personal owner account | `oman.m123456@gmail.com` |
-| Development worker account | `almuntaser.dev@gmail.com` |
+### Account arrangement
 
 The repository must be created, initialised, and retained under the owner’s **personal GitHub account**.
 
-The worker account receives the access needed to contribute. Agents do not own the repository.
+When agents have their own worker account, it receives the access needed to contribute. Agents do not own the repository.
 
-Verify the actual GitHub usernames during setup. Email addresses do not establish authenticated identity.
-
-The owner reports that the computer is connected to the main account; worker authentication still requires configuration and verification.
+Verify the actual GitHub usernames during setup and record them in the profile. Email addresses do not establish authenticated identity.
 
 ### One account
 
@@ -390,7 +383,7 @@ In manual mode the owner may choose two economies that keep every stage and prot
 
 In manual mode the owner's machine can also produce the technical evidence itself (`wf attest`): it runs the approved checks on a fresh checkout of the exact candidate, confined so that candidate code cannot reach the signing key, and writes the verification and integration evidence the owner signs. The signature then records what the owner's own run observed, not an agent's report of its run. The owner's attention goes to intent (requirements, acceptance tests, protected changes) and outcomes (acceptance and release); the machines check the steps between.
 
-A single owner may also choose **owner-merge** mode: the owner's own review and merge of each pull request counts as approval, without receipts or verified protections. It suits one account or a repository without rulesets. The gates still run and list what the owner must check before merging, but nothing establishes that the owner, not an agent, merged; the setup record states this, routine delegation is unavailable, and no one may describe the mode as protected or equivalent to enforcement. Agents never merge, approve or enable automatic merging in it.
+A single owner may also choose **owner-merge** mode: the owner's own merge counts as approval, without receipts or verified protections. It suits one account or a repository without rulesets. The gates still run, and a production change still needs the agent's evidence for its exact revision (§ 9), but nothing establishes that the owner, not an agent, merged; the setup record states this, the routine lane above is unavailable, and no one may describe the mode as protected or equivalent to enforcement. The owner also chooses where the agent stops: at every change, at each milestone, or when the authorised plan is done. Under the last two, milestone authorisation delegates the merge of each task's pull request to the agent once the gates pass, and with the milestone checkpoint the next milestone waits for the owner's acceptance. A change to requirements, decisions, acceptance tests or workflow controls, or one whose review findings were accepted rather than fixed, still waits for the owner's merge. Agents never approve or enable automatic merging in it.
 
 Check repository-plan support during setup. GitHub’s documented availability differs for public and private repositories. If required enforcement is unavailable, record the limitation and use an explicit alternative; do not claim equivalent protection. [GitHub availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 
@@ -567,7 +560,7 @@ Review covers scope, correctness, maintainability, security, regression risk, an
 
 Independence is of context and, where available, of model. A reviewer built on the implementer's model shares its blind spots; prefer one from a different model family, or give each reviewer a distinct focus such as security or conformance to the specification. A blocking correctness or security finding comes with a failing test, an exploit or exact reproduction steps where one can be written; one that cannot says so and is weighed as judgement.
 
-Collect review results through the review procedure. An implementer-written `reviewed: true` field cannot substitute for it.
+Collect review results through the review procedure. An implementer-written `reviewed: true` field cannot substitute for it. Where the pull request carries approval (enforced and owner-merge modes), the agent posts its evidence for the exact revision there (checks passed, tests run, the separate-context review and the disposition of each finding) and the integration gate fails without it; it is the agent's report, checked for completeness, not proof.
 
 ### Integration enforcement
 
@@ -690,7 +683,7 @@ The initial setup should establish:
 4. Essential templates and procedures.
 5. Trusted gate execution, and branch protections where the repository's plan supports them.
 6. Acceptance traceability appropriate to the project.
-7. Required fixtures.
+7. Required fixtures: the adopted release's tests run them; the project checks its records and each agent tool's instruction discovery.
 8. Before approval relies on protections (enforced mode): the protections read back from GitHub, or, as stronger evidence, a real approval-path test.
 9. Assisted execution, or a runner if unattended operation is included in the promised capability.
 

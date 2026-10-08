@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig, validateRecords } from '../lib/index.js';
+import { evaluateStatus } from '../lib/status.js';
 
 // bin/wf-adopt is the model-free scaffold from procedures/setup.md step 3. These tests use this
 // checkout as the workflow source, so they need a Git checkout and skip without one.
@@ -35,8 +36,8 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.deepEqual(validateRecords(source, 'docs/workflow').errors, []);
   const profile = fs.readFileSync(path.join(dir, 'docs/workflow/profile.md'), 'utf8');
   assert.match(profile, /^project: project$/m);
-  assert.match(profile, /^approval_label: manual$/m);
-  assert.equal(config.approval.label, 'manual');
+  assert.match(profile, /^approval_label: owner-merge$/m);
+  assert.deepEqual([config.approval.label, config.approval.checkpoint], ['owner-merge', 'milestone'], 'one owner: owner-merge with a milestone checkpoint by default (MAINT-0010)');
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/claude/agents/independent-reviewer.md']).status === 0) {
     assert.match(fs.readFileSync(path.join(dir, '.claude/agents/independent-reviewer.md'), 'utf8'), /^name: independent-reviewer$/m);
   }
@@ -46,22 +47,27 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Owner steps/); assert.match(setup, /Existing repository/); assert.ok(setup.includes(rev));
   assert.match(setup, /7\. \*\*Define the checks and acceptance tests\.\*\* The profile's `required_checks` \(readiness fails while it is empty\)/);
-  // MAINT-0007: the GitHub steps are optional and scripted, and the checklist follows the arrangement: one account and
-  // manual approval here, so no worker step, no enforced switch, a key made by wf-sign and a ruleset that only stops
-  // the trusted branch being deleted or rewritten (the owner's closeout fast-forward must still push).
+  // MAINT-0007 and MAINT-0010: the checklist follows the arrangement, and lists as required only what the owner must do
+  // before the agent starts: with one account and owner-merge, nothing. The GitHub steps are optional and scripted.
   assert.match(setup, /Arrangement: one GitHub account \(`owner`\)/);
+  assert.match(setup, /Checkpoint `milestone`: the agent merges each task's pull request once the `wf ci` check, every required check and the independent review pass, and stops when a milestone is finished/);
+  assert.match(setup, /^Nothing is required of you before the agent starts\.$/m);
   assert.doesNotMatch(setup, /^- \[ \] 2\./m, 'one account has no worker to verify');
+  assert.doesNotMatch(setup, /^- \[ \] 6\./m, 'owner-merge needs no key and no "nothing to set up" step');
   assert.doesNotMatch(setup, /^- \[ \] 9\./m, 'enforced mode needs a worker account');
   assert.doesNotMatch(setup, /^- \[ \] 10\./m, 'central reporting is not a default step');
-  assert.match(setup, /^- \[ \] 5\. \*\*Protect the main branch \(optional\)\.\*\* Only on a public repository or a GitHub Pro or Team plan\. .*wf-protect --project \. --apply.* never deleted or rewritten/m);
-  assert.match(setup, /^- \[ \] 6\. \*\*Make your signing key\.\*\* .*bin\/wf-sign --keygen DIR.* passphrase/m);
-  assert.match(setup, /^- \[ \] 11\. \*\*Watch the first milestone\.\*\* It is the pilot/m);
-  assert.match(setup, /usage per step: scaffolded \d{4}-\d{2}-\d{2}; lane existing; one account; approval manual/);
+  assert.doesNotMatch(setup, /^- \[ \] 11\./m, 'the pilot is the first milestone, not a box to tick');
+  assert.match(setup, /The first milestone is the pilot: when the agent presents it, try it/);
+  assert.match(setup, /^### Optional\n\n- \[ \] 5\. \*\*Protect the main branch\.\*\* Only on a public repository or a GitHub Pro or Team plan\. .*wf-protect --project \. --apply.* ruleset requiring pull requests, with the `wf ci` check/m);
+  assert.match(setup, /usage per step: scaffolded \d{4}-\d{2}-\d{2}; lane existing; one account; approval owner-merge, checkpoint milestone/);
+  assert.match(setup, /^## Agent steps \(1, 4 and 7 in one session, then 8 in a fresh context; post progress here\)$/m);
+  assert.deepEqual(evaluateStatus({ baseline: source, candidate: source }).setup_open, { owner: 0, agent: 4 }, 'nothing waits on the owner');
   assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '* @owner\n/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner gets the records carve-out');
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) assert.match(fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8'), /name: wf ci/);
   assert.deepEqual([config.approval.approver, config.approval.agent_identity], ['owner', '']);
   const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8');
-  assert.match(agents, /Never turn on auto-merge \(it could merge before the owner signs\), and never approve, merge, sign or bypass a rule yourself/, 'manual mode moves the trusted branch only by closeout');
+  assert.match(agents, /A production change needs your delivery evidence in the pull request description/);
+  assert.match(agents, /Merge a pull request yourself only when `wf ci` reports `merge: agent` and every required check has passed; anything else waits for the owner's merge\. Never turn on auto-merge, and never approve, sign or bypass a rule yourself/);
   assert.match(agents, /you work with the owner's own GitHub account, so GitHub will let you do these things: the rule is yours to keep/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /session \| status \| brief \| closeout`/);
   // MAINT-0006: the scaffold's CLAUDE.md carries the section in templates/claude/compact-instructions.md.
@@ -72,7 +78,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-status.yml']).status === 0) {
     const workflow = fs.readFileSync(path.join(dir, '.github/workflows/wf-status.yml'), 'utf8');
     assert.match(workflow, /branches: \[main\]/); assert.match(workflow, /refs\/heads\/main'/); assert.doesNotMatch(workflow, /__TRUSTED_BRANCH__/);
-    assert.match(setup, /\*\*Pin the status issue \(optional\)\.\*\* Pin the \*Project status\* issue/);
+    assert.match(setup, /\*\*Pin the status issue\.\*\* Pin the \*Project status\* issue/);
   }
   assert.ok(fs.statSync(path.join(dir, 'scripts/wf')).mode & 0o111, 'launcher is executable');
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.cache\/$/m);
@@ -114,10 +120,10 @@ test('wf-adopt never overwrites an existing file and refuses a second adoption',
   assert.equal(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8'), before);
 });
 
-test('wf-adopt scaffolds manual approval by default, owner-merge on request, and never enforced', t => {
+test('wf-adopt scaffolds owner-merge by default for one owner, manual on request, and never enforced', t => {
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
   const dir = project(t);
-  const r = adopt(dir, '--json', '--worker', 'agent-bot');
+  const r = adopt(dir, '--json', '--worker', 'agent-bot', '--approval', 'manual');
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const config = loadConfig(dirSource(dir));
   assert.deepEqual([config.approval.label, config.approval.mechanism, config.approval.approver, config.approval.agent_identity], ['manual', 'manual-signed-receipts', 'owner', 'agent-bot']);
@@ -127,33 +133,40 @@ test('wf-adopt scaffolds manual approval by default, owner-merge on request, and
   const setup = fs.readFileSync(path.join(dir, 'docs/workflow/setup.md'), 'utf8');
   assert.match(setup, /Arrangement: owner `owner`, worker `agent-bot`/);
   assert.match(setup, /^- \[ \] 2\. \*\*Check the two GitHub accounts\.\*\* Verify the owner and worker GitHub usernames/m);
-  assert.match(setup, /^- \[ \] 9\. \*\*Switch to enforced mode \(optional\)\.\*\* Where.*--target enforced --apply.*switch .*enforced.* in one code-owner-reviewed pull request/m);
+  assert.match(setup, /^- \[ \] 6\. \*\*Make your signing key\.\*\* .*bin\/wf-sign --keygen DIR.* passphrase/m);
+  assert.match(setup, /### Optional[\s\S]*^- \[ \] 9\. \*\*Switch to enforced mode\.\*\* Where.*--target enforced --apply.*switch .*enforced.* in one code-owner-reviewed pull request/m);
+  assert.match(setup, /### Optional[\s\S]*never deleted or rewritten/, 'a manual-mode ruleset only stops the trusted branch being deleted or rewritten');
+  assert.equal(config.approval.checkpoint, undefined, 'only owner-merge has a checkpoint');
+  assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /Never turn on auto-merge \(it could merge before the owner signs\), and never approve, merge, sign or bypass a rule yourself/, 'manual mode moves the trusted branch only by closeout');
   const other = project(t);
   const enforced = adopt(other, '--approval', 'enforced');
   assert.equal(enforced.status, 2, 'enforced is never scaffolded');
   assert.match(enforced.stderr, /manual or owner-merge/);
   assert.ok(!fs.existsSync(path.join(other, 'docs/workflow')));
-  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/], [['--approval', 'owner-merge', '--owner', 'alice', '--owner', 'bob'], /owner-merge is for one owner/]]) {
+  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/], [['--approval', 'owner-merge', '--owner', 'alice', '--owner', 'bob'], /owner-merge is for one owner/], [['--approval', 'manual', '--checkpoint', 'milestone'], /--checkpoint is for owner-merge/], [['--checkpoint', 'sometimes'], /milestone, change or plan/]]) {
     const refused = project(t);
     const result = adopt(refused, ...args);
     assert.equal(result.status, 2, result.stdout + result.stderr);
     assert.match(result.stderr, message);
     assert.ok(!fs.existsSync(path.join(refused, 'docs/workflow')), 'nothing is written');
   }
-  // Owner-merge: one account, the owner's own merge as the approval, stated as a limit, and no auto-merge.
+  // Owner-merge: the owner's own merge as the approval, stated as a limit, a checkpoint, and no auto-merge.
   const merge = project(t);
-  assert.equal(adopt(merge, '--approval', 'owner-merge').status, 0);
+  assert.equal(adopt(merge, '--checkpoint', 'change').status, 0);
   const mergeConfig = loadConfig(dirSource(merge));
-  assert.deepEqual([mergeConfig.approval.label, mergeConfig.approval.mechanism], ['owner-merge', 'owner-merge']);
+  assert.deepEqual([mergeConfig.approval.label, mergeConfig.approval.mechanism, mergeConfig.approval.checkpoint], ['owner-merge', 'owner-merge', 'change']);
   assert.match(fs.readFileSync(path.join(merge, 'docs/workflow/profile.md'), 'utf8'), /^approval_label: owner-merge$/m);
   const mergeSetup = fs.readFileSync(path.join(merge, 'docs/workflow/setup.md'), 'utf8');
-  assert.match(mergeSetup, /^- \[ \] 6\. \*\*Nothing to set up for approval\.\*\* Your own review and merge of each pull request is the approval/m);
-  assert.match(mergeSetup, /Approval: owner-merge, chosen by the owner: .*No protection shows that the owner, not the agent, merged/);
-  assert.match(mergeSetup, /ruleset requiring pull requests, with the `wf ci` check/);
+  assert.match(mergeSetup, /Checkpoint `change`: you review and merge every pull request/);
+  assert.match(mergeSetup, /Approval: owner-merge with checkpoint change, chosen by the owner: .*No protection shows that the owner, not the agent, merged/);
   const mergeAgents = fs.readFileSync(path.join(merge, 'AGENTS.md'), 'utf8');
-  assert.match(mergeAgents, /never turn on auto-merge, and never approve, merge, sign or bypass a rule yourself/);
+  assert.match(mergeAgents, /Never turn on auto-merge, and never approve, sign or bypass a rule yourself/);
   assert.doesNotMatch(mergeAgents, /turn it on as you open/);
   assert.deepEqual(validateRecords(dirSource(merge), 'docs/workflow').errors, []);
+  const plan = project(t);
+  assert.equal(adopt(plan, '--checkpoint', 'plan').status, 0);
+  assert.equal(loadConfig(dirSource(plan)).approval.checkpoint, 'plan');
+  assert.match(fs.readFileSync(path.join(plan, 'docs/workflow/setup.md'), 'utf8'), /works through every milestone you have authorised without stopping/);
 });
 
 test('wf next works on a scaffold that is not committed yet, and says to commit it', t => {
@@ -169,7 +182,7 @@ test('wf next works on a scaffold that is not committed yet, and says to commit 
     const next = spawnSync(process.execPath, [path.join(root, 'validator/cli.js'), 'next', '--repo', dir], { encoding: 'utf8' });
     assert.equal(next.status, 0, next.stdout + next.stderr);
     assert.match(next.stdout, /^Note: the adoption is not on main yet, so this reads the working tree: commit the scaffold/);
-    assert.match(next.stdout, /Next: Do the next unchecked agent step in the setup record/);
+    assert.match(next.stdout, /Next: Do the unchecked agent setup steps: 1, 4 and 7 together in this session, then step 8 in a fresh context/);
   }
 });
 

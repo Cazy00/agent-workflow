@@ -14,6 +14,8 @@ setup_budget_days: 2
 ---
 # Project profile
 
+At setup, fill *Purpose*, *Owner's words*, *Scope*, *Starting position*, *Technical context* (what the owner and the manifests say), *Authority* and *Delivery*. Leave the rest under *Unknowns*, each with the stage that first needs it.
+
 ## Purpose
 Users, problems, desired outcomes, measures of success. One measure: the single sentence a non-technical person can check to know the project is working, with the command or observation that checks it; also recorded in `measure:` above and shown first by `wf status`.
 
@@ -57,6 +59,6 @@ For app verification: startup commands, test URL/environment, supported authenti
 ## Workflow configuration
 Adopted version and revision · project settings · approved deviations · setup budget · optional tooling.
 
-For central reporting, record the owner-directed destination `Cazy00/agent-workflow`, public fixed-catalog data categories (including worker activity/timing), expected worker and actual tested issue route, approved tool versions, external operations configuration and private runtime directory. Store references, never tokens. State whether central issues replace local feedback bodies; handoffs retain UUID/URL references. Identify the authorised collector, actual test reporter, cost limits and optional feedback cadence. See `procedures/operations.md`.
+Central reporting, if the owner adopts it: what `procedures/operations.md` asks the profile to record.
 
 ## Unknowns

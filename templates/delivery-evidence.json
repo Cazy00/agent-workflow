@@ -8,7 +8,13 @@
     "environment": "<where the implementer checks ran: runner, OS, runtime versions>",
     "checks": [
       { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed>", "reference": "<https link to the CI run or log for this commit>" }
-    ]
+    ],
+    "execution": {
+      "revision": "<the same full commit hash>",
+      "tests": [
+        { "file": "<each test mapped in tests/acceptance-map.json>", "name": "<its name, as mapped>", "status": "<passed | failed, as observed>" }
+      ]
+    }
   },
   "integration": {
     "revision": "<the same full commit hash, assembled with the current trusted branch>",

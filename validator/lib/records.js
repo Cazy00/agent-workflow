@@ -3,6 +3,7 @@ import { parseFrontMatter } from './frontmatter.js';
 import { planningEnforcement } from './planning.js';
 import { validateAcceptanceFiles } from './acceptance-files.js';
 import { validateAttestConfig } from './attest.js';
+import { CHECKPOINTS } from './checkpoint.js';
 
 export class WfError extends Error {}
 
@@ -86,6 +87,11 @@ export function loadConfig(source) {
     if (tests !== undefined && (!Array.isArray(tests) || tests.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('paths.acceptance_tests must be an array of glob strings');
     validateAttestConfig(config.attest);
     if (config.client !== undefined) validateClientConfig(config.client);
+    const checkpoint = config.approval?.checkpoint;
+    if (checkpoint !== undefined) {
+      if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone or plan');
+      if (config.approval.label !== 'owner-merge') throw new Error('approval.checkpoint applies only to owner-merge approval; manual and enforced modes keep their own approval route');
+    }
     if (config.delegation !== undefined) {
       const d = config.delegation;
       if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||

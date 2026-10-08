@@ -39,6 +39,21 @@ export function readOwnerApproval({ repository, pullRequest, revision, baseline,
 }
 
 export const DELIVERY_MARKER = '<!-- agent-workflow:delivery-evidence@1 -->';
+// Delivery evidence from a file: the JSON itself, a marked comment (the marker, then the JSON), or a pull request
+// description holding the marker followed by a fenced JSON block, which is how the `wf ci` workflow passes it. A text
+// without the marker holds no evidence (null); two marked blocks are ambiguous and refused.
+export function parseDeliveryEvidence(text) {
+  const raw = String(text ?? '');
+  if (Buffer.byteLength(raw, 'utf8') > 128 * 1024) throw new WfError('delivery evidence is larger than 128 KiB');
+  const parse = json => { try { return JSON.parse(json); } catch { throw new WfError('the delivery evidence is not valid JSON'); } };
+  if (raw.trim().startsWith('{')) return parse(raw);
+  const parts = raw.split(DELIVERY_MARKER);
+  if (parts.length === 1) return null;
+  if (parts.length > 2) throw new WfError('the text holds more than one delivery evidence block; keep only the one for the current head');
+  const after = parts[1];
+  const fenced = after.match(/^\s*```(?:json)?[^\n]*\n([\s\S]*?)\n\s*```/);
+  return parse(fenced ? fenced[1] : after.trim());
+}
 // The latest marked worker comment is data, never an approval. A stale/invalid new report cannot fall back
 // to an older green report. The evaluator still binds every stage and task to the candidate SHA.
 export function readDeliveryEvidence({ repository, pullRequest, worker, get = githubGet }) {

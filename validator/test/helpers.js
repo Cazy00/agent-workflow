@@ -27,3 +27,19 @@ export function fakeExecutable(file, script) {
   fs.writeFileSync(`${file}.cjs`, script);
   fs.writeFileSync(file, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(`${file}.cjs`)} "$@"\n`, { mode: 0o755 });
 }
+
+// Complete agent-attested delivery evidence for one candidate (templates/delivery-evidence.json): what the pull-request
+// modes require for a production change (MAINT-0010).
+export function deliveryEvidence(candidate, { owner = 'agent', checks = ['unit'], tasks = ['T-0001'] } = {}) {
+  const ran = { revision: candidate, environment: 'ubuntu-24.04 node 22', checks: checks.map(name => ({ name, result: 'passed', reference: `https://github.com/fixture/project/actions/runs/1#${name}` })) };
+  return {
+    schema: 'agent-workflow/delivery-evidence@1', candidate, assurance: 'agent-attested', tasks,
+    verification: { ...ran, execution: { revision: candidate, tests: [] } }, integration: ran,
+    review: {
+      reviewer: 'independent-reviewer', implementer: owner, separate_context: true,
+      context: { provider: 'fixture subagent', context_id: 'ctx-1', inherited_context: false, candidate, launch_evidence: 'https://github.com/fixture/project/pull/1#issuecomment-1' },
+      coverage: ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'], findings: [], tasks,
+      report: 'https://github.com/fixture/project/pull/1#issuecomment-2',
+    },
+  };
+}

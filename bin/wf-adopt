@@ -10,9 +10,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner', 'planning-frontend', 'speckit-python', 'approval', 'worker'];
+const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner', 'planning-frontend', 'speckit-python', 'approval', 'worker', 'checkpoint'];
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
-  [--approval manual|owner-merge] [--worker NAME] [--client-page]
+  [--approval owner-merge|manual] [--checkpoint milestone|change|plan] [--worker NAME] [--client-page]
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
   [--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python]
        wf-adopt --inspect --project DIR [--workflow-repo DIR] [--rev TAG_OR_FULL_HASH] [--production GLOB]... [--json]
@@ -20,9 +20,13 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
   (untrusted hints, never run), suggested production globs, unclassified tracked paths and collisions. It grants nothing.
   Spec Kit is experimental and opt-in; use an authorised non-production pilot until certified release/adoption.
   --owner, given once for each person (two or more), sets up a shared project: the profile's owners and their setup steps.
-  --approval: manual (the default: the owner signs receipts) or owner-merge (the owner's own merge of each pull request
-  is the approval; fastest, and nothing proves who merged). Enforced is never scaffolded: the switch to it is a
-  code-owner-reviewed pull request once the protections are verified (procedures/setup.md, steps 5 and 9).
+  --approval: owner-merge (the default for one owner: the owner's own merge is the approval, and nothing proves who
+  merged) or manual (the default for a shared project: the owner signs receipts with a key). Enforced is never
+  scaffolded: the switch to it is a code-owner-reviewed pull request once the protections are verified
+  (procedures/setup.md, steps 5 and 9).
+  --checkpoint, with owner-merge, is where the agent stops for the owner: milestone (the default: the agent merges each
+  task's pull request once the gates pass and stops when a milestone is finished, until the owner accepts it), change
+  (the owner merges every pull request) or plan (as milestone, without stopping between authorised milestones).
   --worker: the agent's own GitHub account, when it has one; without it the agent works with the owner's account.
   --client-page: also install .github/workflows/wf-client-page.yml, which publishes the plain-language client page
   (wf status --client) to GitHub Pages. A Pages site is public, even for a private repository.
@@ -82,8 +86,11 @@ const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 for (const name of o.owner) if (!USERNAME.test(name)) fail(`--owner ${name} is not a GitHub username`);
 if (new Set(o.owner).size !== o.owner.length) fail('--owner names a person twice');
 const shared = o.owner.length >= 2;
-const approval = o.approval ?? 'manual';
+const approval = o.approval ?? (shared ? 'manual' : 'owner-merge');
 if (!['manual', 'owner-merge'].includes(approval)) fail(`--approval must be manual or owner-merge; enforced follows verified protections (procedures/setup.md step 9)`);
+if (o.checkpoint !== undefined && approval !== 'owner-merge') fail('--checkpoint is for owner-merge approval; manual and enforced modes keep their own approval route');
+if (o.checkpoint !== undefined && !['change', 'milestone', 'plan'].includes(o.checkpoint)) fail('--checkpoint must be milestone, change or plan');
+const checkpoint = approval === 'owner-merge' ? o.checkpoint ?? 'milestone' : null;
 if (o.worker !== undefined && !USERNAME.test(o.worker)) fail(`--worker ${o.worker} is not a GitHub username`);
 if (o.worker && shared) fail('--worker is for one owner; in a shared project each person verifies their own worker (procedures/shared.md)');
 if (approval === 'owner-merge' && shared) fail('--approval owner-merge is for one owner: with several, whose merge counts is undefined; a shared project uses manual or enforced mode (procedures/shared.md)');
@@ -152,7 +159,7 @@ config.workflow = { repo: slug, version, revision };
 config.repository = o.repository;
 // Never an enforced label from a scaffold: that switch is the reviewed pull request after steps 5 and 9.
 const mechanism = approval === 'owner-merge' ? 'owner-merge' : 'manual-signed-receipts';
-config.approval = { ...(config.approval ?? {}), mechanism, label: approval, approver: ownerLogin ?? config.approval?.approver ?? '', agent_identity: o.worker ?? '' };
+config.approval = { ...(config.approval ?? {}), mechanism, label: approval, approver: ownerLogin ?? config.approval?.approver ?? '', agent_identity: o.worker ?? '', ...(checkpoint ? { checkpoint } : {}) };
 config.paths ??= {};
 config.paths.production ??= [];
 for (const g of o.production) if (!config.paths.production.includes(g)) config.paths.production.push(g);
@@ -204,34 +211,53 @@ const ruleset = shared
   : approval === 'manual'
     ? 'only that the trusted branch is never deleted or rewritten, since your receipts carry approval and your closeout fast-forward must still push'
     : 'pull requests, with the `wf ci` check and each of the profile\'s `required_checks` passing from GitHub Actions on an up-to-date branch';
-const approvalStep = approval === 'owner-merge'
-  ? '- [ ] 6. **Nothing to set up for approval.** Your own review and merge of each pull request is the approval, and `.github/workflows/wf-ci.yml` runs the pinned validator as the `wf ci` check. Merge only what you have reviewed, and never let the agent merge: nothing in this mode proves who merged (`approval-evidence.md`, *Owner-merge mode*). The setup record states this limit.\n'
-  : `- [ ] 6. **Make your signing key.** Outside every checkout: \`node .cache/agent-workflow/bin/wf-sign --keygen DIR\` asks for a passphrase, which keeps the key from the agent${oneAccount ? ' (it runs as you, so it can read your files)' : ''}; you sign each round with \`wf-sign\` (\`approval-evidence.md\`). Install the launcher for your own runs outside the agent clone, pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`). Nothing is approved until you sign.\n`;
-const enforcedStep = oneAccount
-  ? ''
-  : `- [ ] 9. **Switch to enforced mode (optional).** Where the protections rather than your signature or your own merge carry approval: \`${protect} --target enforced --apply\`, then \`${protect} --target enforced\` must pass; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request. The live approval-path test in a disposable repository (\`setup.md\` step 9) is stronger evidence and optional${shared ? ', except that it must show a worker\'s approval cannot merge' : ''}\n`;
+// Owner-merge's checkpoint, in plain words: where the agent stops for the owner (validator/lib/checkpoint.js).
+const AGENT_MERGES = 'the agent merges each task\'s pull request once the `wf ci` check, every required check and the independent review pass';
+const KEPT = 'Changes to the plan, requirements, acceptance tests or the workflow always wait for your merge.';
+const CHECKPOINT = {
+  milestone: `Checkpoint \`milestone\`: ${AGENT_MERGES}, and stops when a milestone is finished until you have tried it and accepted it. ${KEPT}`,
+  change: 'Checkpoint `change`: you review and merge every pull request, and the agent stops when a milestone is finished until you accept it.',
+  plan: `Checkpoint \`plan\`: ${AGENT_MERGES}, and works through every milestone you have authorised without stopping; you accept each when you like. ${KEPT}`,
+};
+const approvalNote = approval === 'owner-merge'
+  ? `Your own merge of a pull request is the approval. ${CHECKPOINT[checkpoint]} Nothing in this mode proves who merged (\`approval-evidence.md\`, *Owner-merge mode*); \`bin/wf-setup\` changes the checkpoint later, as a workflow change you merge.\n\n`
+  : '';
+// Required steps count as waiting on the owner (`wf status`); the ones under `### Optional` never do.
+const requiredSteps = [
+  oneAccount ? '' : `- [ ] 2. **Check the two GitHub accounts.** Verify the owner and worker GitHub usernames; give the worker write access; separate human and agent clones; follow \`identity.md\`\n`,
+  shared ? `- [ ] **Set up the shared project.** (\`procedures/shared.md\`) The repository owner gives the other people and every worker account write access; \`CODEOWNERS\` assigns every path (\`*\`) to ${o.owner.join(', ')} and no worker, and the ruleset requires code-owner review and approval of the most recent push; each person verifies their own worker username, keeps their own agent clone and token, and runs the identity check and step 8 with their own tools; step 9 also shows that a worker's approval cannot merge; the profile's *Authority* records who approves what, and who approves when one of you is away\n` : '',
+  approval === 'manual' ? `- [ ] 6. **Make your signing key.** Outside every checkout: \`node .cache/agent-workflow/bin/wf-sign --keygen DIR\` asks for a passphrase, which keeps the key from the agent${oneAccount ? ' (it runs as you, so it can read your files)' : ''}; you sign each round with \`wf-sign\` (\`approval-evidence.md\`). Install the launcher for your own runs outside the agent clone, pinned to \`${revision}\` (\`WF_VALIDATOR_REPO\`, \`WF_VALIDATOR_REV\`). Nothing is approved until you sign.\n` : '',
+  o.clientPage ? `- [ ] **Turn on the client page.** Turn on GitHub Pages with GitHub Actions as the source (Settings, Pages, or \`gh api -X POST repos/${o.repository}/pages -f build_type=workflow\`) so \`.github/workflows/wf-client-page.yml\` publishes the client page. The page is public, even for a private repository; leave stages out with \`client.exclude\` in \`docs/workflow/config.json\`\n` : '',
+].join('');
+const optionalSteps = [
+  `- [ ] 5. **Protect the main branch.** Only on a public repository or a GitHub Pro or Team plan. Once the scaffold is on the trusted branch, run \`${protect} --apply\` with your own \`gh\` login; it creates one ruleset requiring ${ruleset}, with no bypass${!shared && !oneAccount && approval !== 'manual' ? ' (enforced mode later adds code-owner review and auto-merge: step 9)' : ''}. \`${protect}\` reads the settings back.${approval === 'manual' && !shared ? '' : ' Rerun `--apply` after approving a change to `required_checks`.'} Without rulesets, leave this unticked\n`,
+  oneAccount ? '' : `- [ ] 9. **Switch to enforced mode.** Where the protections rather than your signature or your own merge carry approval: \`${protect} --target enforced --apply\`, then \`${protect} --target enforced\` must pass; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request. The live approval-path test in a disposable repository (\`setup.md\` step 9) is stronger evidence and optional${shared ? ', except that it must show a worker\'s approval cannot merge' : ''}\n`,
+  pinned.status !== null ? '- [ ] **Pin the status issue.** Pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab); delete the file to opt out\n' : '',
+].join('');
 const checklist = `
 ## Owner steps (procedures/setup.md; the agent does not attempt, retry or wait on these)
 
 ${arrangement}
 
-${oneAccount ? '' : `- [ ] 2. **Check the two GitHub accounts.** Verify the owner and worker GitHub usernames; give the worker write access; separate human and agent clones; follow \`identity.md\`\n`}${shared ? `- [ ] **Set up the shared project.** (\`procedures/shared.md\`) The repository owner gives the other people and every worker account write access; \`CODEOWNERS\` assigns every path (\`*\`) to ${o.owner.join(', ')} and no worker, and the ruleset requires code-owner review and approval of the most recent push; each person verifies their own worker username, keeps their own agent clone and token, and runs the identity check and step 8 with their own tools; step 9 also shows that a worker's approval cannot merge; the profile's *Authority* records who approves what, and who approves when one of you is away\n` : ''}- [ ] 5. **Protect the main branch (optional).** Only on a public repository or a GitHub Pro or Team plan. Once the scaffold is on the trusted branch, run \`${protect} --apply\` with your own \`gh\` login; it creates one ruleset requiring ${ruleset}, with no bypass${!shared && !oneAccount && approval !== 'manual' ? ' (enforced mode later adds code-owner review and auto-merge: step 9)' : ''}. \`${protect}\` reads the settings back.${approval === 'manual' && !shared ? '' : ' Rerun \`--apply\` after approving a change to \`required_checks\`.'} Without rulesets, skip this and say so here
-${approvalStep}${enforcedStep}${o.clientPage ? `- [ ] **Turn on the client page (optional).** Turn on GitHub Pages with GitHub Actions as the source (Settings, Pages, or \`gh api -X POST repos/${o.repository}/pages -f build_type=workflow\`) so \`.github/workflows/wf-client-page.yml\` publishes the client page. The page is public, even for a private repository; leave stages out with \`client.exclude\` in \`docs/workflow/config.json\`
-` : ''}${pinned.status !== null ? '- [ ] **Pin the status issue (optional).** Pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab); delete the file to opt out\n' : ''}- [ ] 11. **Watch the first milestone.** It is the pilot: watch it (\`templates/pilot.md\`)
+${approvalNote}${requiredSteps || 'Nothing is required of you before the agent starts.\n'}
+The first milestone is the pilot: when the agent presents it, try it, then accept it or say what to change (\`templates/pilot.md\`).
 
-## Agent steps (one session at a time; post progress here and stop)
+### Optional
+
+${optionalSteps}
+## Agent steps (1, 4 and 7 in one session, then 8 in a fresh context; post progress here)
 
 - [ ] 1. **Write the project profile.** Fill \`docs/workflow/profile.md\` from the owner's input and \`docs/workflow/inbox/\`; leave *Unknowns* honest, each with its required-before stage
 - [ ] 4. **Classify the code paths.** Add the stack-specific path classifications the defaults miss (\`docs/workflow/config.json\`)
 - [ ] 7. **Define the checks and acceptance tests.** The profile's \`required_checks\` (readiness fails while it is empty); acceptance IDs and mappings for the first milestone only
-- [ ] 8. **Test the setup.** Fixtures and tool-discovery tests, in their own session
+- [ ] 8. **Test the setup.** In a fresh context (a subagent or a new session) of each tool the owner uses, the discovery test of \`setup.md\` step 8; then \`scripts/wf records\` and \`scripts/wf next\` on the committed setup
 ${o.lane === 'existing' ? '\nExisting repository: do not inventory the codebase; classification is a config edit; keep the first milestone small enough to be the pilot; porting into a fresh repository is an owner option to record here.\n' : ''}
 Read for setup: \`procedures/setup.md\`, \`identity.md\`, \`templates/profile.md\`, \`templates/setup.md\` and \`config.default.json\` in \`.cache/agent-workflow/\`. Consult \`POLICY.md\` and \`SCHEMA.md\` only when a rule is unclear.
 `;
 let setup = pinned.setup.replace('SETUP-0000', 'SETUP-0001');
 setup = setup.replace('Profile, repository, workflow tag and immutable revision:', `Profile, repository, workflow tag and immutable revision: docs/workflow/profile.md · ${o.repository} · ${version} · ${revision}`);
-setup = setup.replace('usage per step:', `usage per step: scaffolded ${today}; lane ${o.lane}; ${shared ? 'shared' : oneAccount ? 'one account' : 'owner and worker accounts'}; approval ${approval}; usage per step recorded below`);
-if (approval === 'owner-merge') setup = setup.replace('Execution mode: assisted.', "Execution mode: assisted. Approval: owner-merge, chosen by the owner: the owner's own merge of each pull request is the approval. No protection shows that the owner, not the agent, merged, and agent-operated routine integration is unavailable; switching to enforced (setup step 9) or manual removes this limit.");
+setup = setup.replace('usage per step:', `usage per step: scaffolded ${today}; lane ${o.lane}; ${shared ? 'shared' : oneAccount ? 'one account' : 'owner and worker accounts'}; approval ${approval}${checkpoint ? `, checkpoint ${checkpoint}` : ''}; usage per step recorded below`);
+if (approval === 'owner-merge') setup = setup.replace('Execution mode: assisted.', `Execution mode: assisted. Approval: owner-merge with checkpoint ${checkpoint}, chosen by the owner: the owner's own merge of a pull request is the approval${checkpoint === 'change' ? '' : ', and the agent merges the task pull requests the gate leaves to it, on its own agent-attested evidence'}. No protection shows that the owner, not the agent, merged, and the enforced-mode routine lane (\`delivery.md\`) is unavailable; switching to enforced (setup step 9) or manual removes this limit.`);
 write('docs/workflow/setup.md', setup + checklist);
 
 write('docs/workflow/acceptance.json', JSON.stringify({ examples: [] }, null, 2) + '\n');
@@ -293,7 +319,7 @@ Read this first; it is a map. The workflow that governs work here is \`${slug}\`
 | Progress at a glance (derived; never edit it) | ${pinned.status !== null ? 'the pinned *Project status* issue on GitHub, or ' : ''}\`scripts/wf status\` |
 | Procedures, templates, policy | \`.cache/agent-workflow/procedures/\`, \`templates/\`, \`POLICY.md\` |
 
-Commands: \`scripts/wf next | records | readiness | paths | ci | acceptance | lifecycle | session | status | brief | closeout\`, and \`attest\` for the owner (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue (without either, in manual mode, beside the signing round in the signing drop), never into this repository. In manual mode the trusted branch moves only by the fast-forward \`wf closeout\` prints once it passes on the owner's signed receipts, which the session after signing runs. One pull request per task, never per step. ${shared ? 'Never' : approval === 'owner-merge' ? 'The approval mode is owner-merge: the owner\'s own merge of the pull request is the approval, so never turn on auto-merge, and never' : 'Never turn on auto-merge (it could merge before the owner signs), and never'} approve, ${shared ? 'merge by hand' : 'merge'}, sign or bypass a rule yourself; ${oneAccount ? 'you work with the owner\'s own GitHub account, so GitHub will let you do these things: the rule is yours to keep.' : 'never switch to the owner\'s account.'}
+Commands: \`scripts/wf next | records | readiness | paths | ci | acceptance | lifecycle | session | status | brief | closeout\`, and \`attest\` for the owner (usage in the installation's \`QUICKSTART.md\`). Run evidence, reviews and handoffs go on the task's pull request or issue (without either, in manual mode, beside the signing round in the signing drop), never into this repository. In manual mode the trusted branch moves only by the fast-forward \`wf closeout\` prints once it passes on the owner's signed receipts, which the session after signing runs. One pull request per task, never per step. ${shared ? 'Never approve, merge by hand,' : approval === 'owner-merge' ? 'The approval mode is owner-merge: the owner\'s own merge of a pull request is the approval. A production change needs your delivery evidence in the pull request description (`templates/delivery-evidence.json`). Merge a pull request yourself only when `wf ci` reports `merge: agent` and every required check has passed; anything else waits for the owner\'s merge. Never turn on auto-merge, and never approve,' : 'Never turn on auto-merge (it could merge before the owner signs), and never approve, merge,'} sign or bypass a rule yourself; ${oneAccount ? 'you work with the owner\'s own GitHub account, so GitHub will let you do these things: the rule is yours to keep.' : 'never switch to the owner\'s account.'}
 ${shared ? `\nSeveral people share the owner role (\`owners\` in the profile): work only on tasks whose \`owner\` is the person you work for, and claim each one before starting (\`procedures/shared.md\`). Never use another person's worker account.\n` : ''}`);
 write('CLAUDE.md', `# Shared repository instructions
 

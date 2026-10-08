@@ -2,7 +2,7 @@
   "authorised": false,
   "project_root": "/absolute/path/to/adopting-project",
   "destination": "Cazy00/agent-workflow",
-  "worker": "MontaDev-sys",
+  "worker": "WORKER_GITHUB_USERNAME",
   "workflow": { "version": "1.1.0-dev.0", "revision": "REPLACE_WITH_APPROVED_FULL_HASH" },
   "tools": { "codex": ["0.155.1"], "claude": ["2.1.274"] },
   "reports_per_session": 3,

@@ -1,6 +1,6 @@
 # Verify the publishing identity
 
-Account references: personal owner `oman.m123456@gmail.com`; development worker `almuntaser.dev@gmail.com`. Verify actual GitHub usernames; emails and commit metadata do not authenticate a GitHub session. The AI-service login is a separate identity.
+Record the owner's and the worker's actual GitHub usernames in the profile's *Execution*; emails and commit metadata do not authenticate a GitHub session. The AI-service login is a separate identity.
 
 **One account.** The owner may choose to give the agent no account of its own (`bin/wf-adopt` without `--worker`; `setup.md`, *Choose the arrangement*). The agent then publishes with the owner's account and this procedure's worker checks do not apply: there is no separate clone, worker token or worker username to verify. Record the choice in the profile's *Authority*. GitHub then cannot tell the agent's actions from the owner's, so enforced mode is unavailable, and any approval the owner gives must come from what the agent cannot reach: receipts signed with a passphrase-protected key (manual mode), or, knowingly unproven, the owner's own merge (owner-merge mode). The rest of this procedure applies when a worker account exists.
 

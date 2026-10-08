@@ -22,7 +22,15 @@ export function dirSource(root) {
   return {
     kind: 'dir', name: root,
     read(rel) { const p = resolve(rel); try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'EISDIR') return null; throw e; } },
-    readBuffer(rel) { const p = resolve(rel); try { return fs.readFileSync(p); } catch (e) { if (e.code === 'ENOENT' || e.code === 'EISDIR') return null; throw e; } },
+    // Bytes, for files that are not text; the size is checked before anything is read.
+    readBuffer(rel, max = Infinity) {
+      const p = resolve(rel);
+      let stat;
+      try { stat = fs.statSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+      if (!stat.isFile()) return null;
+      if (stat.size > max) throw Object.assign(new Error(`${rel} is larger than ${max} bytes`), { code: 'TOO_LARGE' });
+      return fs.readFileSync(p);
+    },
     exists(rel) { return fs.existsSync(resolve(rel)); },
     isFile(rel) { const p = resolve(rel); return fs.existsSync(p) && fs.statSync(p).isFile(); },
     list(relDir) {
@@ -49,8 +57,16 @@ export function gitSource(repo, revision) {
     kind: 'git', name: rev,
     atRevision(commit) { return gitSource(repo, commit); },
     read(rel) { safePath(rel); const r = git('show', `${rev}:${rel}`); return r.status === 0 ? r.stdout : null; },
-    // Bytes, for files that are not text (the client page's fonts and logo).
-    readBuffer(rel) { safePath(rel); const r = gitRunner(repo, { maxBuffer: 16 * 1024 * 1024, encoding: 'buffer' })('cat-file', 'blob', `${rev}:${rel}`); return r.status === 0 ? r.stdout : null; },
+    // Bytes, for files that are not text (the client page's fonts and logo); the size is checked before the read.
+    readBuffer(rel, max = Infinity) {
+      safePath(rel);
+      if (git('cat-file', '-t', `${rev}:${rel}`).stdout?.trim() !== 'blob') return null;
+      const size = Number(git('cat-file', '-s', `${rev}:${rel}`).stdout);
+      if (size > max) throw Object.assign(new Error(`${rel} is larger than ${max} bytes`), { code: 'TOO_LARGE' });
+      const r = gitRunner(repo, { maxBuffer: Math.max(size, 1) + 1024, encoding: 'buffer' })('cat-file', 'blob', `${rev}:${rel}`);
+      if (r.error || r.status !== 0) throw new Error(`cannot read ${rel} at ${rev}`);
+      return r.stdout;
+    },
     exists(rel) { safePath(rel); return git('cat-file', '-e', `${rev}:${rel}`).status === 0; },
     isFile(rel) { safePath(rel); const r = git('cat-file', '-t', `${rev}:${rel}`); return r.status === 0 && r.stdout.trim() === 'blob'; },
     list(relDir) {

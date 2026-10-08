@@ -42,7 +42,6 @@ const STRINGS = {
     nextHeading: 'Next',
     nextIn: 'in',
     then: 'Then the next stage:',
-    nextNone: 'Nothing else is planned yet.',
     waiting: 'Waiting on a decision',
     decisionOpen: 'Still to be decided',
     decisionProposed: 'An answer is proposed and waiting for approval',
@@ -92,7 +91,6 @@ const STRINGS = {
     nextHeading: 'التالي',
     nextIn: 'ضمن',
     then: 'ثم المرحلة التالية:',
-    nextNone: 'لم يُخطط لشيء آخر بعد.',
     waiting: 'بانتظار قرار',
     decisionOpen: 'لم يُحسم بعد',
     decisionProposed: 'هناك إجابة مقترحة بانتظار الموافقة',
@@ -304,7 +302,7 @@ export function renderClient(view) {
   </section>` : '';
   const nextBlock = view.detail !== 'stages' && (view.next.length || view.then) ? `<section class="panel next" aria-labelledby="next">
     <h2 id="next">${esc(say.nextHeading)}</h2>
-    ${view.next.length ? `<ol class="queue" role="list">${view.next.map(n => `<li>${bdi(n.title)}${n.stageId !== view.now?.stage ? ` <span class="where">${esc(say.nextIn)} ${bdi(n.stage)}</span>` : ''}</li>`).join('')}</ol>` : (view.then ? '' : `<p>${esc(say.nextNone)}</p>`)}
+    ${view.next.length ? `<ol class="queue" role="list">${view.next.map(n => `<li>${bdi(n.title)}${n.stageId !== view.now?.stage ? ` <span class="where">${esc(say.nextIn)} ${bdi(n.stage)}</span>` : ''}</li>`).join('')}</ol>` : ''}
     ${view.then ? `<p class="then">${esc(say.then)} ${bdi(view.then)}</p>` : ''}
   </section>` : '';
   const waitBlock = view.waiting.length ? `<section class="panel waiting" aria-labelledby="waiting">
@@ -361,7 +359,8 @@ export function renderClient(view) {
   .decisions .meta { font-size: .92rem; margin-top: .2rem; }
   .items { list-style: none; margin: .75rem 0 0; padding: 0; display: grid; }
   .item { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr) auto; gap: .6rem; align-items: baseline; padding: .32rem 0; border-top: 1px solid var(--line); }
-  .item .name { overflow-wrap: anywhere; }
+  .item .name { overflow-wrap: break-word; }
+  @media (max-width: 26rem) { .item { grid-template-columns: 1.25rem minmax(0, 1fr); row-gap: 0; } .item .state { grid-column: 2; } }
   .item:first-child { border-top: 0; }
   .panel .items { margin-top: 0; } .panel .item { grid-template-columns: 1.25rem minmax(0, 1fr); border-top: 0; padding: .2rem 0; }
   .icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transform: translateY(.15rem); }

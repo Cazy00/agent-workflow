@@ -61,7 +61,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) assert.match(fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8'), /name: wf ci/);
   assert.deepEqual([config.approval.approver, config.approval.agent_identity], ['owner', '']);
   const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8');
-  assert.match(agents, /turn it on as you open the pull request/);
+  assert.match(agents, /Never turn on auto-merge \(it could merge before the owner signs\), and never approve, merge, sign or bypass a rule yourself/, 'manual mode moves the trusted branch only by closeout');
   assert.match(agents, /you work with the owner's own GitHub account, so GitHub will let you do these things: the rule is yours to keep/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /session \| status \| brief \| closeout`/);
   // MAINT-0006: the scaffold's CLAUDE.md carries the section in templates/claude/compact-instructions.md.
@@ -133,7 +133,7 @@ test('wf-adopt scaffolds manual approval by default, owner-merge on request, and
   assert.equal(enforced.status, 2, 'enforced is never scaffolded');
   assert.match(enforced.stderr, /manual or owner-merge/);
   assert.ok(!fs.existsSync(path.join(other, 'docs/workflow')));
-  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/]]) {
+  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/], [['--approval', 'owner-merge', '--owner', 'alice', '--owner', 'bob'], /owner-merge is for one owner/]]) {
     const refused = project(t);
     const result = adopt(refused, ...args);
     assert.equal(result.status, 2, result.stdout + result.stderr);
@@ -158,12 +158,19 @@ test('wf-adopt scaffolds manual approval by default, owner-merge on request, and
 
 test('wf next works on a scaffold that is not committed yet, and says to commit it', t => {
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
-  const dir = project(t);
-  assert.equal(adopt(dir).status, 0);
-  const next = spawnSync(process.execPath, [path.join(root, 'validator/cli.js'), 'next', '--repo', dir], { encoding: 'utf8' });
-  assert.equal(next.status, 0, next.stdout + next.stderr);
-  assert.match(next.stdout, /^Note: the adoption is not on main yet, so this reads the working tree: commit the scaffold/);
-  assert.match(next.stdout, /Next: Do the next unchecked agent step in the setup record/);
+  // Both a repository without commits and one whose main predates the adoption.
+  for (const existing of [false, true]) {
+    const dir = project(t);
+    if (existing) {
+      fs.writeFileSync(path.join(dir, 'README.md'), '# project\n');
+      for (const args of [['checkout', '-q', '-b', 'main'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'existing']]) assert.equal(spawnSync('git', ['-C', dir, ...args]).status, 0);
+    }
+    assert.equal(adopt(dir).status, 0);
+    const next = spawnSync(process.execPath, [path.join(root, 'validator/cli.js'), 'next', '--repo', dir], { encoding: 'utf8' });
+    assert.equal(next.status, 0, next.stdout + next.stderr);
+    assert.match(next.stdout, /^Note: the adoption is not on main yet, so this reads the working tree: commit the scaffold/);
+    assert.match(next.stdout, /Next: Do the next unchecked agent step in the setup record/);
+  }
 });
 
 test('wf-adopt leaves an existing CODEOWNERS alone and gives a shared project every path owned', t => {

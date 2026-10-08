@@ -40,7 +40,7 @@ const failing = r => r.items.filter(i => i.ok === false).map(i => i.name);
 test('each approval mode gets its own ruleset: manual only stops deletion and rewriting', () => {
   const manual = plan({ config: config('manual'), branch: 'main', target: 'manual' });
   assert.deepEqual(manual.ruleset.rules.map(r => r.type), ['deletion', 'non_fast_forward'], 'the closeout fast-forward must still push');
-  assert.deepEqual([manual.ruleset.bypass_actors, manual.ruleset.conditions.ref_name.include, manual.autoMerge], [[], ['refs/heads/main'], null]);
+  assert.deepEqual([manual.ruleset.bypass_actors, manual.ruleset.conditions.ref_name.include, manual.autoMerge], [[], ['refs/heads/main'], false], 'a pull request with nothing pending would auto-merge before any receipt');
   const merge = plan({ config: config('owner-merge'), requiredChecks: ['test', 'wf ci'], branch: 'main', target: 'owner-merge' });
   const pr = merge.ruleset.rules.find(r => r.type === 'pull_request').parameters;
   assert.deepEqual([pr.require_code_owner_review, pr.required_approving_review_count, pr.dismiss_stale_reviews_on_push], [false, 0, true], 'one account can never approve its own pull request');
@@ -51,9 +51,10 @@ test('each approval mode gets its own ruleset: manual only stops deletion and re
   const enforced = plan({ config: config('owner-merge', 'owner', 'agent-bot'), branch: 'main', target: 'enforced' });
   const epr = enforced.ruleset.rules.find(r => r.type === 'pull_request').parameters;
   assert.deepEqual([epr.require_code_owner_review, epr.required_approving_review_count, epr.require_last_push_approval, enforced.autoMerge], [true, 0, false, true]);
-  const shared = plan({ config: config('owner-merge', '', ''), owners: ['alice', 'bob'], branch: 'main', target: 'owner-merge' });
+  assert.throws(() => plan({ config: config('owner-merge', '', ''), owners: ['alice', 'bob'], branch: 'main', target: 'owner-merge' }), /owner-merge mode is for one owner/);
+  const shared = plan({ config: config('manual', '', ''), owners: ['alice', 'bob'], branch: 'main', target: 'enforced' });
   const spr = shared.ruleset.rules.find(r => r.type === 'pull_request').parameters;
-  assert.deepEqual([spr.require_code_owner_review, spr.require_last_push_approval, shared.autoMerge], [true, true, false]);
+  assert.deepEqual([spr.require_code_owner_review, spr.require_last_push_approval, shared.autoMerge, shared.unowned], [true, true, null, []]);
 });
 
 test('enforced mode is refused with one account, and an unknown target is refused', () => {
@@ -71,7 +72,7 @@ test('apply creates the ruleset once, updates it afterwards, and sets auto-merge
   assert.deepEqual(fresh.calls[2].body, { allow_auto_merge: true });
   const again = github({ existing: [{ id: 42, name: 'agent-workflow', source_type: 'Repository' }] });
   applyProtection({ api: again.api, repository: 'fixture/project', plan: plan({ config: config('manual'), branch: 'main', target: 'manual' }) });
-  assert.deepEqual(again.calls.filter(c => c.method !== 'GET').map(c => [c.method, c.endpoint]), [['PUT', 'repos/fixture/project/rulesets/42']], 'manual mode leaves auto-merge alone');
+  assert.deepEqual(again.calls.filter(c => c.method !== 'GET').map(c => [c.method, c.endpoint, c.body?.allow_auto_merge]), [['PUT', 'repos/fixture/project/rulesets/42', undefined], ['PATCH', 'repos/fixture/project', false]], 'manual mode turns auto-merge off');
   assert.throws(() => applyProtection({ api: github({ upgrade: true }).api, repository: 'fixture/project', plan: p }), /public repository or a GitHub Pro or Team plan/);
 });
 
@@ -92,6 +93,11 @@ test('the read-back fails on a bypass, an unbound check, an impossible review, a
   const unbound = p.ruleset.rules.map(r => r.type === 'required_status_checks' ? { ...r, parameters: { ...r.parameters, required_status_checks: [{ context: 'wf ci' }] } } : r);
   assert.deepEqual(failing(checkProtection({ api: github({ rules: unbound, autoMerge: true }).api, repository: 'fixture/project', plan: p })), ['required check "wf ci" from GitHub Actions']);
   assert.deepEqual(failing(checkProtection({ api: github({ rules: p.ruleset.rules, autoMerge: true, codeowners: '* @agent-bot @owner\n' }).api, repository: 'fixture/project', plan: p })), ['CODEOWNERS names no worker (agent-bot)']);
+  // MAINT-0007 review B1: a later ownerless line un-owns its paths, so only the records carve-out may have none.
+  for (const codeowners of ['* @owner\n/docs/workflow/\n', '* @owner\n/docs/workflow/config.json\n/docs/workflow/profile.md\n/.github/\n']) {
+    const r = checkProtection({ api: github({ rules: p.ruleset.rules, autoMerge: true, codeowners }).api, repository: 'fixture/project', plan: p });
+    assert.deepEqual([r.ok, r.ready_for_enforced, failing(r)], [false, false, ['CODEOWNERS leaves no path unowned except task and feedback records']], codeowners);
+  }
   const m = plan({ config: config('owner-merge'), branch: 'main', target: 'owner-merge' });
   const review = m.ruleset.rules.map(r => r.type === 'pull_request' ? { ...r, parameters: { ...r.parameters, required_approving_review_count: 1 } } : r);
   assert.deepEqual(failing(checkProtection({ api: github({ rules: review, autoMerge: true }).api, repository: 'fixture/project', plan: m })), ['no review is required that you cannot give', 'auto-merge off']);

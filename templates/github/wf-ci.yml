@@ -1,17 +1,19 @@
 # The workflow's check on every pull request, reported as `wf ci`. Installed by the workflow's bin/wf-adopt;
-# make `wf ci` a required status check when the repository has rulesets (bin/wf-protect does). This file is
-# protected configuration: CODEOWNERS covers it and a change to it is a workflow change.
+# make `wf ci` a required status check when the repository has rulesets (bin/wf-protect does). A change to this
+# file is a workflow change.
 #
-# It never runs the pull request's own launcher or pin. The validator comes from the workflow repository at the
-# revision pinned in the *base* branch's docs/workflow/config.json, fetched fresh outside the checkout, and judges
-# the pull request's head against that base, so a pull request cannot choose the code that judges it. It runs
-# with a read-only token and no secrets. In enforced and owner-merge modes it runs the integration gate
-# (`wf ci`); in manual mode the owner's signed receipts are checked on the owner's machine (`wf closeout`),
-# so here it checks the records only.
+# It never runs the pull request's own launcher or pin. The validator comes from the workflow repository (which
+# must be public: it is fetched without a token) at the revision pinned in the *base* branch's
+# docs/workflow/config.json, fetched fresh outside the checkout, and judges the pull request's head against that
+# base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run its own
+# copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
+# (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
+# before merging. It runs with a read-only token and no secrets. In enforced and owner-merge modes it runs the
+# integration gate (`wf ci`); in manual mode the owner's signed receipts are checked on the owner's machine
+# (`wf closeout`), so here it checks the records only.
 name: wf
 on:
   pull_request:
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

@@ -38,6 +38,7 @@ export function plan({ config, owners = [], requiredChecks = [], branch, target 
   const oneAccount = !shared && (!worker || worker.toLowerCase() === approver.toLowerCase());
   if (target === 'enforced' && oneAccount) throw new Error('enforced mode needs a worker account other than the owner\'s (approval.agent_identity): GitHub never lets you approve your own pull request, so with one account use manual or owner-merge');
   if (target === 'enforced' && !shared && !approver) throw new Error('enforced mode needs approval.approver, the owner\'s GitHub username');
+  if (target === 'owner-merge' && shared) throw new Error('owner-merge mode is for one owner: with several, whose merge counts is undefined, so a shared project uses manual or enforced mode (procedures/shared.md)');
   const rules = [{ type: 'deletion' }, { type: 'non_fast_forward' }];
   const pullRequests = target !== 'manual';
   const codeOwners = pullRequests && (shared || target === 'enforced');
@@ -47,10 +48,15 @@ export function plan({ config, owners = [], requiredChecks = [], branch, target 
     rules.push({ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true, required_status_checks: checks.map(context => ({ context, integration_id: ACTIONS_APP })) } });
   }
   // Auto-merge: on for one owner in enforced mode, where code-owner review holds back everything but records; off in
-  // owner-merge mode, where it would let the agent's pull requests merge on their checks alone; otherwise unchanged.
-  const autoMerge = target === 'enforced' && !shared ? true : target === 'owner-merge' ? false : null;
+  // owner-merge mode, where it would let the agent's pull requests merge on their checks alone, and in manual mode,
+  // where the trusted branch moves only by the owner's closeout and a pull request with nothing pending would merge at
+  // once; a shared project's code-owner review holds every pull request, so its setting is left alone.
+  const autoMerge = target === 'enforced' && !shared ? true : !shared ? false : null;
+  // Ownerless CODEOWNERS lines a single owner may keep: the records that merge on their checks alone.
+  const rd = (config.records_dir ?? 'docs/workflow').replace(/^\/+|\/+$/g, '');
+  const unowned = shared ? [] : [`/${rd}/tasks/`, `/${rd}/feedback/`];
   return {
-    target, shared, oneAccount, approver, worker, branch, pullRequests, codeOwners, checks, autoMerge,
+    target, shared, oneAccount, approver, worker, branch, pullRequests, codeOwners, checks, autoMerge, unowned,
     ruleset: { name: RULESET, target: 'branch', enforcement: 'active', bypass_actors: [], conditions: { ref_name: { include: [`refs/heads/${branch}`], exclude: [] } }, rules },
   };
 }
@@ -98,6 +104,7 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
   let rules;
   try { rules = api('GET', `repos/${repository}/rules/branches/${encodeURIComponent(p.branch)}`) ?? []; }
   catch (e) { item('rulesets available', false, unavailable(e) ?? e.message); return result(); }
+  if (!rules.length) item(`rules on ${p.branch}`, null, 'none apply: run --apply with your own gh login (rulesets need a public repository or a GitHub Pro or Team plan)');
   const of = type => rules.filter(r => r.type === type);
   item(`${p.branch} cannot be deleted`, of('deletion').length > 0);
   item(`${p.branch} cannot be force-pushed`, of('non_fast_forward').length > 0);
@@ -131,7 +138,7 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
     if (!Array.isArray(ruleset?.bypass_actors)) item(`ruleset ${ruleset?.name ?? id} has no bypass`, false, 'cannot see its bypass list: run this with the repository owner\'s gh login');
     else item(`ruleset ${ruleset.name ?? id} has no bypass`, ruleset.bypass_actors.length === 0, ruleset.bypass_actors.length ? `bypass: ${ruleset.bypass_actors.map(a => `${a.actor_type}${a.actor_id ? ` ${a.actor_id}` : ''}`).join(', ')}` : '');
   }
-  if (p.autoMerge !== null) item(`auto-merge ${p.autoMerge ? 'allowed' : 'off'}`, repo?.allow_auto_merge === p.autoMerge, p.autoMerge ? 'a records-only pull request then merges by itself after its checks' : 'in owner-merge mode auto-merge would let the agent\'s pull requests merge on their checks alone');
+  if (p.autoMerge !== null) item(`auto-merge ${p.autoMerge ? 'allowed' : 'off'}`, repo?.allow_auto_merge === p.autoMerge, p.autoMerge ? 'a records-only pull request then merges by itself after its checks' : p.target === 'manual' ? 'in manual mode the trusted branch moves only by your closeout; auto-merge could merge a pull request first' : 'in owner-merge mode auto-merge would let the agent\'s pull requests merge on their checks alone');
   if (p.codeOwners) {
     try {
       const errors = api('GET', `repos/${repository}/codeowners/errors?ref=${encodeURIComponent(p.branch)}`)?.errors ?? [];
@@ -143,6 +150,10 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
     }
     if (text != null) {
       const lines = text.split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean).map(l => l.split(/\s+/));
+      // A later line without owners takes its paths out of code-owner review (the last matching line wins), so only the
+      // records carve-out may be ownerless; anything else could un-own the config, the profile or this file.
+      const ownerless = lines.filter(l => l.length === 1 && !p.unowned.includes(l[0])).map(l => l[0]);
+      item('CODEOWNERS leaves no path unowned except task and feedback records', ownerless.length === 0, ownerless.length ? `ownerless: ${ownerless.join(', ')}` : '');
       const everything = lines.filter(l => l[0] === '*').at(-1) ?? [];
       const listed = everything.slice(1).map(n => n.replace(/^@/, '').toLowerCase());
       if (p.shared) item('CODEOWNERS assigns every path (*) to people', listed.length > 0, listed.length ? '' : 'no * line with owners');

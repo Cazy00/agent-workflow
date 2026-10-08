@@ -88,7 +88,12 @@ try { key = createPrivateKey({ key: fs.readFileSync(keyFile), passphrase: await 
 catch (e) { fail(`cannot open the signing key: ${/decrypt|bad/i.test(e.message) ? 'wrong passphrase' : e.message}`, 1); }
 const signed = payloads.map(payload => ({ payload, signature: sign(null, Buffer.from(JSON.stringify(payload)), key).toString('base64') }));
 const same = (a, b) => a.payload?.purpose === b.payload.purpose && a.payload?.revision === b.payload.revision;
-const kept = (fs.existsSync(target) ? JSON.parse(fs.readFileSync(target, 'utf8')) : []).filter(r => !signed.some(s => same(r, s)));
+let existing = [];
+if (fs.existsSync(target)) {
+  try { existing = JSON.parse(fs.readFileSync(target, 'utf8')); } catch (e) { fail(`${target}: ${e.message}`); }
+  if (!Array.isArray(existing)) fail(`${target} must be a JSON array of receipts`);
+}
+const kept = existing.filter(r => !signed.some(s => same(r, s)));
 fs.writeFileSync(`${target}.tmp`, JSON.stringify([...kept, ...signed], null, 2) + '\n', { mode: 0o600 });
 fs.renameSync(`${target}.tmp`, target);
 console.log(JSON.stringify({ ok: true, receipts: target, signed: signed.map(s => `${s.payload.purpose} ${s.payload.revision.slice(0, 12)}`), kept: kept.length }, null, 2));

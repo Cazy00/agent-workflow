@@ -2,6 +2,7 @@
 record: task
 id: T-0000
 title:
+client_title:
 status: Draft
 owner:
 objective:

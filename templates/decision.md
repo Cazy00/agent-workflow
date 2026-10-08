@@ -2,6 +2,7 @@
 record: decision
 id: D-0000
 question:
+client_question:
 type: decision
 owner:
 affects: []

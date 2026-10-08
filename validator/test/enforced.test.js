@@ -179,11 +179,17 @@ test('owner-merge mode requires the baseline config and profile to agree', t => 
   assert.match(r.stderr, /approval label differs/);
 });
 
-test('owner-merge mode never satisfies agent-operated routine delegation, which needs verified protections', t => {
-  const p = setup(t, { label: 'owner-merge', configEdit: c => ({ ...c, delegation: { routine: { enabled: true } } }) });
-  const out = JSON.parse(p.run('ci').stdout);
-  assert.equal(out.verdict, 'fail');
-  assert.ok(out.findings.includes('agent-operated routine delegation requires verified enforced-mode setup'), out.findings.join(' | '));
+test('a config from before v2.0.0 keeps working with the removed features off, and is refused with one switched on', t => {
+  // Every scaffold from v1.8.0 to v1.14.0 wrote these disabled defaults; bin/wf-upgrade removes them (MAINT-0011).
+  const off = setup(t, { label: 'owner-merge', configEdit: c => ({ ...c, delivery: { batching: null }, delegation: { routine: { enabled: false } }, execution: { mode: 'assisted', runner_adopted: false }, setup_budget_days: 2 }) });
+  assert.equal(off.run('readiness').status, 0);
+  for (const [edit, pattern] of [[c => ({ ...c, delegation: { routine: { enabled: true } } }), /delegation\.routine was removed in v2\.0\.0/], [c => ({ ...c, delivery: { batching: { max_tasks: 2 } } }), /delivery\.batching was removed in v2\.0\.0/]]) {
+    const on = setup(t, { label: 'owner-merge', configEdit: edit });
+    const r = on.run('ci', { evidence: true });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, pattern);
+    assert.match(r.stderr, /bin\/wf-upgrade removes the key/);
+  }
 });
 
 test('owner-merge mode is refused for a project with several owners, by the records and by the gate', t => {

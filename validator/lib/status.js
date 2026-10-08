@@ -178,7 +178,7 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     feedback_open: feedbackOpen,
     trusted_branch: trustedBranch,
     record_errors: all.errors,
-    limitation: 'Derived, read-only view. It grants no authority and checks no approval; gates read the records directly. Readiness is previewed as if the baseline were approved. Usage and local claims: wf runtime --action status. Shared claims, latest handoffs and current activity: the task branches and pull requests.',
+    limitation: 'Derived, read-only view. It grants no authority and checks no approval; gates read the records directly. Readiness is previewed as if the baseline were approved. Shared claims, latest handoffs and current activity: the task branches and pull requests.',
   };
 }
 

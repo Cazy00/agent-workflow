@@ -78,13 +78,15 @@ export function governingInputs(source, rd, seeds) {
 }
 
 // The workflow pin (config `workflow`, profile `workflow_version`) is not a governing requirement: moving it is reviewed
-// as its own change and the moved validator runs on every check (IDEA-18). Every other part of both files still counts.
+// as its own change and the moved validator runs on every check (IDEA-18). Nor are the config keys no release reads any
+// more, which bin/wf-upgrade removes with the pin (upgrades.json). Every other part of both files still counts.
 const PINNED = new Set(['docs/workflow/config.json']);
+const UNREAD = ['delegation', 'delivery', 'execution', 'setup_budget_days'];
 function withoutPin(source, rel) {
   const raw = source.read(rel);
   if (raw === null || !PINNED.has(rel) && !rel.endsWith('/profile.md')) return raw;
   if (PINNED.has(rel)) {
-    try { const c = JSON.parse(raw); delete c.workflow; return JSON.stringify(c); } catch { return raw; }
+    try { const c = JSON.parse(raw); for (const k of ['workflow', ...UNREAD]) delete c[k]; return JSON.stringify(c); } catch { return raw; }
   }
   const front = raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
   if (!front) return raw;

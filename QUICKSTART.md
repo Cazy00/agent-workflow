@@ -28,6 +28,10 @@ Read the relevant procedure, current profile, milestone/task and governing sourc
 4. Provision what the approval mode needs through `procedures/approval-evidence.md` (setup step 6): the owner key and signed receipts in `manual` mode (`bin/wf-sign`); nothing in `owner-merge` mode; no key in `enforced` mode, which follows setup steps 5 and 9. Establish source/result trust and the real approval path. A project-local launcher is convenient feedback only; authoritative CI must use the externally controlled launcher and settings.
 5. Complete identity checks, fixtures, per-tool discovery and the observed assisted pilot. Record limitations in the setup record before declaring supported operation.
 
+## Upgrade
+
+From an up-to-date workflow checkout (`git pull --tags`), `bin/wf-upgrade --project /path/to/repo` reports what moving the project to the newest release would change, and `--apply` does it: the pin, the config keys and files the releases in between no longer need (`upgrades.json`), the workflow files the scaffold installed where the project has not changed them, and a list of what to merge or do by hand. It runs the new release's `wf records`, refuses to overwrite uncommitted edits and never commits; open a pull request for the result (`procedures/operate.md`, *Updates and upgrades*). `--rev TAG` picks another release.
+
 ## Start or resume a task
 
 Start every session with `wf next` (the trust options add the trusted branch's approval state): it names the one next action, the files to read for it and the commands to run, and lists what waits on the owner. Read what it names and nothing else unless one of those points further; it grants nothing, and the gates below still decide.
@@ -82,15 +86,11 @@ Read this instead of the validator source. In manual mode every receipt is owner
 | Close a signed round | `closeout` | the trusted branch's tip, where the local branch must be | each Done task's gate at its `baseline_revision` and `implemented`, as one chain; no production change outside them; acceptance (and release) for each milestone accepted (released); the round's end approved |
 
 
-## Central reporting and assisted runtime
+## Optional planning frontend
 
-After the owner-directed central mode is adopted, use [operations.md](procedures/operations.md) for `wf report`, `wf runtime` and `wf prepare-evidence`. Their configuration and private outbox live outside the product repository. Reporting works even when readiness blocks implementation; it cannot approve work. The evidence helper currently supports the included Node test reporter, produces unsigned drafts only, and does not imply compatibility with an uninspected product test runner.
-
-Optional experimental planning frontend: [Spec Kit procedure](procedures/speckit.md). A fresh scaffold accepts `--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python` only for the supported pin/environment. Use an explicitly authorised non-production pilot; certification, release and adoption gates remain open.
+Experimental: [Spec Kit procedure](procedures/speckit.md). A fresh scaffold accepts `--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python` only for the supported pin/environment. Use an explicitly authorised non-production pilot; certification, release and adoption gates remain open.
 
 ## Fewer round trips and reliable closeout
-
-After explicit setup approval, optional local batches use `wf ci --tasks T-0001,T-0002`; every task still passes its gates. Routine integration can be delegated within narrow protected limits, using worker-posted evidence and exact-head GitHub owner approval for exceptions. Both are off by default; read `procedures/delivery.md` before activation.
 
 In manual mode a round of receipts is one file of unsigned payloads in the signing drop (`$WF_SIGNING_DIR`), with the brief `wf brief` renders from it; dry-run the round's gates with `--unsigned-receipts` (exit 3 instead of 0, never approval), and after signing run `wf closeout`, which re-runs them on the receipts and prints the fast-forward. With `attest` in the config, the owner's `wf attest` run writes the verification and integration payloads instead of the agent (*Attested evidence*). Opt-in derived baselines spare the baseline receipt where the owner's other receipts already cover every change; `signing: milestone` collects a milestone's receipts in one round (`procedures/approval-evidence.md`, *Signing rounds*).
 

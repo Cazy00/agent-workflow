@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+// Moves an adopted project to another workflow release and removes what the releases in between left behind
+// (MAINT-0011). Reports by default; --apply writes. It never commits, pushes or approves. See adapters/upgrade.mjs.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { applyUpgrade, planUpgrade, renderPlan, validateWith } from '../adapters/upgrade.mjs';
+
+const USAGE = `usage: wf-upgrade --project DIR [--rev TAG] [--workflow-repo DIR] [--apply] [--json]
+  Moves the project's pin to TAG (default: this checkout's newest release tag) and cleans what the releases in between
+  no longer need: config keys nothing reads, files they list, and the workflow files the scaffold installed, refreshed
+  where the project has not changed them. It lists the steps each release leaves to you. Without --apply it only
+  reports. It never commits or pushes: the result is a workflow change for a pull request.`;
+const fail = message => { console.error(`wf-upgrade: ${message}`); process.exit(2); };
+const o = {};
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--apply' || a === '--json') o[a.slice(2)] = true;
+  else if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+  else if (['--project', '--rev', '--workflow-repo'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) o[a.slice(2)] = argv[++i];
+  else fail(`invalid option or missing value: ${a}\n${USAGE}`);
+}
+if (!o.project) fail(`--project is required\n${USAGE}`);
+const project = path.resolve(o.project);
+const workflowRepo = path.resolve(o['workflow-repo'] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
+try {
+  const plan = planUpgrade({ project, workflowRepo, rev: o.rev });
+  let validation = null;
+  if (o.apply && !plan.current) { applyUpgrade(plan); validation = validateWith({ workflowRepo, rev: plan.to, project }); }
+  if (o.json) console.log(JSON.stringify({ ...plan, changes: plan.changes.map(({ content, ...c }) => c), applied: Boolean(o.apply), validation }, null, 2));
+  else process.stdout.write(renderPlan(plan, { applied: Boolean(o.apply), validation }));
+  process.exit(validation && !validation.ok ? 1 : 0);
+} catch (e) { fail(e.message); }

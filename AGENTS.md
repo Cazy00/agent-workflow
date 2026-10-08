@@ -5,12 +5,12 @@ Read `README.md`, the relevant procedure in `procedures/`, and the current task 
 This repository maintains the workflow itself. Workflow changes need independent review and owner approval before release; a working agent must not weaken its own rules. Local changes do not publish or adopt a new version in other projects.
 
 - Shared entry: `.agents/skills/workflow/SKILL.md`; Claude entry: `CLAUDE.md`.
-- Setup and identity: `procedures/setup.md`, `procedures/identity.md`; model-free scaffold: `bin/wf-adopt`; owner-run tools: `bin/wf-setup` (setup and settings page), `bin/wf-protect` (GitHub protections), `bin/wf-sign` (signing key and rounds).
+- Setup and identity: `procedures/setup.md`, `procedures/identity.md`; model-free scaffold: `bin/wf-adopt`; owner-run tools: `bin/wf-setup` (setup and settings page), `bin/wf-upgrade` (moving a project's pin), `bin/wf-protect` (GitHub protections), `bin/wf-sign` (signing key and rounds).
 - Readiness and implementation: `procedures/readiness.md`, `procedures/execute.md`; two or more owners: `procedures/shared.md`.
-- Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`; optional local batches and routine integration: `procedures/delivery.md`; manual-mode signing rounds, dry runs and closeout: `procedures/approval-evidence.md`.
+- Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`; fewer CI round trips: `procedures/delivery.md`; manual-mode signing rounds, dry runs and closeout: `procedures/approval-evidence.md`.
 - Deployment, incidents, maintenance, upgrades: `procedures/operate.md`.
 - Feedback and maintenance: `procedures/maintenance.md`.
-- Validation: `npm test`; command usage: `QUICKSTART.md`. Owner view: `wf status` (derived, read-only); adopting projects also get it as a pinned GitHub issue from `templates/github/wf-status.yml`. Client view: `wf status --client` (plain-language HTML; optional Pages publishing from `templates/github/wf-client-page.yml`).
+- Validation: `npm test`; command usage: `QUICKSTART.md`; release history: `CHANGELOG.md`, with `upgrades.json` for what an upgrade changes. Owner view: `wf status` (derived, read-only); adopting projects also get it as a pinned GitHub issue from `templates/github/wf-status.yml`. Client view: `wf status --client` (plain-language HTML; optional Pages publishing from `templates/github/wf-client-page.yml`).
 - Reusable records: `templates/`. Run evidence, reviews and handoffs go on the task's GitHub pull request or issue, never into the repository; `npm test` enforces this.
 - Owner ideas awaiting evaluation (no authority): `docs/proposals/ideas-backlog.md`.
 

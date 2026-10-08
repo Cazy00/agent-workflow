@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// The owner's GitHub protections in one command: procedures/setup.md step 5, and the read-back that step 9 accepts
+// before a switch to enforced mode. Applying uses the owner's own `gh` login and is the owner's step; an agent never
+// runs --apply. Without --apply it only reads. See adapters/protect.mjs.
+import path from 'node:path';
+import { applyProtection, checkProtection, plan, readProject, renderProtection, TARGETS } from '../adapters/protect.mjs';
+
+const USAGE = `usage: wf-protect --project DIR [--target ${TARGETS.join('|')}] [--apply] [--json]
+  Reads docs/workflow/config.json and the profile from the local trusted branch, then checks, through your gh login,
+  that the repository's ruleset fits the approval mode (--target, default: the config's approval label).
+  --apply first creates or updates the one ruleset named agent-workflow (and the auto-merge setting): run it yourself,
+  with your own gh login, never through the agent. Rulesets need a public repository or a GitHub Pro or Team plan.
+  Exit 0 all checks pass, 1 something is missing, 2 invalid input or an error.`;
+
+const fail = message => { console.error(`wf-protect: ${message}`); process.exit(2); };
+const o = { apply: false, json: false };
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--apply') o.apply = true;
+  else if (a === '--json') o.json = true;
+  else if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+  else if (['--project', '--target'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+    const key = a.slice(2);
+    if (o[key] !== undefined) fail(`duplicate option: ${a}`);
+    o[key] = argv[++i];
+  } else fail(`invalid option or missing value: ${a}\n${USAGE}`);
+}
+if (!o.project) fail(`--project is required\n${USAGE}`);
+try {
+  const project = readProject(path.resolve(o.project));
+  const target = o.target ?? project.config.approval?.label ?? 'manual';
+  const p = plan({ ...project, target });
+  const applied = o.apply ? applyProtection({ repository: project.config.repository, plan: p }) : [];
+  const result = checkProtection({ repository: project.config.repository, plan: p });
+  if (o.json) console.log(JSON.stringify({ ...result, applied, revision: project.revision }, null, 2));
+  else process.stdout.write(renderProtection(result, applied));
+  process.exitCode = result.ok ? 0 : 1;
+} catch (e) { fail(e.message); }

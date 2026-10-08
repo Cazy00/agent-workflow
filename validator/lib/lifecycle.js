@@ -1,6 +1,6 @@
 import { list } from './records.js';
 const REVIEW_AREAS = ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'];
-// In enforced mode a missing receipt is reported under `unverified`: the evidence is on the pull request and
+// In enforced (and owner-merge) mode a missing receipt is reported under `unverified`: the evidence is on the pull request and
 // agents must substantiate it on the PR; owner approval is not a code audit. Supplying receipts runs the manual
 // gate instead, where a missing receipt is an error.
 export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage = 'verify', trust }) {
@@ -8,7 +8,7 @@ export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage 
   const unverified = [];
   const enforced = trust?.mode === 'enforced';
   const claim = purpose => trust?.claim(purpose, candidate.name);
-  const onPullRequest = (purpose, what) => unverified.push(`${purpose}: no receipt; ${what} must be substantiated on the pull request; it is not authenticated by this validator (enforced mode)`);
+  const onPullRequest = (purpose, what) => unverified.push(`${purpose}: no receipt; ${what} must be substantiated on the pull request; it is not authenticated by this validator (${trust.label ?? 'enforced'} mode)`);
   const evidence = (p, report) => {
     if (typeof p === 'string' && typeof report?.artifacts?.[p] === 'string' && report.artifacts[p].trim()) return true;
     try { return typeof p === 'string' && !!candidate.read(p)?.trim(); } catch { return false; }

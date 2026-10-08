@@ -1,0 +1,67 @@
+# The workflow's check on every pull request, reported as `wf ci`. Installed by the workflow's bin/wf-adopt;
+# make `wf ci` a required status check when the repository has rulesets (bin/wf-protect does). A change to this
+# file is a workflow change.
+#
+# It never runs the pull request's own launcher or pin. The validator comes from the workflow repository (which
+# must be public: it is fetched without a token) at the revision pinned in the *base* branch's
+# docs/workflow/config.json, fetched fresh outside the checkout, and judges the pull request's head against that
+# base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run its own
+# copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
+# (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
+# before merging. It runs with a read-only token and no secrets. In enforced and owner-merge modes it runs the
+# integration gate (`wf ci`); in manual mode the owner's signed receipts are checked on the owner's machine
+# (`wf closeout`), so here it checks the records only.
+name: wf
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: wf-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    name: wf ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0 # the gate diffs the base against the head and checks the head contains the base
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Fetch the validator pinned by the base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/config.json"
+          pin="$(node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const w = c.workflow ?? {};
+            if (!/^[\w.-]+\/[\w.-]+$/.test(w.repo ?? "") || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(w.revision ?? "")) { console.error("wf: the base config needs workflow.repo and a full workflow.revision"); process.exit(2); }
+            console.log(w.repo, w.revision, c.approval?.label ?? "manual")' "$RUNNER_TEMP/config.json")"
+          read -r REPO REV LABEL <<< "$pin"
+          git init -q "$RUNNER_TEMP/wf"
+          git -C "$RUNNER_TEMP/wf" fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C "$RUNNER_TEMP/wf" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/wf" rev-parse HEAD)" = "$REV" ] || { echo "wf: fetched validator is not at $REV" >&2; exit 2; }
+          echo "WF_LABEL=$LABEL" >> "$GITHUB_ENV"
+      - name: Run the gate
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          wf() { node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" "$@"; }
+          if [ "$WF_LABEL" = manual ]; then
+            echo "manual mode: checking the records; the owner's receipts are checked by wf closeout"
+            wf records --candidate "$HEAD_SHA"
+          else
+            # The task comes from the branch name (T-0001-…, codex/T-0001-…, claude/T-0001-…).
+            wf ci --baseline "$BASE" --candidate "$HEAD_SHA" --branch "$HEAD_REF"
+          fi

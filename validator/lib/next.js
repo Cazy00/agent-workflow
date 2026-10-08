@@ -38,7 +38,8 @@ function readList(rd, task, milestone) {
 export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
-  const manual = config.approval?.label !== 'enforced';
+  const label = config.approval?.label;
+  const manual = !['enforced', 'owner-merge'].includes(label); // owner-merge approves by the pull request, as enforced does
   const status = evaluateStatus({ baseline, candidate, trustedBranch, pullRequests });
   const base = baseline.kind === 'git' ? baseline.name : 'TRUSTED_TIP';
   const head = candidate.kind === 'git' ? candidate.name : 'HEAD';
@@ -53,7 +54,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'setup')) add({ kind: 'setup', item: w.item, do: 'Do the next unchecked agent step in the setup record, one per session', why: w.detail, read: [w.item, PROCEDURE.setup] });
 
   // Tasks Done in the candidate but not on the baseline: their work is finished and waits for the owner's round (manual
-  // mode) or the pull request (enforced), unless their milestone collects one round at its end and still has work open.
+  // mode) or the pull request (enforced, owner-merge), unless their milestone collects one round at its end and still has work open.
   const baseTasks = loadAll(baseline, rd).tasks;
   const finished = [...records.tasks.values()].map(r => r.data).filter(t => t?.id && t.status === 'Done' && baseTasks.get(t.id)?.data?.status !== 'Done').sort(byId);
   const openIn = m => [...records.tasks.values()].some(r => r.data?.milestone === m && r.data?.status !== 'Done');
@@ -118,7 +119,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
-    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : 'enforced',
+    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label,
     next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
@@ -127,6 +128,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
 export function renderNext(n) {
   const lines = [];
   const bullet = items => items.map(i => `  - ${i}`);
+  if (n.note) lines.push(`Note: ${n.note}`, '');
   lines.push(`Next: ${n.next.do}`, `Why: ${n.next.why}`);
   if (n.next.read.length) lines.push('Read:', ...bullet(n.next.read));
   if (n.next.run.length) lines.push('Run:', ...bullet(n.next.run));

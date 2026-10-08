@@ -14,7 +14,7 @@ import { evaluateLifecycle } from '../lib/lifecycle.js';
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 const taskPath = 'docs/workflow/tasks/T-0001.md';
-function setup(t, { label = 'enforced', profileLabel = label, decisionOpen = false } = {}) {
+function setup(t, { label = 'enforced', profileLabel = label, decisionOpen = false, configEdit = c => c } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-enforced-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
@@ -22,7 +22,7 @@ function setup(t, { label = 'enforced', profileLabel = label, decisionOpen = fal
   const edit = (p, fn) => write(p, fn(fs.readFileSync(path.join(repo, p), 'utf8')));
   const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git('init', '-q'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
-  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); c.approval.label = label; c.repository = 'fixture/project'; return JSON.stringify(c); });
+  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); c.approval.label = label; c.repository = 'fixture/project'; return JSON.stringify(configEdit(c)); });
   edit('docs/workflow/profile.md', x => x.replace('approval_label: enforced', `approval_label: ${profileLabel}`));
   if (decisionOpen) edit('docs/workflow/decisions/D-0001.md', x => x.replace('status: Resolved', 'status: Open'));
   git('add', '.'); git('commit', '-qm', 'initial'); const initial = git('rev-parse', 'HEAD');
@@ -141,4 +141,65 @@ test('enforced trust is bound to the exact baseline and supplies no receipts of 
   assert.equal(bare.unverified.length, 2);
   assert.equal(createEnforcedTrust({ baseline: other }).claim('review', other), null);
   assert.throws(() => createEnforcedTrust({ baseline: 'main' }), /immutable/);
+});
+
+// Owner-merge mode (MAINT-0007): the owner's own merge is the approval, for one account or no rulesets. The gates run as
+// in enforced mode, and every unverified item names that route and the mode, so nobody mistakes it for protection.
+test('owner-merge mode: the gates pass without receipts and name the owner\'s own merge as the approval', t => {
+  const p = setup(t, { label: 'owner-merge' });
+  const ci = p.run('ci');
+  assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+  const out = JSON.parse(ci.stdout);
+  assert.equal(out.verdict, 'pass');
+  assert.ok(out.findings.some(f => f.startsWith('unverified: execution:') && f.endsWith('(owner-merge mode)')), out.findings.join(' | '));
+  assert.ok(!out.findings.some(f => /\(enforced mode\)/.test(f)), 'never reported as enforced');
+  p.write('AGENTS.md', '# guide\n');
+  p.git('add', '.'); p.git('commit', '-qm', 'T-0001: governing change');
+  const governing = JSON.parse(p.run('ci', { candidate: p.git('rev-parse', 'HEAD') }).stdout);
+  assert.ok(governing.findings.some(f => f.startsWith('unverified: governing-change:') && f.includes("the owner's own review and merge of this pull request, which no protection enforces") && f.includes('(owner-merge mode)')), governing.findings.join(' | '));
+  const next = spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--json'], { encoding: 'utf8' });
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.equal(JSON.parse(next.stdout).mode, 'owner-merge');
+  assert.doesNotMatch(JSON.stringify(JSON.parse(next.stdout).next), /--trust-key/, 'no receipts are asked for');
+});
+
+test('owner-merge mode requires the baseline config and profile to agree', t => {
+  const p = setup(t, { label: 'owner-merge', profileLabel: 'enforced' });
+  const r = p.run('readiness');
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /approval label differs/);
+});
+
+test('owner-merge mode never satisfies agent-operated routine delegation, which needs verified protections', t => {
+  const p = setup(t, { label: 'owner-merge', configEdit: c => ({ ...c, delegation: { routine: { enabled: true } } }) });
+  const out = JSON.parse(p.run('ci').stdout);
+  assert.equal(out.verdict, 'fail');
+  assert.ok(out.findings.includes('agent-operated routine delegation requires verified enforced-mode setup'), out.findings.join(' | '));
+});
+
+test('owner-merge mode is refused for a project with several owners, by the records and by the gate', t => {
+  const p = setup(t, { label: 'owner-merge' });
+  p.edit('docs/workflow/profile.md', x => x.replace(/^record: profile$/m, 'record: profile\nowners: [alice, bob]'));
+  p.git('add', '.'); p.git('commit', '-qm', 'two owners');
+  const baseline = p.git('rev-parse', 'HEAD');
+  const records = spawnSync(process.execPath, [cli, 'records', '--repo', p.repo, '--candidate', baseline], { encoding: 'utf8' });
+  assert.equal(records.status, 1, records.stdout + records.stderr);
+  assert.match(records.stdout, /approval_label owner-merge is for one owner/);
+  const r = spawnSync(process.execPath, [cli, 'readiness', '--repo', p.repo, '--baseline', baseline, '--candidate', baseline, '--task', 'T-0001', '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /owner-merge mode is for one owner/);
+});
+
+test('a Claude Code task branch names its task, as a Codex one does', t => {
+  const p = setup(t, { label: 'owner-merge' });
+  const r = spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', p.baseline, '--candidate', p.candidate, '--branch', 'claude/T-0001-work', '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(JSON.parse(r.stdout).findings.some(f => f.startsWith('readiness T-0001:')));
+});
+
+test('owner-merge trust is labelled unprotected, and no other label receives branch trust', () => {
+  const owner = createEnforcedTrust({ baseline: 'a'.repeat(40), label: 'owner-merge' });
+  assert.deepEqual([owner.mode, owner.label, owner.protected], ['enforced', 'owner-merge', false]);
+  assert.equal(createEnforcedTrust({ baseline: 'a'.repeat(40) }).protected, true);
+  assert.throws(() => createEnforcedTrust({ baseline: 'a'.repeat(40), label: 'manual' }), /no branch trust/);
 });

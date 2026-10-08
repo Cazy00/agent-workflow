@@ -8,19 +8,19 @@ Start, two-working-day timebox (or approved alternative), agent allowance (defau
 |---|---|
 | Source precedence and relevant project readiness | |
 | Personal repository owner verified | |
-| Worker GitHub username verified | |
-| Separate clones; author, Git transport and API identities | |
-| Per-route credentials, no owner fallback | |
+| Accounts: worker username verified, or one account recorded as the owner's choice | |
+| With a worker: separate clones; author, Git transport and API identities | |
+| With a worker: per-route credentials, no owner fallback | |
 | Tool entry discovery: Codex / Claude Code | |
 | Protected requirements, decisions, acceptance, enforcement, CI, CODEOWNERS | |
-| Plan support, admin restrictions, stale approvals, no worker bypass | |
+| Plan support (rulesets available or not), admin restrictions, stale approvals, no bypass (`wf-protect` read-back) | |
 | Trusted validator revision and external trust anchor | |
-| Result provenance and owner approval alternative | |
+| Approval mode (manual, owner-merge, enforced) and what it does not prove | |
 | Acceptance mapping and reporter | |
 | Required checks in the profile; each a required status check, branches up to date | |
 | Shared project, if any: each person's worker and tools, `CODEOWNERS`, who approves what and when one is away | |
 | Gate / acceptance / identity / session fixtures | |
-| Real approval-path exercise | |
+| Before enforced: protection read-back, or the real approval-path exercise | |
 | Observed pilot | |
 
 ## Owner-controlled bootstrap

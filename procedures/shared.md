@@ -8,7 +8,7 @@ Two or more people may share the owner role, each with their own agents. List th
 
 ## Who approves what
 
-The profile's *Authority* records who approves what. Default: whoever is asked to do work approves the plan that assigns it, the milestone's owner approves the result, and a change to the profile, config, `CODEOWNERS`, required checks or workflow files is approved by the person whose agent did not write it. GitHub checks only that a code owner approved who neither opened the pull request nor, with that setting, pushed to it last, so the people keep this rule; naming one person in `CODEOWNERS` for a milestone or decision file enforces it for that file. Record who approves when one person is away; waiting is never approval. Manual mode has one owner key: one person signs, or the project uses enforced mode.
+The profile's *Authority* records who approves what. Default: whoever is asked to do work approves the plan that assigns it, the milestone's owner approves the result, and a change to the profile, config, `CODEOWNERS`, required checks or workflow files is approved by the person whose agent did not write it. GitHub checks only that a code owner approved who neither opened the pull request nor, with that setting, pushed to it last, so the people keep this rule; naming one person in `CODEOWNERS` for a milestone or decision file enforces it for that file. Record who approves when one person is away; waiting is never approval. Manual mode has one owner key: one person signs, or the project uses enforced mode. Owner-merge mode is for one owner and is refused here.
 
 ## Who selects work
 

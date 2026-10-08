@@ -45,6 +45,12 @@ export function loadConfig(source) {
     const tests = config.paths?.acceptance_tests;
     if (tests !== undefined && (!Array.isArray(tests) || tests.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('paths.acceptance_tests must be an array of glob strings');
     validateAttestConfig(config.attest);
+    if (config.client !== undefined) {
+      const c = config.client;
+      if (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).some(k => !['title', 'exclude'].includes(k))) throw new Error('client may contain only title and exclude');
+      if (c.title !== undefined && typeof c.title !== 'string') throw new Error('client.title must be a string');
+      if (c.exclude !== undefined && (!Array.isArray(c.exclude) || c.exclude.some(id => !/^M-\d{4}$/.test(id)))) throw new Error('client.exclude must list milestone IDs like M-0001');
+    }
     if (config.delegation !== undefined) {
       const d = config.delegation;
       if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(k => k !== 'routine') ||

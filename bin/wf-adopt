@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner', 'planning-frontend', 'speckit-python', 'approval', 'worker'];
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
-  [--approval manual|owner-merge] [--worker NAME]
+  [--approval manual|owner-merge] [--worker NAME] [--client-page]
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
   [--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python]
        wf-adopt --inspect --project DIR [--workflow-repo DIR] [--rev TAG_OR_FULL_HASH] [--production GLOB]... [--json]
@@ -24,6 +24,8 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
   is the approval; fastest, and nothing proves who merged). Enforced is never scaffolded: the switch to it is a
   code-owner-reviewed pull request once the protections are verified (procedures/setup.md, steps 5 and 9).
   --worker: the agent's own GitHub account, when it has one; without it the agent works with the owner's account.
+  --client-page: also install .github/workflows/wf-client-page.yml, which publishes the plain-language client page
+  (wf status --client) to GitHub Pages. A Pages site is public, even for a private repository.
   Writes docs/workflow/config.json (full-hash pin), the record directories, profile/setup/acceptance seeds,
   scripts/wf, AGENTS.md, CLAUDE.md, .github/CODEOWNERS and .github/workflows/wf-{ci,status}.yml when absent, fetches the pinned installation into .cache/agent-workflow/
   and writes the owner checklist. Never overwrites; refuses a second adoption. Exit 0 done, 2 refused/invalid.`;
@@ -37,6 +39,7 @@ function parse(argv) {
     const a = argv[i];
     if (a === '--json') { o.json = true; continue; }
     if (a === '--inspect') { o.inspect = true; continue; }
+    if (a === '--client-page') { o.clientPage = true; continue; }
     if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
     if (!a.startsWith('--')) fail(`unexpected argument: ${a}\n${USAGE}`);
     const name = a.slice(2);
@@ -113,7 +116,8 @@ const show = rel => {
 };
 // Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
 const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
-const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml'), ci: optional('templates/github/wf-ci.yml'), compact: optional('templates/claude/compact-instructions.md') };
+const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), status: optional('templates/github/wf-status.yml'), ci: optional('templates/github/wf-ci.yml'), compact: optional('templates/claude/compact-instructions.md'), clientPage: optional('templates/github/wf-client-page.yml') };
+if (o.clientPage && pinned.clientPage === null) fail(`the workflow revision ${revision} has no client page; pin a later release or omit --client-page`);
 if (shared && !/^owners:/m.test(pinned.profile)) fail(`the workflow revision ${revision} has no shared-project support (its profile template lacks owners); pin a later release or omit --owner`);
 
 const created = [], appended = [], skipped = [];
@@ -212,7 +216,8 @@ const checklist = `
 ${arrangement}
 
 ${oneAccount ? '' : `- [ ] 2. Verify the owner and worker GitHub usernames; give the worker write access; separate human and agent clones; follow \`identity.md\`\n`}${shared ? `- [ ] Shared project (\`procedures/shared.md\`): the repository owner gives the other people and every worker account write access; \`CODEOWNERS\` assigns every path (\`*\`) to ${o.owner.join(', ')} and no worker, and the ruleset requires code-owner review and approval of the most recent push; each person verifies their own worker username, keeps their own agent clone and token, and runs the identity check and step 8 with their own tools; step 9 also shows that a worker's approval cannot merge; the profile's *Authority* records who approves what, and who approves when one of you is away\n` : ''}- [ ] 5. Optional, and only on a public repository or a GitHub Pro or Team plan: protections. Once the scaffold is on the trusted branch, run \`${protect} --apply\` with your own \`gh\` login; it creates one ruleset requiring ${ruleset}, with no bypass${!shared && !oneAccount && approval !== 'manual' ? ' (enforced mode later adds code-owner review and auto-merge: step 9)' : ''}. \`${protect}\` reads the settings back.${approval === 'manual' && !shared ? '' : ' Rerun \`--apply\` after approving a change to \`required_checks\`.'} Without rulesets, skip this and say so here
-${approvalStep}${enforcedStep}${pinned.status !== null ? '- [ ] Optional: pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab); delete the file to opt out\n' : ''}- [ ] 11. Your first milestone is the pilot: watch it (\`templates/pilot.md\`)
+${approvalStep}${enforcedStep}${o.clientPage ? `- [ ] Optional: turn on GitHub Pages with GitHub Actions as the source (Settings, Pages, or \`gh api -X POST repos/${o.repository}/pages -f build_type=workflow\`) so \`.github/workflows/wf-client-page.yml\` publishes the client page. The page is public, even for a private repository; leave stages out with \`client.exclude\` in \`docs/workflow/config.json\`
+` : ''}${pinned.status !== null ? '- [ ] Optional: pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab); delete the file to opt out\n' : ''}- [ ] 11. Your first milestone is the pilot: watch it (\`templates/pilot.md\`)
 
 ## Agent steps (one session at a time; post progress here and stop)
 
@@ -318,6 +323,9 @@ else skipped.push('.github/CODEOWNERS (--coordinator is not a GitHub username)')
 // The `wf ci` check: the pinned validator, from the base branch's pin, on every pull request.
 if (pinned.ci !== null) write('.github/workflows/wf-ci.yml', pinned.ci);
 else skipped.push('.github/workflows/wf-ci.yml (not in this workflow revision)');
+
+// The client page on GitHub Pages, only on request: it is public wherever Pages is.
+if (o.clientPage) write('.github/workflows/wf-client-page.yml', pinned.clientPage.replaceAll('__TRUSTED_BRANCH__', trusted));
 
 // The owner's status view on GitHub: republishes `wf status` to a pinned issue from the trusted branch.
 if (pinned.status !== null) write('.github/workflows/wf-status.yml', pinned.status.replaceAll('__TRUSTED_BRANCH__', trusted));

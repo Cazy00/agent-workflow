@@ -1,0 +1,51 @@
+# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, published
+# after each push to the trusted branch. Installed only on request (bin/wf-adopt --client-page); delete this file to
+# stop publishing. It shows stage titles, outcomes and progress, never IDs, people, branches or reasons, and grants
+# no authority. A GitHub Pages site is PUBLIC on the internet, even for a private repository (unless your
+# organisation's plan offers private Pages), and anyone with the address can read it: publish only what you would
+# put on a public page, and leave stages out with `client.exclude` in docs/workflow/config.json. Without Pages,
+# render the same page yourself and send the file: scripts/wf status --client > status.html
+# Turn Pages on once, with GitHub Actions as the source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
+name: wf-client-page
+on:
+  push:
+    branches: [__TRUSTED_BRANCH__]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: wf-client-page
+  cancel-in-progress: true
+jobs:
+  build:
+    if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Render the client page
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/site"
+          scripts/wf status --client --candidate "$GITHUB_SHA" > "$RUNNER_TEMP/site/index.html"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

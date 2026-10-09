@@ -185,4 +185,3 @@ test('testedIds counts automated and mapped scenarios, and fails closed', () => 
   assert.deepEqual(pendingChange(records(true), records(true), new Set(), tested).added, [{ acceptance: 'AC-001-1', task: 'T-0001', tested: true }, { acceptance: 'AC-001-1', task: 'T-0002', tested: true }]);
   assert.deepEqual(pendingChange(records(false), records(true), null, null).added.map(w => w.acceptance), ['AC-001-1', 'AC-001-2']);
 });
-

@@ -827,7 +827,7 @@ test('wf acceptance lets another task\'s pending test fail and names it', t => {
   p.receipts([{ purpose: 'baseline', revision: B2 }, verification(null)]);
   const missing = p.run(['acceptance', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
   assert.equal(missing.status, 1, missing.stdout);
-  assert.match(missing.json.errors.join(' '), /pending test did not run exactly once: tests\/later\.js \/ later scenario/);
+  assert.match(missing.json.errors.join(' '), /pending test did not run exactly once with a reported result \(passed, failed, skipped\): tests\/later\.js \/ later scenario/);
 });
 
 // R3-2, R3-5: a milestone round whose first task's evidence has a pending test failing. Closeout gates each task as ci
@@ -869,4 +869,3 @@ test('a milestone round with a pending failure closes once the baseline it needs
   const withIt = brief(p.unsigned([...round1.slice(1), { purpose: 'baseline', revision: D1 }]));
   assert.doesNotMatch(withIt.split('## Problems')[1] ?? '', /baseline payload at|later scenario/);
 });
-

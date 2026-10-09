@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { payloadProblems, readPayloads } from './payloads.js';
 import { showPath } from './git.js';
-import { pendingNote, pendingRun } from './acceptance.js';
+import { RESULTS, pendingNote, pendingRun } from './acceptance.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
 // In prose, control, format and default-ignorable characters are shown as escapes and other whitespace collapses to
@@ -73,11 +73,11 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
         if (runs.length === 1 && runs[0].status === 'passed') continue;
         const waiting = pending?.(p.revision)?.get(m?.acceptance);
-        if (waiting && runs.length === 1) {
+        if (waiting && runs.length === 1 && RESULTS.includes(runs[0]?.status)) {
           waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. It must pass in the round that delivers the last of those tasks; no derived baseline rests on this evidence.`);
           for (const r of needsBaseline?.(p.revision) ?? []) if (!payloads.some(q => q?.purpose === 'baseline' && q.revision === r) && !problems.some(x => x.includes(`baseline payload at ${String(r).slice(0, 12)}`))) problems.push(`${at}: a pending test failed here, so no derived baseline rests on this evidence: add a baseline payload at ${String(r).slice(0, 12)} (closeout needs that revision approved)`);
         }
-        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once' : 'it must run once and pass'}`);
+        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once, with a reported result' : 'it must run once and pass'}`);
       }
     }
     if (attestConfigured && ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool !== 'wf attest') problems.push(`${at}: this project runs wf attest, so verification and integration come from your own attest run, not from a payload the agent wrote`);

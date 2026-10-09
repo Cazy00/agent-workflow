@@ -170,7 +170,7 @@ test('a mapped test whose scenario waits for another task of an in-progress mile
   }
   const missing = p.run('ci', { evidence: runs(p, 'passed', null) });
   assert.equal(missing.status, 1, 'a pending test must still run and be reported');
-  assert.match(out(missing).findings.join('\n'), /pending test did not run exactly once: tests\/b\.test\.js \/ later/);
+  assert.match(out(missing).findings.join('\n'), /pending test did not run exactly once with a reported result \(passed, failed, skipped\): tests\/b\.test\.js \/ later/);
   const own = p.run('ci', { evidence: runs(p, 'failed', 'passed') });
   assert.equal(own.status, 1, 'the scenario this pull request delivers must pass');
   assert.match(out(own).findings.join('\n'), /required test did not run exactly once and pass: tests\/a\.test\.js \/ works/);
@@ -592,5 +592,25 @@ test('scenario definitions are read from their fixed path whatever records_dir i
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(out(r).merge, 'owner');
   assert.match(out(r).owner_reasons.join(' | '), /AC-001-1 for T-0002/);
+});
+
+// The fifth review of MAINT-0012 (Codex): a pending run counts only with a reported result, and wf pending refuses a map
+// it cannot read.
+test('a pending test reported without a result does not count as run', t => {
+  const p = pendingSetup(t);
+  const ev = runs(p, 'passed', 'failed');
+  delete ev.verification.execution.tests[1].status;
+  const r = p.run('ci', { evidence: ev });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(out(r).findings.join('\n'), /pending test did not run exactly once with a reported result \(passed, failed, skipped\): tests\/b\.test\.js \/ later/);
+});
+
+test('wf pending refuses a lost or unreadable acceptance map', t => {
+  for (const [label, change] of [['removed', q => fs.rmSync(path.join(q.repo, 'tests/acceptance-map.json'))], ['not an array', q => q.write('tests/acceptance-map.json', '{}')], ['not JSON', q => q.write('tests/acceptance-map.json', '[')]]) {
+    const p = pendingSetup(t, { change });
+    const r = p.run('pending');
+    assert.equal(r.status, 2, `${label}: ${r.stdout}`);
+    assert.match(r.stderr, /tests\/acceptance-map\.json/, label);
+  }
 });
 

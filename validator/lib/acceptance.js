@@ -4,6 +4,8 @@ import { ACCEPTANCE } from './acceptance-files.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
 const IN_PROGRESS = ['Authorised', 'Active', 'Blocked'];
+// The results a run may report; a run without one does not show the test ran.
+export const RESULTS = ['passed', 'failed', 'skipped'];
 
 // Pending tests apply only where the approved config names owner-approved acceptance tests (MAINT-0012).
 export const ownerTests = config => (config?.paths?.acceptance_tests ?? []).length > 0;
@@ -180,8 +182,8 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
       if (runs.length === 1 && runs[0].status === 'passed') continue;
       // A pending test still runs once and is reported; only its result may be a failure (MAINT-0012).
       const waiting = pending.get(m.acceptance);
-      if (waiting && runs.length === 1) waived.push(pendingRun(m, runs, waiting));
-      else if (waiting) errors.push(`pending test did not run exactly once: ${m.file} / ${m.name} (it may fail until ${waiting.join(', ')} ${waiting.length === 1 ? 'is' : 'are'} Done, but must run and be reported)`);
+      if (waiting && runs.length === 1 && RESULTS.includes(runs[0].status)) waived.push(pendingRun(m, runs, waiting));
+      else if (waiting) errors.push(`pending test did not run exactly once with a reported result (${RESULTS.join(', ')}): ${m.file} / ${m.name} (it may fail until ${waiting.join(', ')} ${waiting.length === 1 ? 'is' : 'are'} Done, but must run and be reported)`);
       else errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
     }
   }

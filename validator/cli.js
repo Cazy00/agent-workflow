@@ -317,8 +317,12 @@ async function main() {
   else if (cmd === 'pending') {
     const delivered = taskId(); // --task, or the task its branch names (--branch in CI), as ci takes it
     const waiting = ownerTests(config) ? pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], delivered ? [delivered] : []) : new Map();
-    let map = [];
-    try { const v = JSON.parse(candidate.read('tests/acceptance-map.json') ?? '[]'); if (Array.isArray(v)) map = v; } catch { throw new WfError('tests/acceptance-map.json at the candidate cannot be read'); }
+    // An unreadable map, or one the baseline had and the candidate lost, lists nothing to check: refuse it, as ci does.
+    const raw = candidate.read('tests/acceptance-map.json');
+    if (raw == null && baseline.read('tests/acceptance-map.json') != null) throw new WfError('tests/acceptance-map.json is missing at the candidate but present on the baseline');
+    let map;
+    try { map = JSON.parse(raw ?? '[]'); } catch { map = null; }
+    if (!Array.isArray(map)) throw new WfError('tests/acceptance-map.json at the candidate is not a JSON array of mappings');
     // A test may fail only when every scenario it is mapped to is pending; `required` lists every other mapped test.
     const same = (a, b) => a?.file === b?.file && a?.name === b?.name;
     const mayFail = m => map.filter(x => same(x, m)).every(x => waiting.has(x?.acceptance));

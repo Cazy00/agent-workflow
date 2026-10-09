@@ -6,7 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
-import { evaluateAcceptance } from './acceptance.js';
+import { evaluateAcceptance, pendingAcceptance, pendingNote } from './acceptance.js';
 import { evidenceErrors } from './delivery-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
@@ -189,8 +189,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   if (selected.length && production.length) {
     const execution = trust?.claim('verification', candidate.name)?.execution ?? attested?.verification?.execution;
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
-    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label });
+    // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012); the
+    // baseline's records decide, so this candidate cannot make its own failing test pending.
+    const pending = pendingAcceptance(baselineRecords, selected);
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
+    for (const w of acceptance.pending ?? []) findings.push(`note: ${pendingNote(w)}`);
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
   for (const category of ['governing', 'enforcement']) {

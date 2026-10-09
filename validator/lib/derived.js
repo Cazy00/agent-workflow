@@ -106,7 +106,9 @@ export function withDerivedBaselines(trust, repo) {
       }
       if (!p.checks.every(c => c?.result === 'passed' && resolves(c.evidence)) || !requiredChecks.every(name => p.checks.some(c => c?.name === name))) return false;
       if (p.purpose !== 'verification') return true;
-      // As acceptance.js: every test the revision's map names ran exactly once and passed; others may be skipped.
+      // As acceptance.js: every test the revision's map names ran exactly once and passed; others may be skipped. A
+      // pending test (MAINT-0012) is not excused here: a revision whose evidence has one is approved by an explicit
+      // baseline receipt, never derived.
       let map;
       try { const raw = at.read('tests/acceptance-map.json'); map = raw == null ? [] : JSON.parse(raw); } catch { return false; }
       if (!Array.isArray(map)) return false;

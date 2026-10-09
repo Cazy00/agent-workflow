@@ -1,9 +1,36 @@
 import { safePath } from './sources.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
-export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false }) {
+const list = v => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
+const IN_PROGRESS = ['Authorised', 'Active', 'Blocked'];
+
+// MAINT-0012: owner-approved acceptance tests are written and approved before the work (readiness.md), so they fail
+// until the tasks that serve them are done. A scenario is pending while the milestone that lists it is in progress and a
+// task of that milestone that serves it is not yet Done, other than the tasks this change delivers; its mapped tests may
+// fail or be missing until then, and must run once and pass from then on. Read it from the approved baseline's records
+// (`records` is lib/records.js loadAll), so a candidate cannot make its own failing test pending. Returns acceptance ID →
+// the IDs of the tasks it waits for.
+export function pendingAcceptance(records, delivering = []) {
+  const pending = new Map();
+  const tasks = [...(records?.tasks?.values() ?? [])].map(r => r.data ?? {});
+  for (const m of records?.milestones?.values() ?? []) {
+    const milestone = m.data ?? {};
+    if (!IN_PROGRESS.includes(milestone.status)) continue;
+    for (const id of list(milestone.acceptance)) {
+      const waiting = tasks.filter(t => t.milestone === milestone.id && list(t.acceptance).includes(id) && t.status !== 'Done' && !delivering.includes(t.id)).map(t => t.id);
+      if (waiting.length) pending.set(id, [...new Set([...(pending.get(id) ?? []), ...waiting])].sort());
+    }
+  }
+  return pending;
+}
+
+// How a pending mapped test that did not pass is reported (ci's notes, the signing brief, wf attest).
+export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.runs === 0 ? 'did not run' : w.runs === 1 ? w.status : `ran ${w.runs} times`}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must run once and pass from then on`;
+
+export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map() }) {
   const errors = [];
   const unverified = [];
+  const waived = [];
   // Mapping preservation is global to the candidate, but a migration grant belongs
   // to one selected task and that task must require the migrated acceptance ID.
   const requirements = new Map(taskRequirements ?? [[task, requiredIds]]);
@@ -105,8 +132,11 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {
       const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
-      if (runs.length !== 1 || runs[0].status !== 'passed') errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
+      if (runs.length === 1 && runs[0].status === 'passed') continue;
+      const waiting = pending.get(m.acceptance);
+      if (waiting) waived.push({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
+      else errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
     }
   }
-  return { ok: errors.length === 0, errors, unverified, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
+  return { ok: errors.length === 0, errors, unverified, pending: waived, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
 }

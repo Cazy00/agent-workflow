@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { evaluateAcceptance } from '../lib/acceptance.js';
+import { evaluateAcceptance, pendingAcceptance } from '../lib/acceptance.js';
 import { gitSource } from '../lib/sources.js';
 const definition = { examples: [{ id: 'AC-001-1', requirement: 'docs/specs/payment.md', method: 'automated' }] };
 const mapping = [{ acceptance: 'AC-001-1', file: 'test/payment.js', name: 'reject invalid payment' }];
@@ -147,4 +147,24 @@ test('enforced mode leaves migrated coverage and execution for code-owner review
   assert.equal(result.ok, true, result.errors.join(' | '));
   assert.ok(result.unverified.some(x => x.includes('renamed test execution')));
   assert.ok(result.unverified.some(x => x.startsWith('execution:')));
+});
+
+// MAINT-0012: a scenario served by several tasks stays pending until the last of them is Done or being delivered.
+test('a scenario is pending while any task serving it in an in-progress milestone is not Done or delivered', () => {
+  const rec = (id, data) => [id, { data: { id, ...data } }];
+  const records = (status, t2, t3) => ({
+    milestones: new Map([rec('M-0001', { status, acceptance: ['AC-001-1', 'AC-001-2'] }), rec('M-0002', { status: 'Authorised', acceptance: ['AC-002-1'] })]),
+    tasks: new Map([
+      rec('T-0001', { milestone: 'M-0001', status: 'Done', acceptance: ['AC-001-1'] }),
+      rec('T-0002', { milestone: 'M-0001', status: t2, acceptance: ['AC-001-2'] }),
+      rec('T-0003', { milestone: 'M-0001', status: t3, acceptance: 'AC-001-2' }),
+      rec('T-0004', { milestone: 'M-0002', status: 'Ready', acceptance: ['AC-001-2'] }), // another milestone's task does not hold it
+    ]),
+  });
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Ready', 'Active'))], [['AC-001-2', ['T-0002', 'T-0003']]]);
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Ready', 'Active'), ['T-0002'])], [['AC-001-2', ['T-0003']]]);
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Done', 'Active'), ['T-0003'])], []);
+  assert.deepEqual([...pendingAcceptance(records('Blocked', 'Done', 'Ready'))], [['AC-001-2', ['T-0003']]]);
+  for (const status of ['Draft', 'Verified', 'Accepted', 'Released']) assert.deepEqual([...pendingAcceptance(records(status, 'Ready', 'Ready'))], [], status);
+  assert.deepEqual([...pendingAcceptance(null)], []);
 });

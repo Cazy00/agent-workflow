@@ -23,5 +23,10 @@
       "Central reporting is removed: delete its external operations config and private runtime directory if you made them (they live outside the repository), and the profile's central-reporting lines under Workflow configuration.",
       "Routine delegation is removed: if CODEOWNERS un-owned routine paths for it, own them again (`* @OWNER`)."
     ]
+  },
+  "v2.1.0": {
+    "notes": [
+      "Owner-approved acceptance tests may now land with the plan and fail until the tasks that serve their scenario are Done (pending, SCHEMA.md). Run them where a pending failure fails no required check, such as a CI job of their own that is not in required_checks, and list every mapped test in the delivery evidence."
+    ]
   }
 }

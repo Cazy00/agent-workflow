@@ -7,7 +7,7 @@ import { TASK_BRANCH, WfError, listedOwners, classifyPaths, dirSource, evaluateC
 import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
-import { evaluateAcceptance } from './lib/acceptance.js';
+import { evaluateAcceptance, pendingAcceptance } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
@@ -84,7 +84,7 @@ async function main() {
     const run = repo ? gitRunner(repo) : null;
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
-    let requiredChecks = null, changes = null, attestConfigured = false;
+    let requiredChecks = null, changes = null, attestConfigured = false, pending = null;
     if (repo && o.baseline) {
       // Everything the round changes from the approved baseline to its end (--candidate, or the latest payload
       // revision), judged path by path by both configs, as a derived baseline judges it (lib/derived.js).
@@ -110,6 +110,9 @@ async function main() {
         const evidence = x => ['verification', 'review', 'integration'].every(purpose => at(purpose, x).length === 1);
         const listing = (purpose, f) => x => at(purpose, x).some(p => Array.isArray(p.paths) && p.paths.includes(f));
         const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
+        // Mapped tests that may still fail, by the approved baseline (MAINT-0012): the round delivers the tasks Done at its
+        // end and not at the baseline, and their own tests must pass. Without a round end every mapped test must.
+        pending = pendingAcceptance(loadAll(base, rd), [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done').map(t => t.id));
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
           if (unsafePath(f)) { changes.uncovered.push([f, 'could pass for another path; never derived']); continue; }
@@ -133,7 +136,7 @@ async function main() {
         }
       }
     }
-    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured });
+    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured, pending });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;
@@ -319,7 +322,7 @@ async function main() {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
       const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
       const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
-      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label });
+      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label, pending: pendingAcceptance(loadAll(baseline, rd), [task]) });
       lifecycle.unverified = [...(lifecycle.unverified ?? []), ...(coverage.unverified ?? [])];
       if (!coverage.ok) { lifecycle.ok = false; lifecycle.errors.push(...coverage.errors); }
       if (cmd === 'acceptance') result = coverage;

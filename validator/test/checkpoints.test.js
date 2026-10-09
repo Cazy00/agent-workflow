@@ -133,6 +133,66 @@ test('a mapped acceptance test must have run once and passed', t => {
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
 });
 
+// MAINT-0012: acceptance tests are approved before the work, so a scenario's tests fail until the tasks serving it are
+// done. While its milestone is in progress and another of its tasks is not Done on the baseline, its mapped test may
+// fail; once they are Done, or in the pull request that delivers one, it must run once and pass.
+function pendingSetup(t, { milestoneStatus = 'Authorised', milestoneAcceptance = '[AC-001-1, AC-001-2]', otherStatus = 'Ready', change } = {}) {
+  return setup(t, {
+    checkpoint: 'milestone',
+    baselineEdit: q => {
+      q.write('tests/a.test.js', 'test("works", () => {});\n');
+      q.write('tests/b.test.js', 'test("later", () => {});\n');
+      q.write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/a.test.js', name: 'works' }, { acceptance: 'AC-001-2', file: 'tests/b.test.js', name: 'later' }]));
+      q.edit('docs/workflow/acceptance.json', x => { const a = JSON.parse(x); a.examples.push({ id: 'AC-001-2', requirement: 'docs/specs/feature.md', method: 'automated' }); return JSON.stringify(a); });
+      q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', `acceptance: ${milestoneAcceptance}`).replace('status: Authorised', `status: ${milestoneStatus}`));
+      q.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(q.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-2]').replace('status: Ready', `status: ${otherStatus}`));
+    },
+    change: q => { q.write('src/a.js', 'export const result = 1;\n'); change?.(q); },
+  });
+}
+const runs = (p, a, b) => evidence(p.candidate, { verification: { execution: { revision: p.candidate, tests: [...(a ? [{ file: 'tests/a.test.js', name: 'works', status: a }] : []), ...(b ? [{ file: 'tests/b.test.js', name: 'later', status: b }] : [])] } } });
+const requiredB = /required test did not run exactly once and pass: tests\/b\.test\.js \/ later/;
+
+test('a mapped test whose scenario waits for another task of an in-progress milestone may fail, and is named', t => {
+  const p = pendingSetup(t);
+  for (const [b, seen] of [['failed', 'failed'], [null, 'did not run'], ['skipped', 'skipped']]) {
+    const r = p.run('ci', { evidence: runs(p, 'passed', b) });
+    assert.equal(r.status, 0, `${b}: ${r.stdout}${r.stderr}`);
+    const o = out(r);
+    assert.equal(o.merge, 'agent', JSON.stringify(o.owner_reasons));
+    assert.ok(o.findings.includes(`note: pending acceptance test tests/b.test.js / later (AC-001-2) ${seen}; it may fail until T-0002 is Done, and must run once and pass from then on`), o.findings.join(' | '));
+  }
+  const own = p.run('ci', { evidence: runs(p, 'failed', 'passed') });
+  assert.equal(own.status, 1, 'the scenario this pull request delivers must pass');
+  assert.match(out(own).findings.join('\n'), /required test did not run exactly once and pass: tests\/a\.test\.js \/ works/);
+});
+
+test('a pending test must pass once its tasks are Done, once its milestone is no longer in progress, or outside every milestone', t => {
+  for (const [label, options] of [
+    ['the other task is Done on the baseline', { otherStatus: 'Done' }],
+    ['the milestone is Verified', { milestoneStatus: 'Verified' }],
+    ['the milestone is still a Draft', { milestoneStatus: 'Draft' }],
+    ['no milestone lists the scenario', { milestoneAcceptance: '[AC-001-1]' }],
+  ]) {
+    const p = pendingSetup(t, options);
+    const r = p.run('ci', { evidence: runs(p, 'passed', 'failed') });
+    assert.match(out(r).findings.join('\n'), requiredB, `${label}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.status, 1, label);
+  }
+});
+
+test('a candidate cannot make its own failing test pending by editing the records', t => {
+  for (const [label, change] of [
+    ['reopening the other task', q => q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Done', 'status: Ready'))],
+    ['adding a task that serves the scenario', q => q.write('docs/workflow/tasks/T-0003.md', fs.readFileSync(path.join(q.repo, 'docs/workflow/tasks/T-0002.md'), 'utf8').replaceAll('T-0002', 'T-0003').replace('status: Done', 'status: Draft'))],
+  ]) {
+    const p = pendingSetup(t, { otherStatus: 'Done', change });
+    const r = p.run('ci', { evidence: runs(p, 'passed', 'failed') });
+    assert.match(out(r).findings.join('\n'), requiredB, `${label}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.status, 1, label);
+  }
+});
+
 test('acceptance tests, the plan or the workflow changing leave the merge to the owner, whatever the checkpoint', t => {
   const acceptance = setup(t, {
     checkpoint: 'plan', configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: ['tests/acceptance-map.json', 'src/acceptance/**'] } }),

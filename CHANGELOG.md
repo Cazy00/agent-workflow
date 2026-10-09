@@ -2,6 +2,15 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.1.0
+
+Lets owner-approved acceptance tests be approved before the work and fail until it is done, in every mode (MAINT-0012).
+
+- **Pending scenarios:** while a milestone is `Authorised`, `Active` or `Blocked` on the approved baseline, the mapped tests of a scenario it lists may fail, or not run, as long as a task of that milestone serving the scenario is neither `Done` there nor delivered by the candidate. Every other mapped test must still run once and pass, and a pending one must from the pull request that delivers its last task. The baseline's records decide, so a candidate cannot make its own failing test pending. Before this, every mapped test had to pass on every production pull request, so tests written ahead of the work blocked every other task until all of them passed.
+- `wf ci`, `wf acceptance` and `wf lifecycle` apply it and name each pending test that did not pass in a `note:` finding; `wf brief` lists one for judgement instead of refusing the file, with `--baseline` and a round end. `wf attest` and derived baselines excuse none: a check's exit status cannot tell a pending failure from another.
+
+Moving a project to this pin: nothing changes until it maps tests ahead of the work. Then run them where a pending failure fails no required check (a CI job of their own, not in `required_checks`), and list every mapped test in the delivery evidence.
+
 ## v2.0.0
 
 Removes what no project used, and lets an upgrade clean up after older releases.

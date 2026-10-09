@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { payloadProblems, readPayloads } from './payloads.js';
 import { showPath } from './git.js';
+import { pendingNote } from './acceptance.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
 // In prose, control, format and default-ignorable characters are shown as escapes and other whitespace collapses to
@@ -42,17 +43,19 @@ function attests(p) {
 }
 
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
-// names (they must run once and pass; unmapped tests may be skipped), requiredChecks the approved profile's required
+// names (they must run once and pass; unmapped tests may be skipped), pending the scenarios whose mapped tests may still
+// fail (acceptance.js pendingAcceptance, from the approved baseline), requiredChecks the approved profile's required
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
 // With `attest` in the approved config, verification and integration come from the owner's own `wf attest` run
 // (procedures/approval-evidence.md *Attested evidence*): a round file the agent staged must not carry them.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, requiredChecks = null, changes = null, attestConfigured = false }) {
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, requiredChecks = null, changes = null, attestConfigured = false }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${code(e.message)}. Do not sign it.\n` }; }
   const problems = [];
+  const waived = [];
   const seen = new Map();
   payloads.forEach((p, i) => {
     const at = `#${i + 1} ${flat(p?.purpose ?? '?')} at ${clip(p?.revision, 12)}`;
@@ -67,7 +70,10 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
       if (required === null) problems.push(`${at}: the acceptance map at this revision cannot be read`);
       for (const m of required ?? []) {
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
-        if (runs.length !== 1 || runs[0].status !== 'passed') problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; it must run once and pass`);
+        if (runs.length === 1 && runs[0].status === 'passed') continue;
+        const waiting = pending?.get(m?.acceptance);
+        if (waiting) waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting }), 400)}. The gates refuse it in the round that delivers one of those tasks.`);
+        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; it must run once and pass`);
       }
     }
     if (attestConfigured && ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool !== 'wf attest') problems.push(`${at}: this project runs wf attest, so verification and integration come from your own attest run, not from a payload the agent wrote`);
@@ -85,7 +91,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   lines.push('## What you are signing', '', '| # | Purpose | Revision | Commit | What your signature says |', '|--:|---|---|---|---|');
   payloads.forEach((p, i) => lines.push(`| ${i + 1} | ${code(p?.purpose, 20)} | ${short(p?.revision)} | ${subject(p?.revision) ? code(subject(p.revision), 60) : '—'} | ${attests(p ?? {})} |`));
   lines.push('');
-  const judge = [];
+  const judge = [...waived];
   // Accepted findings above a note one by one; accepted notes on one line, with their resolutions beneath.
   for (const p of payloads.filter(p => p?.purpose === 'review')) {
     const accepted = (Array.isArray(p.findings) ? p.findings : []).filter(f => f?.status === 'accepted');

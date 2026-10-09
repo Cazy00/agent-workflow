@@ -516,7 +516,7 @@ The checking mechanism should:
 
 **A tag provides traceability, not proof of test quality.**
 
-The project may name its automated acceptance tests and their map in `paths.acceptance_tests`. They keep the gates of their category, and every change to them also needs the owner's governing-change approval, which the owner can give before implementation, at the revision that wrote them. The agent that writes the code then cannot also rewrite the tests that judge it. Every mapped test must be among them. The helpers and fixtures they use remain production code under review.
+The project may name its automated acceptance tests and their map in `paths.acceptance_tests`. They keep the gates of their category, and every change to them also needs the owner's governing-change approval, which the owner can give before implementation, at the revision that wrote them. The agent that writes the code then cannot also rewrite the tests that judge it. Every mapped test must be among them. The helpers and fixtures they use remain production code under review. Approved before the work, a scenario's tests fail until the work is done: while the milestone that lists it is authorised and not yet verified on the approved baseline, and a task of that milestone that serves it is neither Done there nor being integrated, its mapped tests are pending and may fail; every other mapped test must run once and pass. The baseline decides, so a candidate cannot make its own failing test pending.
 
 A test can retain its ID while its helper, fixture, setup, assertion, or execution configuration is weakened. Review must inspect those surrounding changes.
 

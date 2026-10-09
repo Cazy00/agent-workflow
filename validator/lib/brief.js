@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { payloadProblems, readPayloads } from './payloads.js';
 import { showPath } from './git.js';
-import { pendingNote } from './acceptance.js';
+import { pendingNote, pendingRun } from './acceptance.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
 // In prose, control, format and default-ignorable characters are shown as escapes and other whitespace collapses to
@@ -72,8 +72,8 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
         if (runs.length === 1 && runs[0].status === 'passed') continue;
         const waiting = pending?.get(m?.acceptance);
-        if (waiting) waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting }), 400)}. The gates refuse it in the round that delivers one of those tasks.`);
-        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; it must run once and pass`);
+        if (waiting && runs.length === 1) waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. The gates refuse it in the round that delivers one of those tasks.`);
+        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once' : 'it must run once and pass'}`);
       }
     }
     if (attestConfigured && ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool !== 'wf attest') problems.push(`${at}: this project runs wf attest, so verification and integration come from your own attest run, not from a payload the agent wrote`);

@@ -7,7 +7,7 @@ import { TASK_BRANCH, WfError, listedOwners, classifyPaths, dirSource, evaluateC
 import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
-import { evaluateAcceptance, pendingAcceptance } from './lib/acceptance.js';
+import { evaluateAcceptance, pendingIn, pendingNote } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
@@ -19,12 +19,13 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
+  pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
@@ -110,9 +111,10 @@ async function main() {
         const evidence = x => ['verification', 'review', 'integration'].every(purpose => at(purpose, x).length === 1);
         const listing = (purpose, f) => x => at(purpose, x).some(p => Array.isArray(p.paths) && p.paths.includes(f));
         const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
-        // Mapped tests that may still fail, by the approved baseline (MAINT-0012): the round delivers the tasks Done at its
-        // end and not at the baseline, and their own tests must pass. Without a round end every mapped test must.
-        pending = pendingAcceptance(loadAll(base, rd), [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done').map(t => t.id));
+        // Mapped tests that may still fail, pending by the approved baseline and the round's end alike (MAINT-0012): the
+        // round delivers the tasks Done at its end and not at the baseline, whose own tests must pass. Without a round
+        // end every mapped test must.
+        pending = pendingIn([loadAll(base, rd), loadAll(tip, rd)], [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done').map(t => t.id));
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
           if (unsafePath(f)) { changes.uncovered.push([f, 'could pass for another path; never derived']); continue; }
@@ -295,6 +297,16 @@ async function main() {
     } finally { mirror.cleanup(); }
   }
   else if (cmd === 'records') result = validateRecords(candidate, rd);
+  // The mapped tests that may fail at this candidate, as ci decides it (MAINT-0012): a project's acceptance job reads it
+  // and fails on any other mapped test, so that job can stay a required check. It reads; it grants nothing.
+  else if (cmd === 'pending') {
+    const delivered = taskId(); // --task, or the task its branch names (--branch in CI), as ci takes it
+    const waiting = pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], delivered ? [delivered] : []);
+    let map = [];
+    try { const v = JSON.parse(candidate.read('tests/acceptance-map.json') ?? '[]'); if (Array.isArray(v)) map = v; } catch { throw new WfError('tests/acceptance-map.json at the candidate cannot be read'); }
+    const pendingTests = map.filter(m => waiting.has(m?.acceptance)).map(m => ({ acceptance: m.acceptance, file: m.file, name: m.name, waiting: waiting.get(m.acceptance) }));
+    result = { ok: true, pending: pendingTests, required: map.filter(m => !waiting.has(m?.acceptance)).map(m => ({ acceptance: m.acceptance, file: m.file, name: m.name })) };
+  }
   else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
   else if (cmd === 'ci') {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
@@ -322,8 +334,11 @@ async function main() {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
       const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
       const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
-      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label, pending: pendingAcceptance(loadAll(baseline, rd), [task]) });
+      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label, pending: pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], [task]) });
       lifecycle.unverified = [...(lifecycle.unverified ?? []), ...(coverage.unverified ?? [])];
+      // Pending tests that did not pass are named, as ci names them (MAINT-0012).
+      coverage.notes = (coverage.pending ?? []).map(pendingNote);
+      lifecycle.notes = [...(lifecycle.notes ?? []), ...coverage.notes];
       if (!coverage.ok) { lifecycle.ok = false; lifecycle.errors.push(...coverage.errors); }
       if (cmd === 'acceptance') result = coverage;
       if (cmd === 'lifecycle') {

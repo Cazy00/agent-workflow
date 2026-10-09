@@ -26,7 +26,8 @@
   },
   "v2.1.0": {
     "notes": [
-      "Owner-approved acceptance tests may now land with the plan and fail until the tasks that serve their scenario are Done (pending, SCHEMA.md). Run them where a pending failure fails no required check, such as a CI job of their own that is not in required_checks, and list every mapped test in the delivery evidence."
+      "A mapped test of a scenario an in-progress milestone still waits on (an open task serving it, other than the pull request's) may now fail, including one that passes today: check tests/acceptance-map.json for such scenarios before moving the pin.",
+      "To approve acceptance tests before the work: authorise the milestone, add the tests in its first task (procedures/readiness.md), and run them in a required CI job that fails only on a mapped test `wf pending` does not list."
     ]
   }
 }

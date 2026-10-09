@@ -309,6 +309,10 @@ test('attest still refuses a pending acceptance test that fails; the brief shows
   assert.match(brief.problems.join(' '), /check unit is failed/);
   const strict = renderBrief({ file: r.out, raw, mapped });
   assert.match(strict.problems.join(' '), /later scenario ran 1 time\(s\), failed; it must run once and pass/);
+  // From the command line the brief works the pending scenarios out from the baseline and the round's end itself.
+  const cliBrief = spawnSync(process.execPath, [cli, 'brief', '--payloads', r.out, '--repo', p.repo, '--baseline', B2, '--candidate', C2], { encoding: 'utf8' });
+  assert.match(cliBrief.stdout, /\*\*Pending acceptance test\*\* at `[0-9a-f]{12}`: `pending acceptance test tests\/acceptance\/later\.test\.mjs \/ later scenario \(AC-001-2\) failed; it may fail until T-0002 is Done/);
+  assert.doesNotMatch(cliBrief.stdout.split('## Problems')[1] ?? '', /later scenario/);
 });
 
 test('attest refuses what it cannot vouch for: a candidate without the baseline, a missing required check, an output in the checkout', t => {

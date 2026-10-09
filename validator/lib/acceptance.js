@@ -1,15 +1,14 @@
 import { safePath } from './sources.js';
+import { list } from './records.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
-const list = v => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
 const IN_PROGRESS = ['Authorised', 'Active', 'Blocked'];
 
 // MAINT-0012: owner-approved acceptance tests are written and approved before the work (readiness.md), so they fail
 // until the tasks that serve them are done. A scenario is pending while the milestone that lists it is in progress and a
-// task of that milestone that serves it is not yet Done, other than the tasks this change delivers; its mapped tests may
-// fail or be missing until then, and must run once and pass from then on. Read it from the approved baseline's records
-// (`records` is lib/records.js loadAll), so a candidate cannot make its own failing test pending. Returns acceptance ID →
-// the IDs of the tasks it waits for.
+// task of that milestone that serves it is not yet Done, other than the tasks a change delivers; its mapped tests must
+// still run once, and may fail until then. `records` is lib/records.js loadAll. Returns acceptance ID → the IDs of the
+// tasks it waits for.
 export function pendingAcceptance(records, delivering = []) {
   const pending = new Map();
   const tasks = [...(records?.tasks?.values() ?? [])].map(r => r.data ?? {});
@@ -24,8 +23,33 @@ export function pendingAcceptance(records, delivering = []) {
   return pending;
 }
 
-// How a pending mapped test that did not pass is reported (ci's notes, the signing brief, wf attest).
-export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.runs === 0 ? 'did not run' : w.runs === 1 ? w.status : `ran ${w.runs} times`}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must run once and pass from then on`;
+// What every given set of records leaves pending: a gate passes the approved baseline's records and the candidate's (and
+// closeout the trusted tip's too), so neither side alone can excuse a test. Records the agent wrote can only make it
+// stricter; which scenarios wait for which tasks grows only with the owner (pendingChange, ci.js).
+export function pendingIn(sets, delivering = []) {
+  const [first, ...rest] = sets.map(r => pendingAcceptance(r, delivering));
+  const out = new Map();
+  for (const [id, waiting] of first ?? []) {
+    const kept = waiting.filter(t => rest.every(p => p.get(id)?.includes(t)));
+    if (kept.length && rest.every(p => p.has(id))) out.set(id, kept);
+  }
+  return out;
+}
+
+// How the scenarios waiting for tasks differ from `before` to `after` (records, nothing delivered): `added` lists each
+// scenario that waits for a task it did not wait for before (a new or reopened task, or one given the scenario), which
+// only the owner may approve, and `completed` each scenario that stops waiting, with the tasks it waited for, whose
+// mapped tests must pass from then on.
+export function pendingChange(before, after) {
+  const was = pendingAcceptance(before), is = pendingAcceptance(after);
+  const added = [...is].flatMap(([acceptance, ts]) => ts.filter(t => !was.get(acceptance)?.includes(t)).map(task => ({ acceptance, task })));
+  const completed = [...was].filter(([acceptance]) => !is.has(acceptance)).map(([acceptance, tasks]) => ({ acceptance, tasks }));
+  return { added, completed };
+}
+
+// A mapped test that did not pass, and the tasks its scenario waits for (ci's notes, the signing brief).
+export const pendingRun = (m, runs, waiting) => ({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
+export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.status}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must pass from then on`;
 
 export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map() }) {
   const errors = [];
@@ -133,8 +157,10 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     for (const m of Array.isArray(maps) ? maps : []) {
       const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
       if (runs.length === 1 && runs[0].status === 'passed') continue;
+      // A pending test still runs once and is reported; only its result may be a failure (MAINT-0012).
       const waiting = pending.get(m.acceptance);
-      if (waiting) waived.push({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
+      if (waiting && runs.length === 1) waived.push(pendingRun(m, runs, waiting));
+      else if (waiting) errors.push(`pending test did not run exactly once: ${m.file} / ${m.name} (it may fail until ${waiting.join(', ')} ${waiting.length === 1 ? 'is' : 'are'} Done, but must run and be reported)`);
       else errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
     }
   }

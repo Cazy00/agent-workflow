@@ -24,6 +24,7 @@ import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths, isAcceptanceTest } from './paths.js';
 import { payloadProblems } from './payloads.js';
+import { pendingChange } from './acceptance.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 const CHANGE = { governing: 'governing-change', enforcement: 'workflow-change' };
@@ -148,6 +149,11 @@ export function withDerivedBaselines(trust, repo) {
     let validation;
     try { validation = validateRecords(source(revision), configs[1].records_dir ?? 'docs/workflow'); } catch (e) { validation = { errors: [e.message] }; }
     for (const e of validation.errors) reasons.push(`record: ${e}`);
+    // Task records ride along without a receipt, but which scenarios wait for which tasks is the owner's (MAINT-0012).
+    try {
+      const added = pendingChange(loadAll(source(from), configs[0].records_dir ?? 'docs/workflow'), loadAll(source(revision), configs[1].records_dir ?? 'docs/workflow')).added;
+      if (added.length) reasons.push(`records make acceptance scenarios wait for tasks they did not wait for at the approved baseline (${added.map(w => `${w.acceptance} for ${w.task}`).join(', ')}); only an explicit baseline receipt approves that`);
+    } catch (e) { reasons.push(`cannot compare which acceptance scenarios wait for tasks: ${e.message}`); }
     if (reasons.length) return refuse(reasons, { from });
     // Claim what the derivation used, so a gate that relied on an unsigned payload is provisional.
     take('baseline', from);

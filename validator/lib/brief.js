@@ -45,13 +45,13 @@ function attests(p) {
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
 // names (they must run once and pass; unmapped tests may be skipped), pending(revision) the scenarios whose mapped tests
 // may still fail at that revision, or null (acceptance.js pendingIn, as cli.js works it out), needsBaseline(revision) the
-// revisions that then need an explicit baseline payload, requiredChecks the approved profile's required
+// revisions that then need an explicit baseline payload, widened the scenario-for-task waits the round adds (cli.js), requiredChecks the approved profile's required
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
 // With `attest` in the approved config, verification and integration come from the owner's own `wf attest` run
 // (procedures/approval-evidence.md *Attested evidence*): a round file the agent staged must not carry them.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, needsBaseline = null, requiredChecks = null, changes = null, attestConfigured = false }) {
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, needsBaseline = null, widened = [], requiredChecks = null, changes = null, attestConfigured = false }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${code(e.message)}. Do not sign it.\n` }; }
@@ -112,6 +112,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   for (const p of payloads.filter(p => ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool === 'wf attest')) judge.push(`- **From \`wf attest\`** at ${short(p.revision)} (${p.purpose}): ${p.attested.sandbox ? `sandboxed by ${code(p.attested.sandbox.launcher, 60)}` : '**unsandboxed**, in an account that could not read the protected paths'}. Sign it only if you ran that attest yourself and this file is the one it wrote.`);
   for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(Array.isArray(p.scenarios) ? p.scenarios : []).map(x => code(x)).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);
+  if (widened.length) judge.push(`- **Lets acceptance tests fail:** the round makes ${widened.map(w => code(w, 60)).join(', ')} wait, so those scenarios' tests may fail until those tasks are Done. Sign only if you meant that.`);
   if (changes?.unknown) judge.push(`- **Paths changed in the round** could not be listed: ${code(changes.unknown)}`);
   for (const c of changes?.records ?? []) judge.push(`- **Record change with no receipt of its own:** ${typeof c === 'string' ? code(c) : whole(c.path)}`);
   if (changes?.uncovered?.length) judge.push(`- **Changed with no payload covering it** (a derived baseline refuses these; cover each or leave it out): ${changes.uncovered.map(([f, why]) => `${whole(f)} (${why})`).join(', ')}`);

@@ -1,8 +1,12 @@
 import { safePath } from './sources.js';
 import { list } from './records.js';
+import { ACCEPTANCE } from './acceptance-files.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
 const IN_PROGRESS = ['Authorised', 'Active', 'Blocked'];
+
+// Pending tests apply only where the approved config names owner-approved acceptance tests (MAINT-0012).
+export const ownerTests = config => (config?.paths?.acceptance_tests ?? []).length > 0;
 
 // MAINT-0012: owner-approved acceptance tests are written and approved before the work (readiness.md), so they fail
 // until the tasks that serve them are done. A scenario is pending while the milestone that lists it is in progress and a
@@ -39,9 +43,9 @@ export function pendingIn(sets, delivering = []) {
 // The scenarios a revision has, or will have, an automated test for: those `docs/workflow/acceptance.json` defines as
 // `automated` (which must be mapped before a task serving one integrates) and those its map names. Null when either file
 // cannot be read, so a check that uses them fails closed by counting every scenario. `source` is a lib/sources.js source.
-export function testedIds(source, recordsDir = 'docs/workflow') {
+export function testedIds(source) {
   try {
-    const defs = JSON.parse(source.read(`${recordsDir}/acceptance.json`) ?? '{"examples":[]}').examples;
+    const defs = JSON.parse(source.read(ACCEPTANCE) ?? '{"examples":[]}').examples; // a fixed path, whatever records_dir is
     const raw = source.read(MAP); const map = raw == null ? [] : JSON.parse(raw);
     if (!Array.isArray(defs) || !Array.isArray(map)) return null;
     return new Set([...defs.filter(d => d?.method === 'automated').map(d => d.id), ...map.map(m => m?.acceptance)]);
@@ -56,7 +60,10 @@ export function testedIds(source, recordsDir = 'docs/workflow') {
 export function pendingChange(before, after, testedBefore = null, testedAfter = null) {
   const only = (pending, mapped) => new Map([...pending].filter(([id]) => !mapped || mapped.has(id)));
   const was = only(pendingAcceptance(before), testedBefore), is = only(pendingAcceptance(after), testedAfter);
-  const added = [...is].flatMap(([acceptance, ts]) => ts.filter(t => !was.get(acceptance)?.includes(t)).map(task => ({ acceptance, task })));
+  // `tested`: the scenario became tested here (a test mapped, or its definition made automated), so every task it waits
+  // for now lets a test fail, whichever records the change touches.
+  const newly = id => !!testedBefore && !testedBefore.has(id) && !!testedAfter?.has?.(id);
+  const added = [...is].flatMap(([acceptance, ts]) => ts.filter(t => !was.get(acceptance)?.includes(t)).map(task => ({ acceptance, task, tested: newly(acceptance) })));
   const completed = [...was].filter(([acceptance]) => !is.has(acceptance)).map(([acceptance, tasks]) => ({ acceptance, tasks }));
   return { added, completed };
 }

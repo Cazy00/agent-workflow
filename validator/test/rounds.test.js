@@ -30,7 +30,7 @@ function round(t, { derived = true, mapped = false, ownerTests = false } = {}) {
   const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   const commit = message => { git('add', '-A'); git('commit', '-qm', message); return git('rev-parse', 'HEAD'); };
   git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
-  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) }, ...(ownerTests ? { paths: { ...c.paths, acceptance_tests: ['tests/**'] } } : {}) }, null, 2); });
+  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) }, ...(ownerTests ? { paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'], acceptance_tests: ['tests/**'] } } : {}) }, null, 2); });
   if (mapped) {
     edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
     write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/feature.js', name: 'required scenario' }]));

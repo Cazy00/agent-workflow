@@ -24,7 +24,7 @@ import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths, isAcceptanceTest } from './paths.js';
 import { payloadProblems } from './payloads.js';
-import { pendingChange, testedIds } from './acceptance.js';
+import { ownerTests as namesOwnerTests, pendingChange, testedIds } from './acceptance.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 const CHANGE = { governing: 'governing-change', enforcement: 'workflow-change' };
@@ -156,13 +156,15 @@ export function withDerivedBaselines(trust, repo) {
     // governing path covered by the owner's own receipt above.
     try {
       const rds = configs.map(c => c.records_dir ?? 'docs/workflow');
-      const ownerTests = configs.every(c => (c.paths?.acceptance_tests ?? []).length > 0);
+      const ownerTests = configs.every(namesOwnerTests);
       const [was, is] = [loadAll(source(from), rds[0]), loadAll(source(revision), rds[1])];
-      const waits = ownerTests ? pendingChange(was, is, testedIds(source(from), rds[0]), testedIds(source(revision), rds[1])) : { added: [], completed: [] };
+      const waits = ownerTests ? pendingChange(was, is, testedIds(source(from)), testedIds(source(revision))) : { added: [], completed: [] };
       const changed = (map, id) => [was[map].get(id)?.path, is[map].get(id)?.path].some(p => p && diff.has(p));
+      // A changed milestone record exempts only where both configs protect it (governing), so its own receipt covers it.
+      const reviewed = id => changed('milestones', id) && [was.milestones.get(id)?.path, is.milestones.get(id)?.path].filter(Boolean).every(p => configs.every(c => classifyPaths(c, [p])[0].category === 'governing'));
       const milestoneOf = (id, first, second) => [first, second].map(r => r.tasks.get(id)?.data?.milestone).find(Boolean);
-      const added = waits.added.filter(w => changed('tasks', w.task) && !changed('milestones', milestoneOf(w.task, is, was))).map(w => `${w.acceptance} for ${w.task}`);
-      const completed = production ? [] : waits.completed.filter(w => w.tasks.some(t => changed('tasks', t)) && !w.tasks.some(t => changed('milestones', milestoneOf(t, was, is)))).map(w => w.acceptance);
+      const added = waits.added.filter(w => (w.tested || changed('tasks', w.task)) && !reviewed(milestoneOf(w.task, is, was))).map(w => `${w.acceptance} for ${w.task}`);
+      const completed = production ? [] : waits.completed.filter(w => w.tasks.some(t => changed('tasks', t)) && !w.tasks.some(t => reviewed(milestoneOf(t, was, is)))).map(w => w.acceptance);
       if (added.length) reasons.push(`records make acceptance scenarios wait for tasks they did not wait for at the approved baseline (${added.join(', ')}); only an explicit baseline receipt approves that`);
       if (completed.length) reasons.push(`records complete acceptance scenarios without a test run (${completed.join(', ')}); only an explicit baseline receipt approves that`);
     } catch (e) { reasons.push(`cannot compare which acceptance scenarios wait for tasks: ${e.message}`); }

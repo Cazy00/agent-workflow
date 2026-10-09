@@ -180,7 +180,9 @@ test('testedIds counts automated and mapped scenarios, and fails closed', () => 
   const rec = (id, data) => [id, { data: { id, ...data } }];
   const records = t2 => ({ milestones: new Map([rec('M-0001', { status: 'Active', acceptance: ['AC-001-1', 'AC-001-2'] })]), tasks: new Map([rec('T-0001', { milestone: 'M-0001', status: 'Ready', acceptance: ['AC-001-1', 'AC-001-2'] }), ...(t2 ? [rec('T-0002', { milestone: 'M-0001', status: 'Draft', acceptance: ['AC-001-1', 'AC-001-2'] })] : [])]) });
   const tested = new Set(['AC-001-1']);
-  assert.deepEqual(pendingChange(records(false), records(true), tested, tested).added, [{ acceptance: 'AC-001-1', task: 'T-0002' }]);
+  assert.deepEqual(pendingChange(records(false), records(true), tested, tested).added, [{ acceptance: 'AC-001-1', task: 'T-0002', tested: false }]);
+  // A scenario tested only after the change names every task it waits for (X2).
+  assert.deepEqual(pendingChange(records(true), records(true), new Set(), tested).added, [{ acceptance: 'AC-001-1', task: 'T-0001', tested: true }, { acceptance: 'AC-001-1', task: 'T-0002', tested: true }]);
   assert.deepEqual(pendingChange(records(false), records(true), null, null).added.map(w => w.acceptance), ['AC-001-1', 'AC-001-2']);
 });
 

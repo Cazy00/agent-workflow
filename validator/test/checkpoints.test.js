@@ -142,7 +142,8 @@ function pendingSetup(t, { milestoneStatus = 'Authorised', milestoneAcceptance =
   return setup(t, {
     label, checkpoint: label === 'owner-merge' ? 'milestone' : undefined,
     // The project names its acceptance tests, so the owner approves them (pending applies only then).
-    configEdit: c => { const d = { ...c, paths: { ...c.paths, acceptance_tests: OWNED } }; return configEdit ? configEdit(d) : d; },
+    // Milestone records are governing, as a project protects them (the fixture's are planning).
+    configEdit: c => { const d = { ...c, paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'], acceptance_tests: OWNED } }; return configEdit ? configEdit(d) : d; },
     baselineEdit: q => {
       q.write('tests/a.test.js', 'test("works", () => {});\n');
       q.write('tests/b.test.js', 'test("later", () => {});\n');
@@ -537,5 +538,59 @@ test('without owner-approved acceptance tests nothing is pending', t => {
   assert.deepEqual(out(p.run('pending')).pending, []);
   const q = pendingSetup(t, { configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: [] } }), change: q2 => t3(q2, 'Draft', '[AC-001-1]') });
   assert.equal(out(q.run('ci')).merge, 'agent', 'its task records stay bookkeeping');
+});
+
+// The fourth review of MAINT-0012.
+test('a completed scenario\'s milestone is the one it waited in: moving its task elsewhere does not pick the record (R3-3)', t => {
+  const p = pendingSetup(t, { label: 'enforced', baselineExtra: m9, change: q => { q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('milestone: M-0001', 'milestone: M-0009')); q.edit('docs/workflow/milestones/M-0009.md', x => `${x}\nT-0002 moves here.\n`); } });
+  const r = p.run('ci');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(out(r).findings.join('\n'), /it completes acceptance scenarios without a test run \(AC-001-2\)/);
+});
+
+test('a milestone record stands for the owner\'s review only where the config protects it (X3)', t => {
+  const unprotected = c => ({ ...c, paths: { ...c.paths, governing: c.paths.governing.filter(g => g !== 'docs/workflow/milestones/**') } });
+  const p = pendingSetup(t, { label: 'enforced', configEdit: unprotected, change: x => { t3(x, 'Draft', '[AC-001-1]'); x.edit('docs/workflow/milestones/M-0001.md', y => `${y}\nT-0003 serves AC-001-1 too.\n`); } });
+  assert.equal(p.run('ci').status, 1);
+});
+
+test('a scenario made tested while it waits for a task names that task to the owner (X2)', t => {
+  // AC-001-1 is an inspection scenario served by T-0001 and a Draft T-0003; the change makes it automated.
+  const p = setup(t, {
+    checkpoint: 'milestone', configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: OWNED } }),
+    baselineEdit: q => q.write('docs/workflow/tasks/T-0003.md', fs.readFileSync(path.join(q.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0003').replace('status: Ready', 'status: Draft')),
+    change: q => q.edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated')),
+  });
+  const r = p.run('ci');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(out(r).owner_reasons.join(' | '), /wait for tasks they did not wait for, so their mapped tests may fail until then: AC-001-1 for T-0001, AC-001-1 for T-0003/);  const enforced = setup(t, {
+    label: 'enforced', configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: OWNED } }),
+    baselineEdit: q => q.write('docs/workflow/tasks/T-0003.md', fs.readFileSync(path.join(q.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0003').replace('status: Ready', 'status: Draft')),
+    change: q => q.edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated')),
+  });
+  assert.equal(enforced.run('ci').status, 1, 'enforced mode refuses it unless the protected milestone record changes too');
+});
+
+test('scenario definitions are read from their fixed path whatever records_dir is (X1)', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-records-dir-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
+  const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const edit = (p, fn) => fs.writeFileSync(path.join(repo, p), fn(fs.readFileSync(path.join(repo, p), 'utf8')));
+  fs.mkdirSync(path.join(repo, 'records'));
+  for (const f of ['profile.md', 'milestones', 'tasks', 'decisions']) fs.renameSync(path.join(repo, 'docs/workflow', f), path.join(repo, 'records', f));
+  edit('docs/workflow/config.json', x => { const c = JSON.parse(x); c.approval = { ...c.approval, label: 'owner-merge', mechanism: 'owner-merge', checkpoint: 'milestone' }; c.repository = 'fixture/project'; c.records_dir = 'records'; c.paths.governing.push('records/profile.md', 'records/decisions/**', 'records/milestones/**'); c.paths.planning.push('records/tasks/**'); c.paths.acceptance_tests = OWNED; return JSON.stringify(c); });
+  edit('records/profile.md', x => x.replace('approval_label: enforced', 'approval_label: owner-merge'));
+  edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
+  git('init', '-q'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
+  git('add', '.'); git('commit', '-qm', 'initial'); const initial = git('rev-parse', 'HEAD');
+  edit('records/tasks/T-0001.md', x => x.replaceAll('fixture-rev', initial));
+  git('add', '.'); git('commit', '-qm', 'baseline'); const baseline = git('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'records/tasks/T-0002.md'), fs.readFileSync(path.join(repo, 'records/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Ready', 'status: Draft'));
+  git('add', '.'); git('commit', '-qm', 'a follow-up task'); const candidate = git('rev-parse', 'HEAD');
+  const r = spawnSync(process.execPath, [cli, 'ci', '--repo', repo, '--baseline', baseline, '--candidate', candidate, '--json'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'owner');
+  assert.match(out(r).owner_reasons.join(' | '), /AC-001-1 for T-0002/);
 });
 

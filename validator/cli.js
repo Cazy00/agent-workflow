@@ -7,7 +7,7 @@ import { TASK_BRANCH, WfError, listedOwners, classifyPaths, dirSource, evaluateC
 import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
 import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
-import { evaluateAcceptance, pendingIn, pendingNote } from './lib/acceptance.js';
+import { evaluateAcceptance, ownerTests, pendingChange, pendingIn, pendingNote, testedIds } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
@@ -19,8 +19,6 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
-// Pending acceptance tests (MAINT-0012) apply only where the approved config names owner-approved acceptance tests.
-const ownerTests = config => (config?.paths?.acceptance_tests ?? []).length > 0;
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
@@ -87,7 +85,7 @@ async function main() {
     const run = repo ? gitRunner(repo) : null;
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
-    let requiredChecks = null, changes = null, attestConfigured = false, pending = null, needsBaseline = null;
+    let requiredChecks = null, changes = null, attestConfigured = false, pending = null, needsBaseline = null, widened = [];
     if (repo && o.baseline) {
       // Everything the round changes from the approved baseline to its end (--candidate, or the latest payload
       // revision), judged path by path by both configs, as a derived baseline judges it (lib/derived.js).
@@ -123,12 +121,15 @@ async function main() {
           if (tasks.length !== 1 || !sha.test(tasks[0].baseline_revision ?? '')) return null;
           try { return pendingIn([baseRecords, loadAll(gitSource(repo, tasks[0].baseline_revision), rd), loadAll(gitSource(repo, rev), rd)], [tasks[0].id]); } catch { return null; }
         };
-        // A derived baseline never rests on evidence with a failing test, so after one the round needs explicit baselines:
-        // where each later task of the round builds on it, or, if none does, at the round's end.
+        // A derived baseline never rests on evidence with a failing test, so after one the round needs an explicit baseline
+        // where the next task of the round builds on it (later ones derive again), or, if none does, at the round's end.
         if (pending) needsBaseline = rev => {
-          const later = [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done' && t.implemented !== rev && sha.test(t.baseline_revision ?? '') && t.baseline_revision !== base.name && contains(rev, t.baseline_revision)).map(t => t.baseline_revision);
-          return later.length ? [...new Set(later)] : [end];
+          const later = [...new Set([...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done' && t.implemented !== rev && sha.test(t.baseline_revision ?? '') && t.baseline_revision !== base.name && contains(rev, t.baseline_revision)).map(t => t.baseline_revision))];
+          const nearest = later.filter(r => later.every(x => contains(r, x)));
+          return later.length ? nearest : [end];
         };
+        // What the round's records let fail that the baseline did not (MAINT-0012), for the owner's judgement.
+        if (ownerTests(configs[0])) widened = pendingChange(baseRecords, loadAll(tip, rd), testedIds(base), testedIds(tip)).added.map(w => `${w.acceptance} for ${w.task}`);
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
           if (unsafePath(f)) { changes.uncovered.push([f, 'could pass for another path; never derived']); continue; }
@@ -152,7 +153,7 @@ async function main() {
         }
       }
     }
-    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured, pending, needsBaseline });
+    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured, pending, needsBaseline, widened });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;

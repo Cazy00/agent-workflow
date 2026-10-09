@@ -54,6 +54,12 @@ export function testedIds(source) {
   } catch { return null; }
 }
 
+// The scenarios a revision's map names, or null when it cannot be read (callers then treat every scenario as unmapped).
+export function mappedIds(source) {
+  try { const raw = source.read(MAP); const v = raw == null ? [] : JSON.parse(raw); return Array.isArray(v) ? new Set(v.map(m => m?.acceptance)) : null; }
+  catch { return null; }
+}
+
 // How the scenarios waiting for tasks differ from `before` to `after` (records, nothing delivered), counting only scenarios
 // with a test, or an automated definition awaiting one, on that side (`testedBefore`, `testedAfter`, from testedIds; null
 // counts all): `added` lists each scenario that waits for a task it did not wait for before (a new or reopened task, or one

@@ -614,3 +614,34 @@ test('wf pending refuses a lost or unreadable acceptance map', t => {
   }
 });
 
+// The sixth review of MAINT-0012 (Codex): wf pending checks the map as the gate does, and an automated scenario completed
+// with no mapped test has had no test run, whatever else the pull request changes.
+test('wf pending refuses a map that loses or moves a required mapping', t => {
+  for (const [label, map] of [
+    ['emptied', []],
+    ['moved to the pending scenario', [{ acceptance: 'AC-001-2', file: 'tests/a.test.js', name: 'works' }, { acceptance: 'AC-001-2', file: 'tests/b.test.js', name: 'later' }]],
+  ]) {
+    const p = pendingSetup(t, { change: q => q.write('tests/acceptance-map.json', JSON.stringify(map)) });
+    const r = p.run('pending');
+    assert.equal(r.status, 2, `${label}: ${r.stdout}`);
+    assert.match(r.stderr, /the candidate's acceptance map fails the gate: .*removed required mapping/, label);
+  }
+});
+
+test('completing an automated scenario that has no mapped test needs the owner, even beside production changes', t => {
+  const third = q => {
+    q.edit('docs/workflow/acceptance.json', x => { const a = JSON.parse(x); a.examples.push({ id: 'AC-001-3', requirement: 'docs/specs/feature.md', method: 'automated' }); return JSON.stringify(a); });
+    q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1, AC-001-2]', 'acceptance: [AC-001-1, AC-001-2, AC-001-3]'));
+    t3(q, 'Ready', '[AC-001-3]');
+  };
+  const change = q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/workflow/tasks/T-0003.md', x => x.replace('status: Ready', 'status: Done')); };
+  const p = pendingSetup(t, { baselineExtra: third, change });
+  const r = p.run('ci', { evidence: runs(p, 'passed', 'failed') });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'owner');
+  assert.match(out(r).owner_reasons.join(' | '), /it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: AC-001-3/);
+  const q = pendingSetup(t, { label: 'enforced', baselineExtra: third, change });
+  const e = q.run('ci', { evidence: runs(q, 'passed', 'failed') });
+  assert.equal(e.status, 1, e.stdout);
+  assert.match(out(e).findings.join('\n'), /it completes acceptance scenarios without a test run \(AC-001-3\)/);
+});

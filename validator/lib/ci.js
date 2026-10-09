@@ -6,7 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
-import { evaluateAcceptance, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
+import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors } from './delivery-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
@@ -219,7 +219,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // baseline's), so moving a task to another milestone does not choose the record the owner must review.
   const milestoneOf = (id, side) => (side === 'baseline' ? [baselineRecords, candidateRecords] : [candidateRecords, baselineRecords]).map(r => r.tasks.get(id)?.data?.milestone).find(Boolean);
   const added = waits.added.filter(w => w.tested || touched('tasks', w.task));
-  const completed = production.length ? [] : waits.completed.filter(w => w.tasks.some(t => touched('tasks', t)));
+  // A completed scenario runs its mapped tests only in a production change, and only if it has some: otherwise (a
+  // records-only change, or an automated scenario still unmapped) it completes without a test run.
+  const mappedNow = mappedIds(candidate);
+  const completed = waits.completed.filter(w => w.tasks.some(t => touched('tasks', t)) && (!production.length || !mappedNow?.has(w.acceptance)));
   const unreviewed = items => items.filter(w => !(w.task ? [w.task] : w.tasks).some(t => reviewed(milestoneOf(t, w.task ? 'candidate' : 'baseline'))));
   const waiting = added.map(w => `${w.acceptance} for ${w.task}`), done = completed.map(w => w.acceptance);
   if (trust?.label === 'enforced') {

@@ -21,7 +21,7 @@ const REVIEW = ['scope', 'correctness', 'maintainability', 'security', 'regressi
 
 // main holds the approved baseline B; the task works on its own branch: candidate C (src/a.js) with its receipts, then
 // D, the records-only commit that marks T-0001 Done.
-function round(t, { derived = true, mapped = false, ownerTests = false } = {}) {
+function round(t, { derived = true, mapped = false, ownerTests = false, automated = false } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-rounds-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
@@ -31,6 +31,7 @@ function round(t, { derived = true, mapped = false, ownerTests = false } = {}) {
   const commit = message => { git('add', '-A'); git('commit', '-qm', message); return git('rev-parse', 'HEAD'); };
   git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
   edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) }, ...(ownerTests ? { paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'], acceptance_tests: ['tests/**'] } } : {}) }, null, 2); });
+  if (automated) edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
   if (mapped) {
     edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
     write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/feature.js', name: 'required scenario' }]));
@@ -868,4 +869,12 @@ test('a milestone round with a pending failure closes once the baseline it needs
   assert.match(without.split('## Problems')[1] ?? '', new RegExp(`add a baseline payload at ${D1.slice(0, 12)}`));
   const withIt = brief(p.unsigned([...round1.slice(1), { purpose: 'baseline', revision: D1 }]));
   assert.doesNotMatch(withIt.split('## Problems')[1] ?? '', /baseline payload at|later scenario/);
+});
+
+// The sixth review (Codex): a round's production evidence runs a scenario's tests only if it has some mapped.
+test('a derived baseline refuses completing an automated scenario that has no mapped test, even with production evidence', t => {
+  const p = round(t, { ownerTests: true, automated: true });
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(p.D);
+  assert.equal(d.approved, false);
+  assert.match(d.reasons.join(' '), /records complete acceptance scenarios without a test run \(AC-001-1\)/);
 });

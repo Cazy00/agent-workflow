@@ -323,6 +323,10 @@ async function main() {
     let map;
     try { map = JSON.parse(raw ?? '[]'); } catch { map = null; }
     if (!Array.isArray(map)) throw new WfError('tests/acceptance-map.json at the candidate is not a JSON array of mappings');
+    // The map must pass the gate's own checks first (acceptance.js): no required mapping lost or moved to another
+    // scenario, no unknown scenario or missing test file, the delivered task's automated scenarios covered.
+    const mapCheck = evaluateAcceptance({ baseline, candidate, task: delivered, requiredIds: delivered ? list(loadAll(candidate, rd).tasks.get(delivered)?.data?.acceptance) : [], enforced: 'pending' });
+    if (mapCheck.errors.length) throw new WfError(`the candidate's acceptance map fails the gate: ${mapCheck.errors.join('; ')}`);
     // A test may fail only when every scenario it is mapped to is pending; `required` lists every other mapped test.
     const same = (a, b) => a?.file === b?.file && a?.name === b?.name;
     const mayFail = m => map.filter(x => same(x, m)).every(x => waiting.has(x?.acceptance));

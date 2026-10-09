@@ -111,10 +111,16 @@ async function main() {
         const evidence = x => ['verification', 'review', 'integration'].every(purpose => at(purpose, x).length === 1);
         const listing = (purpose, f) => x => at(purpose, x).some(p => Array.isArray(p.paths) && p.paths.includes(f));
         const before = loadAll(base, rd).tasks, now = loadAll(tip, rd).tasks;
-        // Mapped tests that may still fail, pending by the approved baseline and the round's end alike (MAINT-0012): the
-        // round delivers the tasks Done at its end and not at the baseline, whose own tests must pass. Without a round
-        // end every mapped test must.
-        pending = pendingIn([loadAll(base, rd), loadAll(tip, rd)], [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done').map(t => t.id));
+        // Mapped tests that may still fail at a payload's revision, as closeout's gate decides it for the task the round
+        // implements there (MAINT-0012): pending by the approved baseline (closeout's trusted tip), the task's recorded
+        // baseline_revision and that revision alike, with the task delivered. A revision no task of the round names as
+        // implemented, or no round end, gets no pending tests.
+        const baseRecords = loadAll(base, rd);
+        pending = rev => {
+          const tasks = [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done' && t.implemented === rev);
+          if (tasks.length !== 1 || !sha.test(tasks[0].baseline_revision ?? '')) return null;
+          try { return pendingIn([baseRecords, loadAll(gitSource(repo, tasks[0].baseline_revision), rd), loadAll(gitSource(repo, rev), rd)], [tasks[0].id]); } catch { return null; }
+        };
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
           if (unsafePath(f)) { changes.uncovered.push([f, 'could pass for another path; never derived']); continue; }
@@ -304,8 +310,11 @@ async function main() {
     const waiting = pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], delivered ? [delivered] : []);
     let map = [];
     try { const v = JSON.parse(candidate.read('tests/acceptance-map.json') ?? '[]'); if (Array.isArray(v)) map = v; } catch { throw new WfError('tests/acceptance-map.json at the candidate cannot be read'); }
-    const pendingTests = map.filter(m => waiting.has(m?.acceptance)).map(m => ({ acceptance: m.acceptance, file: m.file, name: m.name, waiting: waiting.get(m.acceptance) }));
-    result = { ok: true, pending: pendingTests, required: map.filter(m => !waiting.has(m?.acceptance)).map(m => ({ acceptance: m.acceptance, file: m.file, name: m.name })) };
+    // A test may fail only when every scenario it is mapped to is pending; `required` lists every other mapped test.
+    const same = (a, b) => a?.file === b?.file && a?.name === b?.name;
+    const mayFail = m => map.filter(x => same(x, m)).every(x => waiting.has(x?.acceptance));
+    const entry = m => ({ acceptance: m.acceptance, file: m.file, name: m.name });
+    result = { ok: true, delivered, pending: map.filter(mayFail).map(m => ({ ...entry(m), waiting: waiting.get(m.acceptance) })), required: map.filter(m => !mayFail(m)).map(entry) };
   }
   else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
   else if (cmd === 'ci') {

@@ -27,7 +27,8 @@
   "v2.1.0": {
     "notes": [
       "A mapped test of a scenario an in-progress milestone still waits on (an open task serving it, other than the pull request's) may now fail, including one that passes today: check tests/acceptance-map.json for such scenarios before moving the pin.",
-      "To approve acceptance tests before the work: authorise the milestone, add the tests in its first task (procedures/readiness.md), and run them in a required CI job that fails only on a mapped test `wf pending` does not list."
+      "For scenarios with a mapped test, task-record changes that add a waiting task or complete a scenario without a test run now go to the owner (owner-merge), need a milestone record change (enforced) or an explicit baseline receipt (manual): mark a task Done in the pull request that delivers it.",
+      "To approve acceptance tests before the work: authorise the milestone, add the tests in its first task (procedures/readiness.md), and run them in a required CI job that fails on any test `wf pending --branch HEAD_BRANCH` lists as required."
     ]
   }
 }

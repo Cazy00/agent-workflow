@@ -303,16 +303,29 @@ test('attest still refuses a pending acceptance test that fails; the brief shows
   const raw = fs.readFileSync(r.out, 'utf8');
   const mapped = () => JSON.parse(fs.readFileSync(path.join(p.repo, 'tests/acceptance-map.json'), 'utf8'));
   // The check failed, so the brief still refuses the file; the mapped test itself is shown as pending, not as a problem.
-  const brief = renderBrief({ file: r.out, raw, mapped, pending: new Map([['AC-001-2', ['T-0002']]]) });
+  const brief = renderBrief({ file: r.out, raw, mapped, pending: () => new Map([['AC-001-2', ['T-0002']]]) });
   assert.match(brief.markdown, /\*\*Pending acceptance test\*\* at `[0-9a-f]{12}`: `pending acceptance test tests\/acceptance\/later\.test\.mjs \/ later scenario \(AC-001-2\) failed; it may fail until T-0002 is Done/);
   assert.doesNotMatch(brief.problems.join(' '), /later scenario/);
   assert.match(brief.problems.join(' '), /check unit is failed/);
   const strict = renderBrief({ file: r.out, raw, mapped });
   assert.match(strict.problems.join(' '), /later scenario ran 1 time\(s\), failed; it must run once and pass/);
-  // From the command line the brief works the pending scenarios out from the baseline and the round's end itself.
-  const cliBrief = spawnSync(process.execPath, [cli, 'brief', '--payloads', r.out, '--repo', p.repo, '--baseline', B2, '--candidate', C2], { encoding: 'utf8' });
+  // From the command line the brief works the pending scenarios out itself, for the task the round implements at C2.
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C2}`).replace(/^baseline_revision:.*$/m, `baseline_revision: ${B2}`));
+  const D2 = p.commit('T-0001: record done');
+  const cliBrief = spawnSync(process.execPath, [cli, 'brief', '--payloads', r.out, '--repo', p.repo, '--baseline', B2, '--candidate', D2], { encoding: 'utf8' });
   assert.match(cliBrief.stdout, /\*\*Pending acceptance test\*\* at `[0-9a-f]{12}`: `pending acceptance test tests\/acceptance\/later\.test\.mjs \/ later scenario \(AC-001-2\) failed; it may fail until T-0002 is Done/);
   assert.doesNotMatch(cliBrief.stdout.split('## Problems')[1] ?? '', /later scenario/);
+  // A milestone round that goes on to finish T-0002 judges C2 as closeout gates T-0001, so the test stays pending there.
+  p.write('src/c.mjs', 'export const c = 3;\n');
+  const C3 = p.commit('T-0002: candidate');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C3}`).replace(/^baseline_revision:.*$/m, `baseline_revision: ${D2}`));
+  const D3 = p.commit('T-0002: record done');
+  const round = spawnSync(process.execPath, [cli, 'brief', '--payloads', r.out, '--repo', p.repo, '--baseline', B2, '--candidate', D3], { encoding: 'utf8' });
+  assert.match(round.stdout, /\*\*Pending acceptance test\*\* at `[0-9a-f]{12}`: `pending acceptance test tests\/acceptance\/later\.test\.mjs/);
+  assert.doesNotMatch(round.stdout.split('## Problems')[1] ?? '', /later scenario/);
+  // Without the task's Done record the brief cannot tell which task C2 delivers, so every mapped test must pass.
+  const unknown = spawnSync(process.execPath, [cli, 'brief', '--payloads', r.out, '--repo', p.repo, '--baseline', B2, '--candidate', C2], { encoding: 'utf8' });
+  assert.match(unknown.stdout.split('## Problems')[1] ?? '', /later scenario ran 1 time\(s\), failed; it must run once and pass/);
 });
 
 test('attest refuses what it cannot vouch for: a candidate without the baseline, a missing required check, an output in the checkout', t => {

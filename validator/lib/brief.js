@@ -43,8 +43,8 @@ function attests(p) {
 }
 
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
-// names (they must run once and pass; unmapped tests may be skipped), pending the scenarios whose mapped tests may still
-// fail (acceptance.js pendingAcceptance, from the approved baseline), requiredChecks the approved profile's required
+// names (they must run once and pass; unmapped tests may be skipped), pending(revision) the scenarios whose mapped tests
+// may still fail at that revision, or null (acceptance.js pendingIn, as cli.js works it out), requiredChecks the approved profile's required
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
@@ -71,7 +71,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
       for (const m of required ?? []) {
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
         if (runs.length === 1 && runs[0].status === 'passed') continue;
-        const waiting = pending?.get(m?.acceptance);
+        const waiting = pending?.(p.revision)?.get(m?.acceptance);
         if (waiting && runs.length === 1) waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. The gates refuse it in the round that delivers one of those tasks.`);
         else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once' : 'it must run once and pass'}`);
       }

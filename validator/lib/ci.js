@@ -6,7 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
-import { evaluateAcceptance, pendingChange, pendingIn, pendingNote } from './acceptance.js';
+import { evaluateAcceptance, mappedIds, pendingChange, pendingIn, pendingNote } from './acceptance.js';
 import { evidenceErrors } from './delivery-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
@@ -200,21 +200,28 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     for (const w of acceptance.pending ?? []) findings.push(`note: ${pendingNote(w)}`);
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
-  // Which scenarios wait for which tasks is the owner's: a change whose task records make one wait for a task it did not
-  // wait for (a new or reopened task, or one given the scenario) needs the owner, and a change that completes one without
-  // a test run is named, since its mapped tests must pass from then on (MAINT-0012). Owner-merge sends both to the owner;
-  // enforced mode, where task records merge on their checks alone, refuses the first unless the milestone record (which
-  // the owner reviews) changes too; in manual mode the round's explicit baseline receipt approves it (derivation refuses).
-  const waits = pendingChange(baselineRecords, candidateRecords);
-  const touched = id => classes.some(c => [candidateRecords.tasks.get(id)?.path, baselineRecords.tasks.get(id)?.path].includes(c.path));
-  const added = waits.added.filter(w => touched(w.task)).map(w => `${w.acceptance} for ${w.task}`);
-  const completed = production.length ? [] : waits.completed.filter(w => w.tasks.some(touched)).map(w => w.acceptance);
-  const milestoneChanged = classes.some(c => within(c.path, `${rd}/${DIRS.milestone}`));
-  if (added.length && trust?.label === 'enforced' && !milestoneChanged) {
-    findings.push(`it makes acceptance scenarios wait for tasks they did not wait for (${added.join(', ')}): only the owner approves that, so change it with the milestone record it belongs to`);
-    fail = true;
-  } else if (added.length && trust?.label !== 'owner-merge') findings.push(`note: it makes acceptance scenarios wait for tasks they did not wait for (${added.join(', ')}); the owner approves that, never a derived baseline`);
-  if (completed.length) findings.push(`note: it completes acceptance scenarios without a test run (${completed.join(', ')}); their mapped tests must pass from now on`);
+  // Which scenarios wait for which tasks is the owner's (MAINT-0012), counting only scenarios with a mapped test: a change
+  // whose task records make one wait for a task it did not wait for (a new or reopened task, or one given the scenario)
+  // lets its tests fail until then, and a records-only change that completes one makes them required with no test run.
+  // Owner-merge sends both to the owner. Enforced mode, where task records merge on their checks alone, refuses both unless
+  // the record of the milestone concerned changes too, so the owner reviews it. In manual mode the round's explicit
+  // baseline receipt approves them (derivation refuses them); they are noted.
+  const waits = pendingChange(baselineRecords, candidateRecords, mappedIds(baseline), mappedIds(candidate));
+  const recordOf = (map, id) => [candidateRecords[map].get(id)?.path, baselineRecords[map].get(id)?.path].filter(Boolean);
+  const touched = (map, id) => recordOf(map, id).some(p => classes.some(c => c.path === p));
+  const milestoneOf = id => candidateRecords.tasks.get(id)?.data?.milestone ?? baselineRecords.tasks.get(id)?.data?.milestone;
+  const added = waits.added.filter(w => touched('tasks', w.task));
+  const completed = production.length ? [] : waits.completed.filter(w => w.tasks.some(t => touched('tasks', t)));
+  const unreviewed = list => list.filter(w => !(w.task ? [w.task] : w.tasks).some(t => touched('milestones', milestoneOf(t))));
+  const waiting = added.map(w => `${w.acceptance} for ${w.task}`), done = completed.map(w => w.acceptance);
+  if (trust?.label === 'enforced') {
+    const a = unreviewed(added).map(w => `${w.acceptance} for ${w.task}`), c = unreviewed(completed).map(w => w.acceptance);
+    if (a.length) { findings.push(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then (${a.join(', ')}): only the owner approves that, so change the record of the milestone concerned with it`); fail = true; }
+    if (c.length) { findings.push(`it completes acceptance scenarios without a test run (${c.join(', ')}): mark the last task Done in the pull request that delivers it, with its test run, or change the record of the milestone concerned with it so the owner reviews it`); fail = true; }
+  } else if (trust?.label !== 'owner-merge') {
+    if (waiting.length) findings.push(`note: it makes acceptance scenarios wait for tasks they did not wait for (${waiting.join(', ')}); the owner approves that with the round's baseline receipt, never a derived one`);
+    if (done.length) findings.push(`note: it completes acceptance scenarios without a test run (${done.join(', ')}); the owner approves that with the round's baseline receipt, never a derived one`);
+  }
   for (const category of ['governing', 'enforcement']) {
     const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
     if (protectedPaths.length) {
@@ -253,8 +260,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
     if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
-    if (added.length) ownerReasons.push(`it makes acceptance scenarios wait for tasks they did not wait for: ${added.join(', ')}`);
-    if (completed.length) ownerReasons.push(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${completed.join(', ')}`);
+    if (waiting.length) ownerReasons.push(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
+    if (done.length) ownerReasons.push(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${done.join(', ')}`);
     const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted').map(f => f.id);
     if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.join(', ')}`);
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });

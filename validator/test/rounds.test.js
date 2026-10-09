@@ -770,16 +770,33 @@ test('a stop signal to the wf process still stops it while it reads the verified
   assert.equal(child.stdout, 'SIGTERM', 'Node\'s default termination stays in place');
 });
 
-// MAINT-0012: task records ride along without a receipt, but which scenarios wait for which tasks is the owner's.
-test('a derived baseline refuses records that make a scenario wait for a task it did not wait for', t => {
-  const p = round(t);
+// MAINT-0012: task records ride along without a receipt, but which scenarios with a mapped test wait for which tasks is
+// the owner's.
+test('a derived baseline refuses records that make a mapped scenario wait for a task it did not wait for', t => {
+  const p = round(t, { mapped: true });
   p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Draft'));
   const E = p.commit('plan a follow-up on AC-001-1');
   const trust = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
-  assert.equal(trust.derivation(p.D).approved, true, 'marking the task Done still derives');
+  assert.equal(trust.derivation(p.D).approved, true, 'marking the task Done, with its test run in the round, still derives');
   const d = trust.derivation(E);
   assert.equal(d.approved, false);
   assert.match(d.reasons.join(' '), /records make acceptance scenarios wait for tasks they did not wait for at the approved baseline \(AC-001-1 for T-0002\); only an explicit baseline receipt approves that/);
+  // The same follow-up on a scenario with no mapped test is bookkeeping, as before.
+  const q = round(t);
+  q.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(q.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Draft'));
+  const F = q.commit('plan a follow-up on unmapped AC-001-1');
+  assert.equal(q.trustOf([{ purpose: 'baseline', revision: q.B }, ...q.evidence(q.C)]).derivation(F).approved, true);
+});
+
+test('a derived baseline refuses a records-only round that completes a mapped scenario without a test run', t => {
+  const p = round(t, { mapped: true });
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Active'));
+  const E1 = p.commit('T-0002 serves AC-001-1 too');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Done'));
+  const E2 = p.commit('T-0002 Done, with no test run');
+  const d = p.trustOf([{ purpose: 'baseline', revision: E1 }]).derivation(E2);
+  assert.equal(d.approved, false);
+  assert.match(d.reasons.join(' '), /records complete acceptance scenarios without a test run \(AC-001-1\); only an explicit baseline receipt approves that/);
 });
 
 // MAINT-0012: wf acceptance (and lifecycle) name a pending test that did not pass, as ci does; a missing one fails.
@@ -800,6 +817,8 @@ test('wf acceptance lets another task\'s pending test fail and names it', t => {
   const r = p.run(['acceptance', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(r.json.notes, ['pending acceptance test tests/later.js / later scenario (AC-001-2) failed; it may fail until T-0002 is Done, and must pass from then on']);
+  const life = p.run(['lifecycle', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
+  assert.deepEqual(life.json.notes, r.json.notes, 'lifecycle names it too');
   p.receipts([{ purpose: 'baseline', revision: B2 }, verification(null)]);
   const missing = p.run(['acceptance', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
   assert.equal(missing.status, 1, missing.stdout);

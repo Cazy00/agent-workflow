@@ -1,9 +1,89 @@
 import { safePath } from './sources.js';
+import { list } from './records.js';
+import { ACCEPTANCE } from './acceptance-files.js';
 const key = m => JSON.stringify([m.acceptance, m.file, m.name]);
 const MAP = 'tests/acceptance-map.json';
-export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false }) {
+const IN_PROGRESS = ['Authorised', 'Active', 'Blocked'];
+// The results a run may report; a run without one does not show the test ran.
+export const RESULTS = ['passed', 'failed', 'skipped'];
+
+// Pending tests apply only where the approved config names owner-approved acceptance tests (MAINT-0012).
+export const ownerTests = config => (config?.paths?.acceptance_tests ?? []).length > 0;
+
+// MAINT-0012: owner-approved acceptance tests are written and approved before the work (readiness.md), so they fail
+// until the tasks that serve them are done. A scenario is pending while the milestone that lists it is in progress and a
+// task of that milestone that serves it is not yet Done, other than the tasks a change delivers; its mapped tests must
+// still run once, and may fail until then. `records` is lib/records.js loadAll. Returns acceptance ID → the IDs of the
+// tasks it waits for.
+export function pendingAcceptance(records, delivering = []) {
+  const pending = new Map();
+  const tasks = [...(records?.tasks?.values() ?? [])].map(r => r.data ?? {});
+  for (const m of records?.milestones?.values() ?? []) {
+    const milestone = m.data ?? {};
+    if (!IN_PROGRESS.includes(milestone.status)) continue;
+    for (const id of list(milestone.acceptance)) {
+      const waiting = tasks.filter(t => t.milestone === milestone.id && list(t.acceptance).includes(id) && t.status !== 'Done' && !delivering.includes(t.id)).map(t => t.id);
+      if (waiting.length) pending.set(id, [...new Set([...(pending.get(id) ?? []), ...waiting])].sort());
+    }
+  }
+  return pending;
+}
+
+// What every given set of records leaves pending: a gate passes the approved baseline's records and the candidate's (and
+// closeout the trusted tip's too), so neither side alone can excuse a test. Records the agent wrote can only make it
+// stricter; which scenarios wait for which tasks grows only with the owner (pendingChange, ci.js).
+export function pendingIn(sets, delivering = []) {
+  const [first, ...rest] = sets.map(r => pendingAcceptance(r, delivering));
+  const out = new Map();
+  for (const [id, waiting] of first ?? []) {
+    const kept = waiting.filter(t => rest.every(p => p.get(id)?.includes(t)));
+    if (kept.length && rest.every(p => p.has(id))) out.set(id, kept);
+  }
+  return out;
+}
+
+// The scenarios a revision has, or will have, an automated test for: those `docs/workflow/acceptance.json` defines as
+// `automated` (which must be mapped before a task serving one integrates) and those its map names. Null when either file
+// cannot be read, so a check that uses them fails closed by counting every scenario. `source` is a lib/sources.js source.
+export function testedIds(source) {
+  try {
+    const defs = JSON.parse(source.read(ACCEPTANCE) ?? '{"examples":[]}').examples; // a fixed path, whatever records_dir is
+    const raw = source.read(MAP); const map = raw == null ? [] : JSON.parse(raw);
+    if (!Array.isArray(defs) || !Array.isArray(map)) return null;
+    return new Set([...defs.filter(d => d?.method === 'automated').map(d => d.id), ...map.map(m => m?.acceptance)]);
+  } catch { return null; }
+}
+
+// The scenarios a revision's map names, or null when it cannot be read (callers then treat every scenario as unmapped).
+export function mappedIds(source) {
+  try { const raw = source.read(MAP); const v = raw == null ? [] : JSON.parse(raw); return Array.isArray(v) ? new Set(v.map(m => m?.acceptance)) : null; }
+  catch { return null; }
+}
+
+// How the scenarios waiting for tasks differ from `before` to `after` (records, nothing delivered), counting only scenarios
+// with a test, or an automated definition awaiting one, on that side (`testedBefore`, `testedAfter`, from testedIds; null
+// counts all): `added` lists each scenario that waits for a task it did not wait for before (a new or reopened task, or one
+// given the scenario), which only the owner may approve; `completed` each scenario that stops waiting, with the tasks it
+// waited for, whose mapped tests must pass from then on.
+export function pendingChange(before, after, testedBefore = null, testedAfter = null) {
+  const only = (pending, mapped) => new Map([...pending].filter(([id]) => !mapped || mapped.has(id)));
+  const was = only(pendingAcceptance(before), testedBefore), is = only(pendingAcceptance(after), testedAfter);
+  // `tested`: the scenario became tested here (a test mapped, or its definition made automated), so every task it waits
+  // for now lets a test fail, whichever records the change touches.
+  const newly = id => !!testedBefore && !testedBefore.has(id) && !!testedAfter?.has?.(id);
+  const added = [...is].flatMap(([acceptance, ts]) => ts.filter(t => !was.get(acceptance)?.includes(t)).map(task => ({ acceptance, task, tested: newly(acceptance) })));
+  const completed = [...was].filter(([acceptance]) => !is.has(acceptance)).map(([acceptance, tasks]) => ({ acceptance, tasks }));
+  return { added, completed };
+}
+
+// A mapped test that did not pass, and the tasks its scenario waits for (ci's notes, the signing brief).
+export const pendingRun = (m, runs, waiting) => ({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
+export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.status}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must pass from then on`;
+
+export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map() }) {
   const errors = [];
   const unverified = [];
+  const waived = [];
   // Mapping preservation is global to the candidate, but a migration grant belongs
   // to one selected task and that task must require the migrated acceptance ID.
   const requirements = new Map(taskRequirements ?? [[task, requiredIds]]);
@@ -105,8 +185,13 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
     if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {
       const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
-      if (runs.length !== 1 || runs[0].status !== 'passed') errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
+      if (runs.length === 1 && runs[0].status === 'passed') continue;
+      // A pending test still runs once and is reported; only its result may be a failure (MAINT-0012).
+      const waiting = pending.get(m.acceptance);
+      if (waiting && runs.length === 1 && RESULTS.includes(runs[0].status)) waived.push(pendingRun(m, runs, waiting));
+      else if (waiting) errors.push(`pending test did not run exactly once with a reported result (${RESULTS.join(', ')}): ${m.file} / ${m.name} (it may fail until ${waiting.join(', ')} ${waiting.length === 1 ? 'is' : 'are'} Done, but must run and be reported)`);
+      else errors.push(`required test did not run exactly once and pass: ${m.file} / ${m.name}`);
     }
   }
-  return { ok: errors.length === 0, errors, unverified, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
+  return { ok: errors.length === 0, errors, unverified, pending: waived, reviewRequired: true, limitation: 'Names and execution prove traceability only. Independent review must inspect assertions, helpers, fixtures, setup, and execution configuration, including untagged tests.' };
 }

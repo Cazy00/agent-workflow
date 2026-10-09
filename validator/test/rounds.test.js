@@ -21,7 +21,7 @@ const REVIEW = ['scope', 'correctness', 'maintainability', 'security', 'regressi
 
 // main holds the approved baseline B; the task works on its own branch: candidate C (src/a.js) with its receipts, then
 // D, the records-only commit that marks T-0001 Done.
-function round(t, { derived = true, mapped = false } = {}) {
+function round(t, { derived = true, mapped = false, ownerTests = false, automated = false } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-rounds-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const repo = path.join(temp, 'project'); fs.cpSync(fixture, repo, { recursive: true });
@@ -30,7 +30,8 @@ function round(t, { derived = true, mapped = false } = {}) {
   const git = (...args) => { const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   const commit = message => { git('add', '-A'); git('commit', '-qm', message); return git('rev-parse', 'HEAD'); };
   git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Test Worker'); git('config', 'user.email', 'worker@example.invalid');
-  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) } }, null, 2); });
+  edit('docs/workflow/config.json', text => { const c = JSON.parse(text); return JSON.stringify({ ...c, repository, approval: { ...c.approval, ...(derived ? { derived_baselines: true } : {}) }, ...(ownerTests ? { paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'], acceptance_tests: ['tests/**'] } } : {}) }, null, 2); });
+  if (automated) edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
   if (mapped) {
     edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
     write('tests/acceptance-map.json', JSON.stringify([{ acceptance: 'AC-001-1', file: 'tests/feature.js', name: 'required scenario' }]));
@@ -768,4 +769,112 @@ test('a stop signal to the wf process still stops it while it reads the verified
   p.receipts([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
   const child = spawnSync(process.execPath, ['-e', `const { spawn } = require('child_process'); const c = spawn(process.execPath, ${JSON.stringify([cli, 'closeout', '--repo', p.repo, '--baseline', p.B, '--candidate', p.D, '--trust-key', path.join(p.temp, 'owner.pem'), '--receipts', path.join(p.temp, 'receipts.json'), '--repository', repository, '--json'])}, { stdio: 'ignore' }); setTimeout(() => c.kill('SIGTERM'), 300); c.on('exit', (code, signal) => process.stdout.write(String(signal ?? code)));`], { encoding: 'utf8' });
   assert.equal(child.stdout, 'SIGTERM', 'Node\'s default termination stays in place');
+});
+
+// MAINT-0012: task records ride along without a receipt, but which scenarios with a mapped test wait for which tasks is
+// the owner's.
+test('a derived baseline refuses records that make a mapped scenario wait for a task it did not wait for', t => {
+  const p = round(t, { mapped: true, ownerTests: true });
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Draft'));
+  const E = p.commit('plan a follow-up on AC-001-1');
+  const trust = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]);
+  assert.equal(trust.derivation(p.D).approved, true, 'marking the task Done, with its test run in the round, still derives');
+  const d = trust.derivation(E);
+  assert.equal(d.approved, false);
+  assert.match(d.reasons.join(' '), /records make acceptance scenarios wait for tasks they did not wait for at the approved baseline \(AC-001-1 for T-0002\); only an explicit baseline receipt approves that/);
+  // With the milestone's own record changed in the round, under the owner's governing-change, it derives (R3-4).
+  p.edit('docs/workflow/milestones/M-0001.md', x => `${x}\nT-0002 follows up on AC-001-1.\n`);
+  const F = p.commit('the milestone records the follow-up');
+  const covered = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C), { purpose: 'governing-change', revision: F, paths: ['docs/workflow/milestones/M-0001.md'] }]).derivation(F);
+  assert.equal(covered.approved, true, JSON.stringify(covered.reasons));
+  // The same follow-up on a scenario with no test is bookkeeping, as before.
+  const q = round(t, { ownerTests: true });
+  q.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(q.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Draft'));
+  const G = q.commit('plan a follow-up on unmapped AC-001-1');
+  assert.equal(q.trustOf([{ purpose: 'baseline', revision: q.B }, ...q.evidence(q.C)]).derivation(G).approved, true);
+});
+
+test('a derived baseline refuses a records-only round that completes a mapped scenario without a test run', t => {
+  const p = round(t, { mapped: true, ownerTests: true });
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Done', 'status: Active'));
+  const E1 = p.commit('T-0002 serves AC-001-1 too');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Done'));
+  const E2 = p.commit('T-0002 Done, with no test run');
+  const d = p.trustOf([{ purpose: 'baseline', revision: E1 }]).derivation(E2);
+  assert.equal(d.approved, false);
+  assert.match(d.reasons.join(' '), /records complete acceptance scenarios without a test run \(AC-001-1\); only an explicit baseline receipt approves that/);
+});
+
+// MAINT-0012: wf acceptance (and lifecycle) name a pending test that did not pass, as ci does; a missing one fails.
+test('wf acceptance lets another task\'s pending test fail and names it', t => {
+  const p = round(t, { mapped: true, ownerTests: true });
+  p.git('checkout', '-q', 'main');
+  p.edit('docs/workflow/acceptance.json', x => { const a = JSON.parse(x); a.examples.push({ id: 'AC-001-2', requirement: 'docs/specs/feature.md', method: 'automated' }); return JSON.stringify(a); });
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]'));
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/tasks/T-0001.md'), 'utf8').replaceAll('T-0001', 'T-0002').replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-2]'));
+  p.edit('tests/acceptance-map.json', x => JSON.stringify([...JSON.parse(x), { acceptance: 'AC-001-2', file: 'tests/later.js', name: 'later scenario' }]));
+  p.write('tests/later.js', 'later test file\n');
+  const B2 = p.commit('authorise the second scenario');
+  p.git('checkout', '-q', '-b', 'T-0001-again');
+  p.write('src/a.js', 'export const result = 2;\n');
+  const C2 = p.commit('T-0001: candidate');
+  const verification = later => ({ ...p.evidence(C2)[0], execution: { revision: C2, tests: [{ file: 'tests/feature.js', name: 'required scenario', status: 'passed' }, ...(later ? [{ file: 'tests/later.js', name: 'later scenario', status: later }] : [])] } });
+  p.receipts([{ purpose: 'baseline', revision: B2 }, verification('failed')]);
+  const r = p.run(['acceptance', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.notes, ['pending acceptance test tests/later.js / later scenario (AC-001-2) failed; it may fail until T-0002 is Done, and must pass from then on']);
+  const life = p.run(['lifecycle', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
+  assert.deepEqual(life.json.notes, r.json.notes, 'lifecycle names it too');
+  p.receipts([{ purpose: 'baseline', revision: B2 }, verification(null)]);
+  const missing = p.run(['acceptance', '--baseline', B2, '--candidate', C2, '--task', 'T-0001']);
+  assert.equal(missing.status, 1, missing.stdout);
+  assert.match(missing.json.errors.join(' '), /pending test did not run exactly once with a reported result \(passed, failed, skipped\): tests\/later\.js \/ later scenario/);
+});
+
+// R3-2, R3-5: a milestone round whose first task's evidence has a pending test failing. Closeout gates each task as ci
+// does, but no derived baseline rests on failing evidence, so the brief asks for the baseline payload closeout needs.
+test('a milestone round with a pending failure closes once the baseline it needs is signed, and the brief asks for it', t => {
+  const p = round(t, { mapped: true, ownerTests: true });
+  p.git('checkout', '-q', 'main');
+  p.edit('docs/workflow/acceptance.json', x => { const a = JSON.parse(x); a.examples.push({ id: 'AC-001-2', requirement: 'docs/specs/feature.md', method: 'automated' }); return JSON.stringify(a); });
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]'));
+  p.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-2]'));
+  p.edit('tests/acceptance-map.json', x => JSON.stringify([...JSON.parse(x), { acceptance: 'AC-001-2', file: 'tests/later.js', name: 'later scenario' }]));
+  p.write('tests/later.js', 'later test file\n');
+  const B2 = p.commit('authorise the second scenario');
+  p.git('checkout', '-q', '-b', 'round');
+  for (const id of ['T-0001', 'T-0002']) p.edit(`docs/workflow/tasks/${id}.md`, x => x.replace(/^(start_revision|governing_baseline_revision|baseline_revision):.*$/gm, `$1: ${B2}`));
+  p.write('src/a.js', 'export const result = 3;\n');
+  const C1 = p.commit('T-0001: candidate');
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C1}`));
+  const D1 = p.commit('T-0001: record done');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace(/^(start_revision|governing_baseline_revision|baseline_revision):.*$/gm, `$1: ${D1}`));
+  p.write('src/b.js', 'export const b = 2;\n');
+  const C2 = p.commit('T-0002: candidate');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Ready', 'status: Done').replace(/^implemented:.*$/m, `implemented: ${C2}`));
+  const D2 = p.commit('T-0002: record done');
+  const run = (rev, later) => [{ ...p.evidence(rev)[0], execution: { revision: rev, tests: [{ file: 'tests/feature.js', name: 'required scenario', status: 'passed' }, { file: 'tests/later.js', name: 'later scenario', status: later }] } }, ...p.evidence(rev).slice(1)];
+  const round1 = [{ purpose: 'baseline', revision: B2 }, ...run(C1, 'failed'), ...run(C2, 'passed')];
+  p.git('checkout', '-q', 'main');
+  p.receipts(round1);
+  const refused = p.run(['closeout', '--baseline', B2, '--candidate', D2]);
+  assert.equal(refused.status, 1, 'D1 cannot be derived from evidence with a failing test');
+  p.receipts([...round1, { purpose: 'baseline', revision: D1 }]);
+  const closed = p.run(['closeout', '--baseline', B2, '--candidate', D2]);
+  assert.equal(closed.status, 0, closed.stdout + closed.stderr);
+  // The brief lets the pending failure through for judgement and asks for the baseline at D1, until it is in the file.
+  const brief = file => spawnSync(process.execPath, [cli, 'brief', '--payloads', file, '--repo', p.repo, '--baseline', B2, '--candidate', D2], { encoding: 'utf8' }).stdout;
+  const without = brief(p.unsigned(round1.slice(1)));
+  assert.match(without, /\*\*Pending acceptance test\*\* at `[0-9a-f]{12}`: `pending acceptance test tests\/later\.js/);
+  assert.match(without.split('## Problems')[1] ?? '', new RegExp(`add a baseline payload at ${D1.slice(0, 12)}`));
+  const withIt = brief(p.unsigned([...round1.slice(1), { purpose: 'baseline', revision: D1 }]));
+  assert.doesNotMatch(withIt.split('## Problems')[1] ?? '', /baseline payload at|later scenario/);
+});
+
+// The sixth review (Codex): a round's production evidence runs a scenario's tests only if it has some mapped.
+test('a derived baseline refuses completing an automated scenario that has no mapped test, even with production evidence', t => {
+  const p = round(t, { ownerTests: true, automated: true });
+  const d = p.trustOf([{ purpose: 'baseline', revision: p.B }, ...p.evidence(p.C)]).derivation(p.D);
+  assert.equal(d.approved, false);
+  assert.match(d.reasons.join(' '), /records complete acceptance scenarios without a test run \(AC-001-1\)/);
 });

@@ -24,6 +24,7 @@ import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths, isAcceptanceTest } from './paths.js';
 import { payloadProblems } from './payloads.js';
+import { mappedIds, ownerTests as namesOwnerTests, pendingChange, testedIds } from './acceptance.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 const CHANGE = { governing: 'governing-change', enforcement: 'workflow-change' };
@@ -106,7 +107,9 @@ export function withDerivedBaselines(trust, repo) {
       }
       if (!p.checks.every(c => c?.result === 'passed' && resolves(c.evidence)) || !requiredChecks.every(name => p.checks.some(c => c?.name === name))) return false;
       if (p.purpose !== 'verification') return true;
-      // As acceptance.js: every test the revision's map names ran exactly once and passed; others may be skipped.
+      // As acceptance.js: every test the revision's map names ran exactly once and passed; others may be skipped. A
+      // pending test (MAINT-0012) is not excused here: a revision whose evidence has one is approved by an explicit
+      // baseline receipt, never derived.
       let map;
       try { const raw = at.read('tests/acceptance-map.json'); map = raw == null ? [] : JSON.parse(raw); } catch { return false; }
       if (!Array.isArray(map)) return false;
@@ -146,6 +149,28 @@ export function withDerivedBaselines(trust, repo) {
     let validation;
     try { validation = validateRecords(source(revision), configs[1].records_dir ?? 'docs/workflow'); } catch (e) { validation = { errors: [e.message] }; }
     for (const e of validation.errors) reasons.push(`record: ${e}`);
+    // Task records ride along without a receipt, but which scenarios with a test (or an automated definition awaiting
+    // one) wait for which tasks is the owner's where the project's acceptance tests are owner-approved (MAINT-0012):
+    // records the round changes must not make one wait for a new task, nor, in a round with no production content,
+    // complete one without a test run, unless the round also changes the record of the milestone concerned, which is a
+    // governing path covered by the owner's own receipt above.
+    try {
+      const rds = configs.map(c => c.records_dir ?? 'docs/workflow');
+      const ownerTests = configs.every(namesOwnerTests);
+      const [was, is] = [loadAll(source(from), rds[0]), loadAll(source(revision), rds[1])];
+      const waits = ownerTests ? pendingChange(was, is, testedIds(source(from)), testedIds(source(revision))) : { added: [], completed: [] };
+      const changed = (map, id) => [was[map].get(id)?.path, is[map].get(id)?.path].some(p => p && diff.has(p));
+      // A changed milestone record exempts only where both configs protect it (governing), so its own receipt covers it.
+      const reviewed = id => changed('milestones', id) && [was.milestones.get(id)?.path, is.milestones.get(id)?.path].filter(Boolean).every(p => configs.every(c => classifyPaths(c, [p])[0].category === 'governing'));
+      const milestoneOf = (id, first, second) => [first, second].map(r => r.tasks.get(id)?.data?.milestone).find(Boolean);
+      const added = waits.added.filter(w => (w.tested || changed('tasks', w.task)) && !reviewed(milestoneOf(w.task, is, was))).map(w => `${w.acceptance} for ${w.task}`);
+      // A round with production content was verified above with every mapped test passed, so it completes a scenario with
+      // a test run only where the scenario has a mapped test: a records-only round, or an unmapped scenario, has none.
+      const mappedAtR = mappedIds(source(revision));
+      const completed = waits.completed.filter(w => w.tasks.some(t => changed('tasks', t)) && (!production || !mappedAtR?.has(w.acceptance)) && !w.tasks.some(t => reviewed(milestoneOf(t, was, is)))).map(w => w.acceptance);
+      if (added.length) reasons.push(`records make acceptance scenarios wait for tasks they did not wait for at the approved baseline (${added.join(', ')}); only an explicit baseline receipt approves that`);
+      if (completed.length) reasons.push(`records complete acceptance scenarios without a test run (${completed.join(', ')}); only an explicit baseline receipt approves that`);
+    } catch (e) { reasons.push(`cannot compare which acceptance scenarios wait for tasks: ${e.message}`); }
     if (reasons.length) return refuse(reasons, { from });
     // Claim what the derivation used, so a gate that relied on an unsigned payload is provisional.
     take('baseline', from);

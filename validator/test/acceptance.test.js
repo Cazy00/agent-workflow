@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { evaluateAcceptance } from '../lib/acceptance.js';
+import { evaluateAcceptance, pendingAcceptance, pendingChange, testedIds } from '../lib/acceptance.js';
 import { gitSource } from '../lib/sources.js';
 const definition = { examples: [{ id: 'AC-001-1', requirement: 'docs/specs/payment.md', method: 'automated' }] };
 const mapping = [{ acceptance: 'AC-001-1', file: 'test/payment.js', name: 'reject invalid payment' }];
@@ -147,4 +147,41 @@ test('enforced mode leaves migrated coverage and execution for code-owner review
   assert.equal(result.ok, true, result.errors.join(' | '));
   assert.ok(result.unverified.some(x => x.includes('renamed test execution')));
   assert.ok(result.unverified.some(x => x.startsWith('execution:')));
+});
+
+// MAINT-0012: a scenario served by several tasks stays pending until the last of them is Done or being delivered.
+test('a scenario is pending while any task serving it in an in-progress milestone is not Done or delivered', () => {
+  const rec = (id, data) => [id, { data: { id, ...data } }];
+  const records = (status, t2, t3) => ({
+    milestones: new Map([rec('M-0001', { status, acceptance: ['AC-001-1', 'AC-001-2'] }), rec('M-0002', { status: 'Authorised', acceptance: ['AC-002-1'] })]),
+    tasks: new Map([
+      rec('T-0001', { milestone: 'M-0001', status: 'Done', acceptance: ['AC-001-1'] }),
+      rec('T-0002', { milestone: 'M-0001', status: t2, acceptance: ['AC-001-2'] }),
+      rec('T-0003', { milestone: 'M-0001', status: t3, acceptance: 'AC-001-2' }),
+      rec('T-0004', { milestone: 'M-0002', status: 'Ready', acceptance: ['AC-001-2'] }), // another milestone's task does not hold it
+    ]),
+  });
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Ready', 'Active'))], [['AC-001-2', ['T-0002', 'T-0003']]]);
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Ready', 'Active'), ['T-0002'])], [['AC-001-2', ['T-0003']]]);
+  assert.deepEqual([...pendingAcceptance(records('Active', 'Done', 'Active'), ['T-0003'])], []);
+  assert.deepEqual([...pendingAcceptance(records('Blocked', 'Done', 'Ready'))], [['AC-001-2', ['T-0003']]]);
+  for (const status of ['Draft', 'Verified', 'Accepted', 'Released']) assert.deepEqual([...pendingAcceptance(records(status, 'Ready', 'Ready'))], [], status);
+  assert.deepEqual([...pendingAcceptance(null)], []);
+});
+
+// MAINT-0012 (R3-1, R3-5): the scenarios a waiting change counts are the automated and the mapped ones; an unreadable
+// definitions file or map counts them all.
+test('testedIds counts automated and mapped scenarios, and fails closed', () => {
+  const at = files => ({ read: p => files[p] ?? null });
+  const defs = JSON.stringify({ examples: [{ id: 'AC-001-1', method: 'automated' }, { id: 'AC-001-2', method: 'inspection' }, { id: 'AC-001-3', method: 'human' }] });
+  assert.deepEqual([...testedIds(at({ 'docs/workflow/acceptance.json': defs, 'tests/acceptance-map.json': JSON.stringify([{ acceptance: 'AC-001-3' }]) }))].sort(), ['AC-001-1', 'AC-001-3']);
+  assert.equal(testedIds(at({ 'docs/workflow/acceptance.json': defs, 'tests/acceptance-map.json': '{not json' })), null);
+  assert.equal(testedIds(at({ 'docs/workflow/acceptance.json': '[]' })), null);
+  const rec = (id, data) => [id, { data: { id, ...data } }];
+  const records = t2 => ({ milestones: new Map([rec('M-0001', { status: 'Active', acceptance: ['AC-001-1', 'AC-001-2'] })]), tasks: new Map([rec('T-0001', { milestone: 'M-0001', status: 'Ready', acceptance: ['AC-001-1', 'AC-001-2'] }), ...(t2 ? [rec('T-0002', { milestone: 'M-0001', status: 'Draft', acceptance: ['AC-001-1', 'AC-001-2'] })] : [])]) });
+  const tested = new Set(['AC-001-1']);
+  assert.deepEqual(pendingChange(records(false), records(true), tested, tested).added, [{ acceptance: 'AC-001-1', task: 'T-0002', tested: false }]);
+  // A scenario tested only after the change names every task it waits for (X2).
+  assert.deepEqual(pendingChange(records(true), records(true), new Set(), tested).added, [{ acceptance: 'AC-001-1', task: 'T-0001', tested: true }, { acceptance: 'AC-001-1', task: 'T-0002', tested: true }]);
+  assert.deepEqual(pendingChange(records(false), records(true), null, null).added.map(w => w.acceptance), ['AC-001-1', 'AC-001-2']);
 });

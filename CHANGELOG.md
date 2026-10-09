@@ -2,6 +2,21 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.1.0
+
+Lets owner-approved acceptance tests be approved before the work and fail until it is done, in every mode (MAINT-0012). Before this, every mapped test had to pass on every production pull request, so tests written ahead of the work blocked every other task until all of them passed.
+
+- **Pending scenarios,** in a project whose config names `paths.acceptance_tests` (so the owner approves its acceptance tests): while a milestone is `Authorised`, `Active` or `Blocked`, the mapped tests of a scenario it lists may fail as long as a task of that milestone serving the scenario is neither `Done` nor delivered by the candidate. Each must still be reported once, with any result. Every other mapped test must run once and pass, including a scenario's tests in the pull request that marks its last task `Done`.
+- **Only the owner widens it:** a test is pending only when the approved baseline's records and the candidate's both say so (and, in `closeout`, the trusted tip's), so a candidate can only make the gate stricter. For a scenario with a test (mapped, or an `automated` definition awaiting one), a change whose task records make it wait for a task it did not wait for (a new or reopened task, or one given the scenario), or that completes it with no test run (a change with no production content, or a scenario with no mapped test), goes to the owner in owner-merge mode; fails `wf ci` in enforced mode unless the record of the milestone concerned, classified governing, changes too; and in manual mode needs the round's explicit baseline receipt, unless the round changes that governing milestone record under its governing-change. A scenario that becomes tested while it waits names every task it waits for to the owner. Unmapped inspection, human and operational scenarios, and projects that name no acceptance tests, are unaffected.
+- **`wf pending`** checks the candidate's map as `wf ci` does, then reports the task it takes as delivered (`--task`, or the task `--branch` names), the mapped tests that may fail and the `required` rest, so a project's acceptance job can stay a required check and fail on any required test.
+- `wf ci`, `wf acceptance` and `wf lifecycle` name each pending test that did not pass in a note. `wf brief`, with `--baseline` and a round end, lists one for judgement at a revision a task of the round names as `implemented`, as closeout gates that task, and asks for the explicit `baseline` payload the round then needs, since no derived baseline rests on failing evidence. `wf attest` and derived baselines excuse none: a check's exit status cannot tell a pending failure from another.
+
+Moving a project to this pin:
+- Nothing changes in a project whose config names no `paths.acceptance_tests`.
+- Otherwise, the mapped tests of a scenario an in-progress milestone still waits on (an open task serving it, other than the pull request's) may fail from then on, including tests that pass today: check the map for such scenarios first.
+- For scenarios with a test (mapped, or `automated` awaiting one), task-record changes that add a waiting task or complete a scenario without a test run now go to the owner (owner-merge), need a milestone record change (enforced) or an explicit baseline receipt (manual). Mark a task `Done` in the pull request that delivers it to avoid this.
+- To approve tests ahead of the work, authorise the milestone, then add the tests in its first task (`readiness.md`), and run them in a required job that fails on any test `wf pending` lists as required.
+
 ## v2.0.0
 
 Removes what no project used, and lets an upgrade clean up after older releases.

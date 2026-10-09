@@ -92,7 +92,9 @@ test('an upgrade to a revision between releases records it as unreleased and ask
   git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
   git(r.wf, 'commit', '-q', '--allow-empty', '-m', 'between releases');
   const plan = JSON.parse(r.up('--rev', 'HEAD', '--json').stdout);
-  assert.deepEqual([plan.from_version, plan.to_version], ['v1.13.0', 'v2.0.0 (unreleased)']);
+  // What the committed package.json heads to, whatever release that is (it moves with every version bump).
+  const heading = JSON.parse(git(root, 'show', 'HEAD:package.json')).version;
+  assert.deepEqual([plan.from_version, plan.to_version], ['v1.13.0', `v${heading} (unreleased)`]);
   assert.ok(plan.notes.some(n => n.startsWith('v1.14.0: ')) && !plan.notes.some(n => n.startsWith('v1.11.0: ')), plan.notes.join(' | '));
   const applied = r.up('--rev', 'HEAD', '--apply');
   assert.equal(applied.status, 0, applied.stdout + applied.stderr);

@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { payloadProblems, readPayloads } from './payloads.js';
 import { showPath } from './git.js';
+import { RESULTS, pendingNote, pendingRun } from './acceptance.js';
 export { payloadProblems, readPayloads, PURPOSES } from './payloads.js';
 
 // In prose, control, format and default-ignorable characters are shown as escapes and other whitespace collapses to
@@ -42,17 +43,20 @@ function attests(p) {
 }
 
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
-// names (they must run once and pass; unmapped tests may be skipped), requiredChecks the approved profile's required
+// names (they must run once and pass; unmapped tests may be skipped), pending(revision) the scenarios whose mapped tests
+// may still fail at that revision, or null (acceptance.js pendingIn, as cli.js works it out), needsBaseline(revision) the
+// revisions that then need an explicit baseline payload, widened the scenario-for-task waits the round adds (cli.js), requiredChecks the approved profile's required
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
 // With `attest` in the approved config, verification and integration come from the owner's own `wf attest` run
 // (procedures/approval-evidence.md *Attested evidence*): a round file the agent staged must not carry them.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, requiredChecks = null, changes = null, attestConfigured = false }) {
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, needsBaseline = null, widened = [], requiredChecks = null, changes = null, attestConfigured = false }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${code(e.message)}. Do not sign it.\n` }; }
   const problems = [];
+  const waived = [];
   const seen = new Map();
   payloads.forEach((p, i) => {
     const at = `#${i + 1} ${flat(p?.purpose ?? '?')} at ${clip(p?.revision, 12)}`;
@@ -67,7 +71,13 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
       if (required === null) problems.push(`${at}: the acceptance map at this revision cannot be read`);
       for (const m of required ?? []) {
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
-        if (runs.length !== 1 || runs[0].status !== 'passed') problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; it must run once and pass`);
+        if (runs.length === 1 && runs[0].status === 'passed') continue;
+        const waiting = pending?.(p.revision)?.get(m?.acceptance);
+        if (waiting && runs.length === 1 && RESULTS.includes(runs[0]?.status)) {
+          waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. It must pass in the round that delivers the last of those tasks; no derived baseline rests on this evidence.`);
+          for (const r of needsBaseline?.(p.revision) ?? []) if (!payloads.some(q => q?.purpose === 'baseline' && q.revision === r) && !problems.some(x => x.includes(`baseline payload at ${String(r).slice(0, 12)}`))) problems.push(`${at}: a pending test failed here, so no derived baseline rests on this evidence: add a baseline payload at ${String(r).slice(0, 12)} (closeout needs that revision approved)`);
+        }
+        else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once, with a reported result' : 'it must run once and pass'}`);
       }
     }
     if (attestConfigured && ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool !== 'wf attest') problems.push(`${at}: this project runs wf attest, so verification and integration come from your own attest run, not from a payload the agent wrote`);
@@ -85,7 +95,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   lines.push('## What you are signing', '', '| # | Purpose | Revision | Commit | What your signature says |', '|--:|---|---|---|---|');
   payloads.forEach((p, i) => lines.push(`| ${i + 1} | ${code(p?.purpose, 20)} | ${short(p?.revision)} | ${subject(p?.revision) ? code(subject(p.revision), 60) : '—'} | ${attests(p ?? {})} |`));
   lines.push('');
-  const judge = [];
+  const judge = [...waived];
   // Accepted findings above a note one by one; accepted notes on one line, with their resolutions beneath.
   for (const p of payloads.filter(p => p?.purpose === 'review')) {
     const accepted = (Array.isArray(p.findings) ? p.findings : []).filter(f => f?.status === 'accepted');
@@ -102,6 +112,7 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
   for (const p of payloads.filter(p => ['verification', 'integration'].includes(p?.purpose) && p.attested?.tool === 'wf attest')) judge.push(`- **From \`wf attest\`** at ${short(p.revision)} (${p.purpose}): ${p.attested.sandbox ? `sandboxed by ${code(p.attested.sandbox.launcher, 60)}` : '**unsandboxed**, in an account that could not read the protected paths'}. Sign it only if you ran that attest yourself and this file is the one it wrote.`);
   for (const p of payloads.filter(p => ['governing-change', 'workflow-change'].includes(p?.purpose))) judge.push(`- **Protected paths** changed at ${short(p.revision)} (${p.purpose}): ${(Array.isArray(p.paths) ? p.paths : []).map(whole).join(', ')}. Read these diffs yourself.`);
   for (const p of payloads.filter(p => p?.purpose === 'acceptance')) judge.push(`- **Product acceptance** at ${short(p.revision)} for ${(Array.isArray(p.scenarios) ? p.scenarios : []).map(x => code(x)).join(', ')}: sign only after you have tried the scenarios or watched them demonstrated.`);
+  if (widened.length) judge.push(`- **Lets acceptance tests fail:** the round makes ${widened.map(w => code(w, 60)).join(', ')} wait, so those scenarios' tests may fail until those tasks are Done. Sign only if you meant that.`);
   if (changes?.unknown) judge.push(`- **Paths changed in the round** could not be listed: ${code(changes.unknown)}`);
   for (const c of changes?.records ?? []) judge.push(`- **Record change with no receipt of its own:** ${typeof c === 'string' ? code(c) : whole(c.path)}`);
   if (changes?.uncovered?.length) judge.push(`- **Changed with no payload covering it** (a derived baseline refuses these; cover each or leave it out): ${changes.uncovered.map(([f, why]) => `${whole(f)} (${why})`).join(', ')}`);

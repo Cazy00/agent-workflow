@@ -24,7 +24,7 @@ import { gitRunner, unsafePath } from './git.js';
 import { list, loadAll, loadConfig, validateRecords } from './records.js';
 import { classifyPaths, isAcceptanceTest } from './paths.js';
 import { payloadProblems } from './payloads.js';
-import { mappedIds, pendingChange } from './acceptance.js';
+import { pendingChange, testedIds } from './acceptance.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 const CHANGE = { governing: 'governing-change', enforcement: 'workflow-change' };
@@ -149,18 +149,20 @@ export function withDerivedBaselines(trust, repo) {
     let validation;
     try { validation = validateRecords(source(revision), configs[1].records_dir ?? 'docs/workflow'); } catch (e) { validation = { errors: [e.message] }; }
     for (const e of validation.errors) reasons.push(`record: ${e}`);
-    // Task records ride along without a receipt, but which scenarios with a mapped test wait for which tasks is the
-    // owner's (MAINT-0012): records the round changes must not make one wait for a new task, nor, in a round with no
-    // production content, complete one without a test run. A milestone record is a governing path, covered above.
+    // Task records ride along without a receipt, but which scenarios with a test (or an automated definition awaiting
+    // one) wait for which tasks is the owner's where the project's acceptance tests are owner-approved (MAINT-0012):
+    // records the round changes must not make one wait for a new task, nor, in a round with no production content,
+    // complete one without a test run, unless the round also changes the record of the milestone concerned, which is a
+    // governing path covered by the owner's own receipt above.
     try {
       const rds = configs.map(c => c.records_dir ?? 'docs/workflow');
+      const ownerTests = configs.every(c => (c.paths?.acceptance_tests ?? []).length > 0);
       const [was, is] = [loadAll(source(from), rds[0]), loadAll(source(revision), rds[1])];
-      const waits = pendingChange(was, is, mappedIds(source(from)), mappedIds(source(revision)));
-      const changedTask = id => [was.tasks.get(id)?.path, is.tasks.get(id)?.path].some(p => p && diff.has(p));
-      const added = waits.added.filter(w => changedTask(w.task)).map(w => `${w.acceptance} for ${w.task}`);
-      // A round with production content was verified above with every mapped test passed, so only a records-only one
-      // completes a scenario without a test run.
-      const completed = production ? [] : waits.completed.filter(w => w.tasks.some(changedTask)).map(w => w.acceptance);
+      const waits = ownerTests ? pendingChange(was, is, testedIds(source(from), rds[0]), testedIds(source(revision), rds[1])) : { added: [], completed: [] };
+      const changed = (map, id) => [was[map].get(id)?.path, is[map].get(id)?.path].some(p => p && diff.has(p));
+      const milestoneOf = (id, first, second) => [first, second].map(r => r.tasks.get(id)?.data?.milestone).find(Boolean);
+      const added = waits.added.filter(w => changed('tasks', w.task) && !changed('milestones', milestoneOf(w.task, is, was))).map(w => `${w.acceptance} for ${w.task}`);
+      const completed = production ? [] : waits.completed.filter(w => w.tasks.some(t => changed('tasks', t)) && !w.tasks.some(t => changed('milestones', milestoneOf(t, was, is)))).map(w => w.acceptance);
       if (added.length) reasons.push(`records make acceptance scenarios wait for tasks they did not wait for at the approved baseline (${added.join(', ')}); only an explicit baseline receipt approves that`);
       if (completed.length) reasons.push(`records complete acceptance scenarios without a test run (${completed.join(', ')}); only an explicit baseline receipt approves that`);
     } catch (e) { reasons.push(`cannot compare which acceptance scenarios wait for tasks: ${e.message}`); }

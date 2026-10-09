@@ -44,13 +44,14 @@ function attests(p) {
 
 // With a repository at hand, subject(revision) gives a commit subject, mapped(revision) the tests its acceptance map
 // names (they must run once and pass; unmapped tests may be skipped), pending(revision) the scenarios whose mapped tests
-// may still fail at that revision, or null (acceptance.js pendingIn, as cli.js works it out), requiredChecks the approved profile's required
+// may still fail at that revision, or null (acceptance.js pendingIn, as cli.js works it out), needsBaseline(revision) the
+// revisions that then need an explicit baseline payload, requiredChecks the approved profile's required
 // checks, and changes what the round changes from the baseline to its end that no payload covers, judged by category as
 // a derived baseline judges it: `records` (task and feedback records, which ride along without a receipt) and
 // `uncovered` ([path, what it needs]), or `unknown` with the reason they could not be listed.
 // With `attest` in the approved config, verification and integration come from the owner's own `wf attest` run
 // (procedures/approval-evidence.md *Attested evidence*): a round file the agent staged must not carry them.
-export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, requiredChecks = null, changes = null, attestConfigured = false }) {
+export function renderBrief({ file, raw, now = Date.now(), subject = () => null, mapped = null, pending = null, needsBaseline = null, requiredChecks = null, changes = null, attestConfigured = false }) {
   const digest = createHash('sha256').update(raw).digest('hex');
   let payloads;
   try { payloads = readPayloads(raw); } catch (e) { return { ok: false, digest, problems: [e.message], markdown: `# Signing brief\n\nThe file ${code(file)} cannot be read: ${code(e.message)}. Do not sign it.\n` }; }
@@ -72,7 +73,10 @@ export function renderBrief({ file, raw, now = Date.now(), subject = () => null,
         const runs = tests.filter(t => t?.file === m?.file && t?.name === m?.name);
         if (runs.length === 1 && runs[0].status === 'passed') continue;
         const waiting = pending?.(p.revision)?.get(m?.acceptance);
-        if (waiting && runs.length === 1) waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. The gates refuse it in the round that delivers one of those tasks.`);
+        if (waiting && runs.length === 1) {
+          waived.push(`- **Pending acceptance test** at ${short(p.revision)}: ${code(pendingNote(pendingRun(m, runs, waiting)), 400)}. It must pass in the round that delivers the last of those tasks; no derived baseline rests on this evidence.`);
+          for (const r of needsBaseline?.(p.revision) ?? []) if (!payloads.some(q => q?.purpose === 'baseline' && q.revision === r) && !problems.some(x => x.includes(`baseline payload at ${String(r).slice(0, 12)}`))) problems.push(`${at}: a pending test failed here, so no derived baseline rests on this evidence: add a baseline payload at ${String(r).slice(0, 12)} (closeout needs that revision approved)`);
+        }
         else problems.push(`${at}: mapped test ${clip(m?.file, 80)} / ${clip(m?.name, 120)} ran ${runs.length} time(s)${runs.length === 1 ? `, ${clip(runs[0].status, 20)}` : ''}; ${waiting ? 'a pending test must still run once' : 'it must run once and pass'}`);
       }
     }

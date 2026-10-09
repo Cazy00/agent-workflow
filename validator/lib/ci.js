@@ -6,7 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
-import { evaluateAcceptance, mappedIds, pendingChange, pendingIn, pendingNote } from './acceptance.js';
+import { evaluateAcceptance, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors } from './delivery-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
@@ -187,32 +187,38 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     for (const error of lifecycle.errors) { findings.push(error); fail = true; }
     for (const item of lifecycle.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
+  // Pending tests (MAINT-0012) are for owner-approved acceptance tests only: a project that names none keeps every mapped
+  // test required and its task records bookkeeping.
+  const ownerTests = (config.paths?.acceptance_tests ?? []).length > 0;
   if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
   if (selected.length && production.length) {
     const execution = trust?.claim('verification', candidate.name)?.execution ?? attested?.verification?.execution;
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
-    // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012). It
-    // must be pending by the baseline's records and the candidate's alike, so this candidate cannot excuse its own test,
-    // and a scenario it completes (its last task Done here) must pass.
-    const pending = pendingIn([baselineRecords, candidateRecords, ...(approved ? [approved] : [])], selected);
+    // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012), where
+    // the project's acceptance tests are owner-approved. It must be pending by the baseline's records and the
+    // candidate's alike, so this candidate cannot excuse its own test, and a scenario it completes must pass.
+    const pending = ownerTests ? pendingIn([baselineRecords, candidateRecords, ...(approved ? [approved] : [])], selected) : new Map();
     const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
     for (const w of acceptance.pending ?? []) findings.push(`note: ${pendingNote(w)}`);
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
   }
-  // Which scenarios wait for which tasks is the owner's (MAINT-0012), counting only scenarios with a mapped test: a change
+  // Which scenarios wait for which tasks is the owner's (MAINT-0012), counting scenarios with a test or an automated
+  // definition awaiting one (an inspection, human or operational scenario has no test that could fail): a change
   // whose task records make one wait for a task it did not wait for (a new or reopened task, or one given the scenario)
   // lets its tests fail until then, and a records-only change that completes one makes them required with no test run.
   // Owner-merge sends both to the owner. Enforced mode, where task records merge on their checks alone, refuses both unless
   // the record of the milestone concerned changes too, so the owner reviews it. In manual mode the round's explicit
   // baseline receipt approves them (derivation refuses them); they are noted.
-  const waits = pendingChange(baselineRecords, candidateRecords, mappedIds(baseline), mappedIds(candidate));
+  const waits = ownerTests ? pendingChange(baselineRecords, candidateRecords, testedIds(baseline, rd), testedIds(candidate, rd)) : { added: [], completed: [] };
   const recordOf = (map, id) => [candidateRecords[map].get(id)?.path, baselineRecords[map].get(id)?.path].filter(Boolean);
   const touched = (map, id) => recordOf(map, id).some(p => classes.some(c => c.path === p));
-  const milestoneOf = id => candidateRecords.tasks.get(id)?.data?.milestone ?? baselineRecords.tasks.get(id)?.data?.milestone;
+  // The milestone concerned: where a task now waits (the candidate's record), or where a completed scenario waited (the
+  // baseline's), so moving a task to another milestone does not choose the record the owner must review.
+  const milestoneOf = (id, side) => (side === 'baseline' ? [baselineRecords, candidateRecords] : [candidateRecords, baselineRecords]).map(r => r.tasks.get(id)?.data?.milestone).find(Boolean);
   const added = waits.added.filter(w => touched('tasks', w.task));
   const completed = production.length ? [] : waits.completed.filter(w => w.tasks.some(t => touched('tasks', t)));
-  const unreviewed = list => list.filter(w => !(w.task ? [w.task] : w.tasks).some(t => touched('milestones', milestoneOf(t))));
+  const unreviewed = items => items.filter(w => !(w.task ? [w.task] : w.tasks).some(t => touched('milestones', milestoneOf(t, w.task ? 'candidate' : 'baseline'))));
   const waiting = added.map(w => `${w.acceptance} for ${w.task}`), done = completed.map(w => w.acceptance);
   if (trust?.label === 'enforced') {
     const a = unreviewed(added).map(w => `${w.acceptance} for ${w.task}`), c = unreviewed(completed).map(w => w.acceptance);

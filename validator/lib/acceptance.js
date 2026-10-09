@@ -36,21 +36,26 @@ export function pendingIn(sets, delivering = []) {
   return out;
 }
 
-// The acceptance IDs a revision's map names (`source` is a lib/sources.js source), or null when the map cannot be read,
-// so a check that uses them fails closed by counting every scenario.
-export function mappedIds(source) {
-  try { const raw = source.read(MAP); const v = raw == null ? [] : JSON.parse(raw); return Array.isArray(v) ? new Set(v.map(m => m?.acceptance)) : null; }
-  catch { return null; }
+// The scenarios a revision has, or will have, an automated test for: those `docs/workflow/acceptance.json` defines as
+// `automated` (which must be mapped before a task serving one integrates) and those its map names. Null when either file
+// cannot be read, so a check that uses them fails closed by counting every scenario. `source` is a lib/sources.js source.
+export function testedIds(source, recordsDir = 'docs/workflow') {
+  try {
+    const defs = JSON.parse(source.read(`${recordsDir}/acceptance.json`) ?? '{"examples":[]}').examples;
+    const raw = source.read(MAP); const map = raw == null ? [] : JSON.parse(raw);
+    if (!Array.isArray(defs) || !Array.isArray(map)) return null;
+    return new Set([...defs.filter(d => d?.method === 'automated').map(d => d.id), ...map.map(m => m?.acceptance)]);
+  } catch { return null; }
 }
 
 // How the scenarios waiting for tasks differ from `before` to `after` (records, nothing delivered), counting only scenarios
-// with a mapped test in that side's map (`mappedBefore`, `mappedAfter`; null counts all), since only those have a test that
-// may fail: `added` lists each scenario that waits for a task it did not wait for before (a new or reopened task, one given
-// the scenario, or a scenario newly mapped while it waits), which only the owner may approve; `completed` each scenario that
-// stops waiting, with the tasks it waited for, whose mapped tests must pass from then on.
-export function pendingChange(before, after, mappedBefore = null, mappedAfter = null) {
+// with a test, or an automated definition awaiting one, on that side (`testedBefore`, `testedAfter`, from testedIds; null
+// counts all): `added` lists each scenario that waits for a task it did not wait for before (a new or reopened task, or one
+// given the scenario), which only the owner may approve; `completed` each scenario that stops waiting, with the tasks it
+// waited for, whose mapped tests must pass from then on.
+export function pendingChange(before, after, testedBefore = null, testedAfter = null) {
   const only = (pending, mapped) => new Map([...pending].filter(([id]) => !mapped || mapped.has(id)));
-  const was = only(pendingAcceptance(before), mappedBefore), is = only(pendingAcceptance(after), mappedAfter);
+  const was = only(pendingAcceptance(before), testedBefore), is = only(pendingAcceptance(after), testedAfter);
   const added = [...is].flatMap(([acceptance, ts]) => ts.filter(t => !was.get(acceptance)?.includes(t)).map(task => ({ acceptance, task })));
   const completed = [...was].filter(([acceptance]) => !is.has(acceptance)).map(([acceptance, tasks]) => ({ acceptance, tasks }));
   return { added, completed };

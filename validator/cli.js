@@ -19,6 +19,8 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
+// Pending acceptance tests (MAINT-0012) apply only where the approved config names owner-approved acceptance tests.
+const ownerTests = config => (config?.paths?.acceptance_tests ?? []).length > 0;
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
@@ -85,7 +87,7 @@ async function main() {
     const run = repo ? gitRunner(repo) : null;
     const subject = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('show', '-s', '--no-show-signature', '--format=%s', rev, '--'); return r.status === 0 ? r.stdout.trim() : null; } : () => null;
     const mapped = repo ? rev => { if (!sha.test(rev ?? '')) return null; const r = run('cat-file', '-e', `${rev}:tests/acceptance-map.json`); if (r.status !== 0) return []; try { const v = JSON.parse(run('show', `${rev}:tests/acceptance-map.json`).stdout); return Array.isArray(v) ? v : null; } catch { return null; } } : null;
-    let requiredChecks = null, changes = null, attestConfigured = false, pending = null;
+    let requiredChecks = null, changes = null, attestConfigured = false, pending = null, needsBaseline = null;
     if (repo && o.baseline) {
       // Everything the round changes from the approved baseline to its end (--candidate, or the latest payload
       // revision), judged path by path by both configs, as a derived baseline judges it (lib/derived.js).
@@ -116,10 +118,16 @@ async function main() {
         // baseline_revision and that revision alike, with the task delivered. A revision no task of the round names as
         // implemented, or no round end, gets no pending tests.
         const baseRecords = loadAll(base, rd);
-        pending = rev => {
+        if (ownerTests(configs[0])) pending = rev => {
           const tasks = [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done' && t.implemented === rev);
           if (tasks.length !== 1 || !sha.test(tasks[0].baseline_revision ?? '')) return null;
           try { return pendingIn([baseRecords, loadAll(gitSource(repo, tasks[0].baseline_revision), rd), loadAll(gitSource(repo, rev), rd)], [tasks[0].id]); } catch { return null; }
+        };
+        // A derived baseline never rests on evidence with a failing test, so after one the round needs explicit baselines:
+        // where each later task of the round builds on it, or, if none does, at the round's end.
+        if (pending) needsBaseline = rev => {
+          const later = [...now.values()].map(r => r.data ?? {}).filter(t => t.status === 'Done' && before.get(t.id)?.data?.status !== 'Done' && t.implemented !== rev && sha.test(t.baseline_revision ?? '') && t.baseline_revision !== base.name && contains(rev, t.baseline_revision)).map(t => t.baseline_revision);
+          return later.length ? [...new Set(later)] : [end];
         };
         changes = { records: [], uncovered: [] };
         for (const f of diff(base.name, end)) {
@@ -144,7 +152,7 @@ async function main() {
         }
       }
     }
-    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured, pending });
+    const result = renderBrief({ file, raw, subject, mapped, requiredChecks, changes, attestConfigured, pending, needsBaseline });
     if (o.json) console.log(JSON.stringify({ ok: result.ok, digest: result.digest, count: result.count, problems: result.problems }, null, 2));
     else process.stdout.write(result.markdown);
     return result.ok ? 0 : 1;
@@ -307,7 +315,7 @@ async function main() {
   // and fails on any other mapped test, so that job can stay a required check. It reads; it grants nothing.
   else if (cmd === 'pending') {
     const delivered = taskId(); // --task, or the task its branch names (--branch in CI), as ci takes it
-    const waiting = pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], delivered ? [delivered] : []);
+    const waiting = ownerTests(config) ? pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], delivered ? [delivered] : []) : new Map();
     let map = [];
     try { const v = JSON.parse(candidate.read('tests/acceptance-map.json') ?? '[]'); if (Array.isArray(v)) map = v; } catch { throw new WfError('tests/acceptance-map.json at the candidate cannot be read'); }
     // A test may fail only when every scenario it is mapped to is pending; `required` lists every other mapped test.
@@ -343,7 +351,7 @@ async function main() {
       const record = loadAll(candidate, rd).tasks.get(task)?.data ?? {};
       const requiredChecks = list(loadAll(baseline, rd).profile?.data?.required_checks);
       const lifecycle = evaluateLifecycle({ candidate, task: record, requiredChecks, trust, stage: o.stage ?? 'verify' });
-      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label, pending: pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], [task]) });
+      const coverage = evaluateAcceptance({ baseline, candidate, task, execution: trust?.claim('verification', candidate.name)?.execution, requiredIds: list(record.acceptance), enforced: trust?.mode === 'enforced' && trust.label, pending: ownerTests(config) ? pendingIn([loadAll(baseline, rd), loadAll(candidate, rd)], [task]) : new Map() });
       lifecycle.unverified = [...(lifecycle.unverified ?? []), ...(coverage.unverified ?? [])];
       // Pending tests that did not pass are named, as ci names them (MAINT-0012).
       coverage.notes = (coverage.pending ?? []).map(pendingNote);

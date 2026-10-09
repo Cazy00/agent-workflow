@@ -137,9 +137,12 @@ test('a mapped acceptance test must have run once and passed', t => {
 // MAINT-0012: acceptance tests are approved before the work, so a scenario's tests fail until the tasks serving it are
 // done. While its milestone is in progress and another of its tasks is not Done on the baseline, its mapped test may
 // fail; once they are Done, or in the pull request that delivers one, it must run once and pass.
+const OWNED = ['tests/acceptance-map.json', 'tests/*.test.js'];
 function pendingSetup(t, { milestoneStatus = 'Authorised', milestoneAcceptance = '[AC-001-1, AC-001-2]', otherStatus = 'Ready', change, label = 'owner-merge', configEdit, baselineExtra } = {}) {
   return setup(t, {
-    label, checkpoint: label === 'owner-merge' ? 'milestone' : undefined, configEdit,
+    label, checkpoint: label === 'owner-merge' ? 'milestone' : undefined,
+    // The project names its acceptance tests, so the owner approves them (pending applies only then).
+    configEdit: c => { const d = { ...c, paths: { ...c.paths, acceptance_tests: OWNED } }; return configEdit ? configEdit(d) : d; },
     baselineEdit: q => {
       q.write('tests/a.test.js', 'test("works", () => {});\n');
       q.write('tests/b.test.js', 'test("later", () => {});\n');
@@ -414,14 +417,15 @@ test('enforced mode refuses a records-only change that completes a scenario, unl
   assert.equal(reviewed.run('ci').status, 0);
 });
 
-test('scenarios with no mapped test change nothing: records about them stay bookkeeping', t => {
-  // Fixture 04a maps nothing: adding, reopening or completing a task on AC-001-1 is merged as before MAINT-0012.
+test('scenarios with no test change nothing: records about them stay bookkeeping', t => {
+  // Fixture 04a's AC-001-1 is an inspection scenario with nothing mapped: adding or completing a task on it is merged as
+  // before MAINT-0012, in a project that names its acceptance tests.
   for (const [label, change] of [
     ['a follow-up task', q => q.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(q.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Ready', 'status: Draft'))],
     ['marking the task Done', q => q.edit(taskPath, x => x.replace('status: Ready', 'status: Done'))],
   ]) {
     for (const label2 of ['owner-merge', 'enforced']) {
-      const p = setup(t, { label: label2, checkpoint: label2 === 'owner-merge' ? 'milestone' : undefined, change });
+      const p = setup(t, { label: label2, checkpoint: label2 === 'owner-merge' ? 'milestone' : undefined, change, configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: OWNED } }) });
       const r = p.run('ci');
       assert.equal(r.status, 0, `${label}, ${label2}: ${r.stdout}${r.stderr}`);
       if (label2 === 'owner-merge') assert.equal(out(r).merge, 'agent', `${label}: ${JSON.stringify(out(r).owner_reasons)}`);
@@ -507,5 +511,31 @@ test('wf pending never lists a test that one of its scenarios requires', t => {
   // As ci: the failing test is required through AC-001-1.
   const gate = p.run('ci', { evidence: runs(p, 'passed', 'failed') });
   assert.equal(gate.status, 1);
+});
+
+// The third review of MAINT-0012 (R3-1): an automated scenario counts before its tests are mapped, so a task added while
+// it waits for its tests cannot later excuse a failing one.
+test('a task added to an automated scenario before its tests are mapped goes to the owner too', t => {
+  const automated = c => ({ ...c, paths: { ...c.paths, acceptance_tests: OWNED } });
+  const baselineEdit = q => q.edit('docs/workflow/acceptance.json', x => x.replace('inspection', 'automated'));
+  const follow = q => q.write('docs/workflow/tasks/T-0002.md', fs.readFileSync(path.join(q.repo, taskPath), 'utf8').replaceAll('T-0001', 'T-0002').replace('status: Ready', 'status: Draft'));
+  const p = setup(t, { checkpoint: 'milestone', configEdit: automated, baselineEdit, change: follow });
+  const r = p.run('ci');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'owner');
+  assert.match(out(r).owner_reasons.join(' | '), /wait for tasks they did not wait for, so their mapped tests may fail until then: AC-001-1 for T-0002/);
+  const q = setup(t, { label: 'enforced', configEdit: automated, baselineEdit, change: follow });
+  assert.equal(q.run('ci').status, 1);
+});
+
+// R3-7: a project that names no owner-approved acceptance tests keeps every mapped test required, as before.
+test('without owner-approved acceptance tests nothing is pending', t => {
+  const p = pendingSetup(t, { configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: [] } }) });
+  const r = p.run('ci', { evidence: runs(p, 'passed', 'failed') });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(out(r).findings.join('\n'), requiredB);
+  assert.deepEqual(out(p.run('pending')).pending, []);
+  const q = pendingSetup(t, { configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: [] } }), change: q2 => t3(q2, 'Draft', '[AC-001-1]') });
+  assert.equal(out(q.run('ci')).merge, 'agent', 'its task records stay bookkeeping');
 });
 

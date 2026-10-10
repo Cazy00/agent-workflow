@@ -30,5 +30,10 @@
       "For scenarios with a test (mapped, or automated awaiting one), task-record changes that add a waiting task or complete a scenario without a test run now go to the owner (owner-merge), need a milestone record change (enforced) or an explicit baseline receipt (manual): mark a task Done in the pull request that delivers it.",
       "To approve acceptance tests before the work: authorise the milestone, add the tests in its first task (procedures/readiness.md), and run them in a required CI job that fails on any test `wf pending --branch HEAD_BRANCH` lists as required."
     ]
+  },
+  "v2.2.0": {
+    "notes": [
+      "Optional: give each milestone a client_title, client_outcome and client_measure, and the profile a client_measure, in the client's words and language, for the client page (wf status --client). Each is a governing-record change."
+    ]
   }
 }

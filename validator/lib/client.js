@@ -2,9 +2,10 @@
 // client asks, in their words: where things stand, what is being worked on now, what comes next, what is waiting on a
 // decision, and, stage by stage, the parts each is made of and how far each has got. It is the developer's status view
 // (`wf status`) translated for someone outside the work: no IDs, branches, people, commands or readiness reasons.
-// What it shows of the records: each milestone's title, outcome and measure; each task's `client_title` (or its title)
-// and how far it has got; each decision's `client_question` (or its question) while it holds work up. Those are written
-// for the client. `client.detail` narrows it: `stages` (stages only), `parts` (no decisions) or `full` (the default).
+// What it shows of the records: each milestone's `client_title`, `client_outcome` and `client_measure` (or its title,
+// outcome and measure; MAINT-0013); each task's `client_title` (or its title) and how far it has got; each decision's
+// `client_question` (or its question) while it holds work up; and the profile's `client_measure` (or its measure). The
+// `client_` fields are written for the client, in the page's language, where the record's own words are the team's. `client.detail` narrows it: `stages` (stages only), `parts` (no decisions) or `full` (the default).
 // Like `wf status` it is derived and read-only, grants nothing and no gate reads it. Record text is escaped.
 //
 // The page wears the client's design system when the config gives one (`client.theme`: colours, fonts, logo, radius)
@@ -173,11 +174,13 @@ export function evaluateClient({ source, updated = null }) {
       const finished = tone === 'done';
       const total = finished ? null : Math.max(planned.length, own.length);
       const done = finished ? null : own.filter(t => t.status === 'Done').length;
-      const title = titleOf(r) ?? m.outcome ?? say.untitled;
+      // A stage's `client_` wording replaces the team's field by field; a field it leaves out keeps the record's own.
+      const outcome = text(m.client_outcome) ?? text(m.outcome);
+      const title = text(m.client_title) ?? titleOf(r) ?? outcome ?? say.untitled;
       return {
         id: m.id, title,
-        outcome: m.outcome && m.outcome !== title ? m.outcome : null,
-        measure: m.measure ?? null,
+        outcome: outcome && outcome !== title ? outcome : null,
+        measure: text(m.client_measure) ?? text(m.measure),
         status: say.status[known], tone, finished, paused: known === 'Blocked', upNext: known === 'Authorised',
         parts: total ? { done, total } : null,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
@@ -231,7 +234,7 @@ export function evaluateClient({ source, updated = null }) {
   } : null;
   return {
     language, detail, title: typeof client.title === 'string' && client.title.trim() ? client.title.trim() : profile.project ?? 'Project',
-    goal: profile.measure ?? null,
+    goal: text(profile.client_measure) ?? text(profile.measure),
     headline, headline_title: current?.title ?? (!current && delivered !== stages.length ? upNext?.title : null) ?? null, delivered, total: stages.length,
     current: current ? stages.indexOf(current) : null,
     overall, now, next, then, waiting,

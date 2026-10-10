@@ -5,7 +5,8 @@
 // What it shows of the records: each milestone's `client_title`, `client_outcome` and `client_measure` (or its title,
 // outcome and measure; MAINT-0013); each task's `client_title` (or its title) and how far it has got; each decision's
 // `client_question` (or its question) while it holds work up; and the profile's `client_measure` (or its measure). The
-// `client_` fields are written for the client, in the page's language, where the record's own words are the team's. `client.detail` narrows it: `stages` (stages only), `parts` (no decisions) or `full` (the default).
+// `client_` fields are written for the client, in the page's language, where the record's own words are the team's.
+// `client.detail` narrows it: `stages` (stages only), `parts` (no decisions) or `full` (the default).
 // Like `wf status` it is derived and read-only, grants nothing and no gate reads it. Record text is escaped.
 //
 // The page wears the client's design system when the config gives one (`client.theme`: colours, fonts, logo, radius)

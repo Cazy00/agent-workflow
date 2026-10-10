@@ -288,13 +288,13 @@ test('a stage and the goal read in the client\'s words where the records give th
   const edit = (rel, from, to) => { const f = path.join(dir, rel); const s = fs.readFileSync(f, 'utf8'); assert.ok(s.includes(from), `${rel} holds ${from}`); fs.writeFileSync(f, s.replace(from, to)); };
   edit('docs/workflow/milestones/M-0002.md', 'outcome: Customers choose a cake and pay by card.\n',
     'outcome: Checkout via Stripe PaymentIntents with webhook reconciliation (A4.2).\nmeasure: e2e suite green on staging.\nclient_title: الطلب عبر الموقع\nclient_outcome: يختار الزبون الكعكة ويدفع بالبطاقة.\nclient_measure: اطلب كعكة من الموقع وادفع ببطاقة تجريبية.\n');
-  edit('docs/workflow/milestones/M-0003.md', 'outcome: The bakery sees each day\'s orders.\n', 'outcome: Daily orders view, group 3 (B1).\nclient_title: Today\'s orders\nclient_measure:   \n');
+  edit('docs/workflow/milestones/M-0003.md', 'outcome: The bakery sees each day\'s orders.\n', 'outcome: Daily orders view, group 3 (B1).\nmeasure: Orders screen lists today.\nclient_title: Today\'s orders\nclient_measure:   \n');
   edit('docs/workflow/profile.md', 'measure: A customer can order a cake online.\n', 'measure: Orders table matches the till for 4 weeks (D4).\nclient_measure: Every order the bakery takes shows here for four weeks running.\n');
   const view = evaluateClient({ source: dirSource(dir) });
   assert.deepEqual([view.stages[1].title, view.stages[1].outcome, view.stages[1].measure],
     ['الطلب عبر الموقع', 'يختار الزبون الكعكة ويدفع بالبطاقة.', 'اطلب كعكة من الموقع وادفع ببطاقة تجريبية.']);
   assert.equal(view.headline, 'Now working on الطلب عبر الموقع.');
-  assert.deepEqual([view.stages[2].title, view.stages[2].outcome, view.stages[2].measure], ['Today\'s orders', 'Daily orders view, group 3 (B1).', null],
+  assert.deepEqual([view.stages[2].title, view.stages[2].outcome, view.stages[2].measure], ['Today\'s orders', 'Daily orders view, group 3 (B1).', 'Orders screen lists today.'],
     'a field the client wording leaves out, or leaves blank, keeps the record\'s own');
   assert.equal(view.goal, 'Every order the bakery takes shows here for four weeks running.');
   const html = renderClient(view);

@@ -7,6 +7,7 @@ approval_label: manual
 coordinator:
 owners: []
 measure:
+client_measure:
 readiness: Needs discovery
 required_checks: []
 permitted_assumptions: []
@@ -29,7 +30,7 @@ Included work, exclusions, delivery priorities, constraints.
 Existing software, integrations, prototypes, known limitations.
 
 ## Product expectations
-Important journeys, visual direction, accessibility, languages, target devices. The client's design system, if any, and its language: the client page (`wf status --client`) follows them through `client.theme` and `client.language` in the config. The client reads milestone titles, each task's `client_title` and each decision's `client_question`, so those are written in the client's words and language.
+Important journeys, visual direction, accessibility, languages, target devices. The client's design system, if any, and its language: the client page (`wf status --client`) follows them through `client.theme` and `client.language` in the config. The client reads each milestone's title, outcome and measure (or its `client_title`, `client_outcome` and `client_measure`), each task's `client_title`, each decision's `client_question` and this profile's measure (or `client_measure`), so those are written in the client's words and language.
 
 ## Technical context
 Confirmed architecture, environments, dependencies, data, unresolved technical choices. Components or modules, the dependencies allowed between them and the conventions every change follows, each with the check that enforces it or `none yet`; when this outgrows a paragraph, keep it in a governing document under `docs/specs/` and point to it. Reviewers check changes against it.

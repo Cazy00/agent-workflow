@@ -2,6 +2,17 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.2.0
+
+Lets the client page speak the client's words for every stage, not only for each part (MAINT-0013). Before this, a stage showed its milestone's own title, outcome and measure, which are written for the team (technical, with spec references, in the team's language), so a client page in the client's language still showed them in the team's.
+
+- **A milestone's `client_title`, `client_outcome` and `client_measure`** replace its title, outcome and measure on the client page, field by field; a field left out or empty shows the record's own, as before. The headline names the stage by its `client_title` too.
+- **The profile's `client_measure`** replaces its `measure` as the goal the page shows first.
+- The milestone and profile templates carry the new fields, empty.
+
+Moving a project to this pin:
+- Nothing changes until a milestone or the profile gives a `client_` field. Adding one is a change to a governing record, so it goes to the owner as any other.
+
 ## v2.1.0
 
 Lets owner-approved acceptance tests be approved before the work and fail until it is done, in every mode (MAINT-0012). Before this, every mapped test had to pass on every production pull request, so tests written ahead of the work blocked every other task until all of them passed.

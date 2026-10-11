@@ -231,7 +231,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
         moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
         items: detail === 'stages' ? [] : own.map(t => {
           const state = finished ? 'done' : t.live === 'checking' ? 'checking' : PART[t.status] ?? 'planned';
-          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: t.branchOnly === true || (planned.length > 0 && !planned.includes(t.id)), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
+          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: !planned.includes(t.id) && (planned.length > 0 || t.branchOnly === true), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
         }),
       };
     });

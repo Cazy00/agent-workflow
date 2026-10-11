@@ -1,6 +1,6 @@
 # MAINT-0014: the client page shows the whole plan, live (design)
 
-Status: design, awaiting the owner's review. Target release: v2.3.0 (minor: everything new is optional).
+Status: design, approved by the owner on 11 October 2026. Target release: v2.3.0 (minor: everything new is optional).
 
 ## The report
 

@@ -493,6 +493,30 @@ test('a part that exists only on a branch is added even when its milestone lists
   assert.equal(part(v, 'Pay by card').added, false, 'a recorded part is not');
 });
 
+test('a planned part whose record is first written on its branch is not Added', t => {
+  const r = standard(t);
+  r.milestone('M-0003', 'Draft', 'Daily orders', ['T-0009']);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0009-orders', '2026-10-11T09:00:00Z', () => r.task('T-0009', 'Active', 'M-0003', 'List orders'));
+  assert.equal(part(live(r).v, 'List orders').added, false);
+});
+
+test('a branch renaming its own part over a trusted Active record', t => {
+  const r = standard(t);
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  r.task('T-0004', 'Blocked', 'M-0002', 'Email the receipt');
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-11T09:00:00Z', () => {
+    r.task('T-0003', 'Active', 'M-0002', 'Pay by card or cash');
+    r.task('T-0004', 'Active', 'M-0002', 'Email the receipt, or text it');
+    r.task('T-0002', 'Active', 'M-0002', 'Choose a cake or a pie');
+  });
+  const { v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', isDraft: false, isCrossRepository: false }] });
+  assert.deepEqual([part(v, 'Pay by card or cash')?.state, part(v, 'Pay by card')], ['checking', undefined], 'new wording, trusted status, Being checked');
+  assert.deepEqual([part(v, 'Email the receipt')?.state, part(v, 'Email the receipt, or text it')], ['hold', undefined], 'Blocked stays entirely trusted');
+  assert.deepEqual([part(v, 'Choose a cake')?.state, part(v, 'Choose a cake or a pie')], ['done', undefined], 'so does Done');
+});
+
 test('only the record named for a task speaks for it: a branch cannot use another file under tasks/', t => {
   const r = standard(t);
   r.commit('plan', '2026-10-01T09:00:00Z');

@@ -1,9 +1,9 @@
 // The client page's live reading (MAINT-0014): what the branches being worked on say about their own parts, on top of
 // the trusted branch's records. A branch counts only for the task records it changed since it left the trusted
-// branch (every branch carries copies of all of them), only for parts, and only forward: a branch speaks for a part
-// the trusted branch has as Draft or Ready (or lacks), so the trusted Active, Blocked and Done stand, except that an open
-// pull request shows a trusted Active part as being checked. A branch's Done shows as in progress until it is merged.
-// Branch names never reach the page.
+// branch (every branch carries copies of all of them), only for parts, and only for parts whose trusted record
+// allows it: Draft or Ready (state and wording) or Active (wording, and Being checked with an open non-draft pull
+// request); never Blocked or Done. A branch's Done shows as in progress until it is merged. Branch names never reach
+// the page.
 import { gitRunner } from './git.js';
 import { parseFrontMatter } from './frontmatter.js';
 
@@ -64,9 +64,13 @@ export function overlayTasks(tasks, parts, milestoneIds, finished = new Set()) {
     if (!status) return t;
     return { ...t, status, client_title: b.record.client_title ?? t.client_title, title: b.record.title ?? t.title, live: b.checking && status === 'Active' ? 'checking' : null };
   };
-  // Over a trusted Active part a branch changes nothing but the label: an open pull request shows it Being checked.
-  const checked = (t, b) => (t.status === 'Active' && b.checking && Object.hasOwn(FORWARD, b.record.status) && FORWARD[b.record.status] === 'Active' ? { ...t, live: 'checking' } : t);
-  const out = tasks.map(t => { const b = parts.get(t.id); return b && !finished.has(t.milestone) ? OPEN.has(t.status) ? moved(t, b) : checked(t, b) : t; });
+  // Over a trusted Active part a branch changes the wording, and an open pull request shows the part Being checked; the
+  // state stays the trusted branch's. Over Blocked or Done it changes nothing.
+  const reworded = (t, b) => {
+    if (t.status !== 'Active' || !Object.hasOwn(FORWARD, b.record.status)) return t;
+    return { ...t, client_title: b.record.client_title ?? t.client_title, title: b.record.title ?? t.title, live: b.checking && FORWARD[b.record.status] === 'Active' ? 'checking' : null };
+  };
+  const out = tasks.map(t => { const b = parts.get(t.id); return b && !finished.has(t.milestone) ? OPEN.has(t.status) ? moved(t, b) : reworded(t, b) : t; });
   for (const [id, b] of parts) {
     if (ids.has(id) || !milestoneIds.has(b.record.milestone) || finished.has(b.record.milestone)) continue;
     const added = moved({ id, milestone: b.record.milestone, status: 'Draft', title: null, client_title: null }, b);

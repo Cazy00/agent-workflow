@@ -45,6 +45,8 @@ export function dirSource(root) {
     },
     isAncestor() { return null; },
     changedSince() { return null; },
+    changedPaths() { return null; },
+    blob() { return null; },
     claimBranches() { return null; },
   };
 }
@@ -93,6 +95,15 @@ export function gitSource(repo, revision) {
       if (!/^[a-f0-9]{40,64}$/.test(commit)) return true;
       return git('diff-tree', '--quiet', '-r', commit, rev, '--', ...paths).status !== 0;
     },
+    // MAINT-0016 (lib/carry.js): the paths that differ between an earlier commit and this revision, and the object a path
+    // names here (null when absent), so content is compared without reading it.
+    changedPaths(commit) {
+      if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error(`invalid revision: ${commit}`);
+      const r = git('diff-tree', '-r', '--no-renames', '--name-only', '-z', commit, rev, '--');
+      if (r.status !== 0) throw new Error(`cannot compare ${commit} with ${rev}`);
+      return r.stdout.split('\0').filter(Boolean);
+    },
+    blob(rel) { safePath(rel); const r = git('rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}:${rel}`); return r.status === 0 ? r.stdout.trim() : null; },
     // Every commit anywhere in this revision's history that added or modified rel, newest first. --full-history
     // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path
     // used and removed on a merged or fast-forwarded branch still counts.

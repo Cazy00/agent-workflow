@@ -420,6 +420,32 @@ test('a part that exists only on a branch shows as added; a branch cannot change
   assert.equal(v.stages.find(s => s.id === 'M-0002').title, 'Online ordering');
 });
 
+test('a branch cannot add a part to a finished milestone, or move one of its parts', t => {
+  const r = standard(t);
+  r.task('T-0008', 'Ready', 'M-0001', 'Print the menu'); // a record the acceptance left behind
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0009-late', '2026-10-11T09:00:00Z', () => {
+    r.task('T-0009', 'Active', 'M-0001', 'Gift wrap');
+    r.task('T-0008', 'Active', 'M-0001', 'Print the menu, again');
+  });
+  const { v } = live(r);
+  assert.equal(part(v, 'Gift wrap'), undefined, 'a signed-off milestone gains no part from a branch');
+  assert.equal(part(v, 'Print the menu, again'), undefined, 'nor new wording');
+  assert.deepEqual(v.plan.steps[1].items.map(i => [i.title, i.state]), [['Put the menu online', 'done'], ['Print the menu', 'done']]);
+  assert.equal(v.plan.steps[1].state, 'done');
+});
+
+test('a branch tip dated in the future counts as now, so the page is never updated later than it was built', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-ahead', '2027-01-01T09:00:00Z', () => r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card'));
+  branch(r, 'claude/T-0003-today', '2026-10-11T11:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  const { v, reading } = live(r);
+  assert.equal(reading.newest, '2026-10-11T12:00:00.000Z', 'the reading\'s own time, not 2027');
+  assert.equal(v.updated, '2026-10-11T12:00:00.000Z');
+  assert.equal(part(v, 'Pay by card').state, 'hold', 'clamped to now, the future tip is still the newer of the two');
+});
+
 test('an old branch without a pull request is ignored, and a reading failure falls back with a warning', t => {
   const r = standard(t);
   r.commit('plan', '2026-10-01T09:00:00Z');

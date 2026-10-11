@@ -192,7 +192,8 @@ export function evaluateClient({ source, updated = null, history = null, live = 
   const milestoneIds = new Set([...all.milestones.values()].map(r => r.data?.id).filter(Boolean));
   const recorded = [...all.tasks.values()].map(r => r.data).filter(t => t?.id);
   // Branches being worked on move their own parts forward (client-live.js); nothing else on the page comes from them.
-  const tasks = live ? overlayTasks(recorded, live.parts, milestoneIds) : recorded;
+  const signedOff = new Set([...all.milestones.values()].map(r => r.data).filter(m => m?.id && TONE[m.status] === 'done').map(m => m.id));
+  const tasks = live ? overlayTasks(recorded, live.parts, milestoneIds, signedOff) : recorded;
   const stages = [...all.milestones.values()]
     .filter(r => r.data?.id && !exclude.has(r.data.id))
     .sort((a, b) => String(a.data.id).localeCompare(String(b.data.id)))

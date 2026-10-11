@@ -17,9 +17,9 @@ With `approval.defer_to_acceptance` (checkpoint `milestone` or `plan`), these ar
 - a records change that makes a scenario wait for a found task, or completes one;
 - a finding accepted rather than fixed that is not `blocking` (nor `critical` or `high`).
 
-The agent lists each accepted finding in its task record's `accepted_findings`, and the milestone's acceptance pull request lists every deferred item for the owner (`accept-release.md`).
+The agent lists each accepted finding in its task record's `accepted_findings`, and the milestone's acceptance pull request lists every deferred item for the owner (`accept-release.md`). `wf ci` cross-checks only the accepted findings against the task records; the changed tests and scenario changes are the agent's list.
 
-With `approval.auto_merge` (same checkpoints), the agent turns on GitHub auto-merge for a pull request `wf ci` leaves to it, and GitHub merges it once every required check passes. `wf ci`, a required check, fails a pull request the owner merges that has auto-merge on. `bin/wf-protect --apply` allows auto-merge only for such a project.
+With `approval.auto_merge` (same checkpoints), the agent turns on GitHub auto-merge for a pull request `wf ci` leaves to it, and GitHub merges it once every required check passes. `wf ci`, a required check, fails a pull request the owner merges that has auto-merge on. `bin/wf-protect --apply` allows auto-merge only for such a project. That stops an owner's pull request merging while its checks still run; auto-merge turned on after every required check has passed merges at once, and the validator cannot see the ruleset that makes an `enforced` check required, so both rest on the agent keeping the rule, as merging by hand does.
 
 Without a checkpoint the owner merges every pull request and nothing is held. In CI the reasons appear on the check's summary and as a notice beside it.
 

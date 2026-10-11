@@ -26,3 +26,16 @@ test('a new scaffold asks for acceptance evidence, and the task template lists a
   assert.match(read('templates/task.md'), /^accepted_findings: \[\]$/m);
   assert.match(read('templates/delivery-evidence.json'), /"level": /);
 });
+
+// The independent review of MAINT-0016 (I2, I3, M1, M6): the procedures and the policy state the limits of the new
+// owner-merge controls where they describe them, and claim no more than the checks do.
+test('the auto-merge guard\'s limit, what deferral cross-checks and the unseen ruleset are stated where they are described', () => {
+  const evidence = read('procedures/approval-evidence.md'), policy = read('POLICY.md'), schema = read('SCHEMA.md');
+  for (const [name, text] of [['approval-evidence.md', evidence], ['POLICY.md', policy]]) assert.match(text, /auto-merge turned on after every required check has passed merges at once/, name);
+  assert.match(read('templates/github/wf-ci.yml'), /that has it on\s*#?\s*while its checks still run/);
+  assert.match(schema, /Only `accepted_findings` is cross-checked/);
+  assert.match(schema, /The validator cannot see the ruleset/);
+  assert.doesNotMatch(policy, /where every one is listed|where every change to them is listed/);
+  assert.match(policy, /The agent that writes the code then cannot also rewrite the tests that judge it\. In owner-merge mode the owner may instead approve them at the milestone's acceptance/);
+  assert.match(read('procedures/execute.md'), /Under `approval\.auto_merge`, never wait for checks to merge/);
+});

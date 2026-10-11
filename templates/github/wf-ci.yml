@@ -13,8 +13,9 @@
 # pull request description, so editing the description reruns this check on the same head. In manual mode the
 # owner's signed receipts are checked on the owner's machine (`wf closeout`), so here it checks the records only.
 # Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
-# to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it
-# on, so GitHub cannot merge it on the other checks alone.
+# to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it on
+# while its checks still run, so GitHub cannot merge it on the other checks alone. Turned on after every check has passed,
+# auto-merge merges at once: that rests on the agent keeping the rule (procedures/approval-evidence.md).
 name: wf
 on:
   pull_request:

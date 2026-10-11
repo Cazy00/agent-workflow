@@ -374,3 +374,38 @@ test('a plan with no steps to show renders without throwing', t => {
   assert.doesNotThrow(() => renderClient(v));
   assert.match(renderClient(v), /<h1>Every step is done\.<\/h1>/);
 });
+
+test('a plan page under a brand band shows the title once, in the band', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', theme: { colors: { brand: '#174A7C', on_brand: '#FFFFFF' } } } });
+  const html = renderClient(view(r));
+  assert.match(html, /<div class="band"><div class="inner"><p>shop<\/p><\/div><\/div>/);
+  assert.doesNotMatch(html, /<p class="project">/);
+  assert.equal(html.split('<p>shop</p>').length - 1, 1, 'the title appears once');
+});
+
+test('a plan page without a band shows the project name, and the logo when the theme has one', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', theme: { logo: 'docs/client-page/logo.svg' } } });
+  r.write('docs/client-page/logo.svg', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4"/></svg>');
+  const html = renderClient(view(r));
+  assert.match(html, /<img class="logo" src="data:image\/svg\+xml[^"]*" alt="shop">\s*<p class="project">shop<\/p>/);
+});
+
+test('Now lists the parts in progress before the parts being checked', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-11T11:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  branch(r, 'claude/T-0004-receipt', '2026-10-11T11:30:00Z', () => r.task('T-0004', 'Active', 'M-0002', 'Email the receipt'));
+  const { v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', isDraft: false, isCrossRepository: false }] });
+  assert.deepEqual([part(v, 'Pay by card').state, part(v, 'Email the receipt').state], ['checking', 'active']);
+  const now = renderClient(v).match(/<section class="panel now"[\s\S]*?<\/section>/)[0];
+  assert.ok(now.indexOf('Email the receipt') > 0 && now.indexOf('Email the receipt') < now.indexOf('Pay by card'), 'in progress first, then being checked');
+});
+
+test('the plan draws its timeline, and only a step with no milestones says its parts are not planned yet', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', detail: 'stages' } });
+  const html = renderClient(view(r));
+  assert.equal(html.split('Its parts are planned when we reach it.').length - 1, 1, 'only Deliveries, which names no milestone');
+  assert.match(html, /ol\.steps::before[^}]*inset-inline-start/);
+  assert.doesNotMatch(html.match(/<style>[\s\S]*<\/style>/)[0].match(/ol\.steps[^{]*\{[^}]*\}/g).join(''), /\bleft:|\bright:/);
+  assert.match(html, /\.panel\.now \.item \{ grid-template-columns: 1\.25rem minmax\(0, 1fr\) auto/);
+});

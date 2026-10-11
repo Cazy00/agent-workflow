@@ -474,7 +474,7 @@ export function renderClient(view) {
 <body>
 ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.logo}" alt="${esc(view.title)}">` : `<p>${esc(view.title)}</p>`}</div></div>` : ''}
 <main>
-  ${view.plan ? planBody(view, say, { esc, bdi, ICON, partList }) : `<header>
+  ${view.plan ? planBody(view, say, { esc, bdi, ICON, partList, band, look }) : `<header>
     ${!band && look?.logo ? `<img class="logo" src="${look.logo}" alt="${esc(view.title)}">` : ''}
     ${band ? '' : `<p class="project">${esc(view.title)}</p>`}
     <h1>${headline}</h1>

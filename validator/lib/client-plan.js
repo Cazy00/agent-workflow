@@ -57,6 +57,7 @@ function step({ title, summary, done, added, stages }) {
   const parts = total ? { done: doneParts, total } : null;
   return {
     title, summary, state, added, items, parts,
+    planned: stages.length > 0, // it names milestones, so its parts exist even when the page hides them
     on_hold: stages.reduce((n, s) => n + (s.on_hold ?? 0), 0),
     progress: state === 'done' ? 1 : parts ? parts.done / parts.total : 0,
   };

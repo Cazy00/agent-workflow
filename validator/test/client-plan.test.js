@@ -320,6 +320,8 @@ test('a record reads Done by its front matter, as the records are read', t => {
   assert.equal(history.doneDate('T-0004'), null, 'never Done');
   assert.equal(history.lastVersion('T-0003'), null, 'never removed');
   assert.equal(history.doneDate('../T-0003'), null, 'only a task ID is looked up');
+  const none = gitHistory(r.dir, 'no-such-branch', RD);
+  assert.deepEqual([none.doneDate('T-0003'), none.lastVersion('T-0003')], [null, null], 'a revision Git cannot read answers nothing, and throws nothing');
 });
 
 // A branch as GitHub Actions' checkout has it: a remote-tracking ref at the branch's tip.
@@ -415,6 +417,7 @@ test('a part that exists only on a branch shows as added; a branch cannot change
   });
   const { v } = live(r);
   assert.deepEqual([part(v, 'Gift wrap').state, part(v, 'Gift wrap').added], ['active', true]);
+  assert.match(renderClient(v), /<bdi>Gift wrap<\/bdi> <span class="tag">added along the way<\/span><\/span><span class="state">In progress<\/span>/, 'the page marks it added');
   assert.equal(part(v, 'Unknown milestone'), undefined, 'a part of a milestone the trusted branch lacks is ignored');
   assert.deepEqual(v.plan.phases.map(p => p.title), ['Foundations', 'Ordering']);
   assert.equal(v.stages.find(s => s.id === 'M-0002').title, 'Online ordering');
@@ -492,6 +495,22 @@ test('the plan page escapes plan text, keeps right-to-left text apart, and speak
   assert.match(html, /الخطة/);
   assert.match(html, /الخطوة 1 من 2/);
   assert.match(html, /أُضيفت/, 'an added step carries its mark');
+});
+
+test('the Arabic plan page holds no ID, branch, person or team wording either', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', language: 'ar' } });
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  r.write(`${RD}/decisions/D-0009.md`, '---\nrecord: decision\nid: D-0009\nquestion: Which card provider?\nclient_question: أي جهاز دفع تستخدمون؟\ntype: decision\nowner: alice-owner\naffects: [M-0002]\nrequired_before: implement\nstatus: Open\n---\n# D-0009\n');
+  r.commit('decision', '2026-10-02T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-11T11:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  branch(r, 'claude/T-0005-wrap', '2026-10-11T11:30:00Z', () => r.task('T-0005', 'Active', 'M-0002', 'Gift wrap'));
+  const { v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', number: 41, isDraft: false, isCrossRepository: false }] });
+  const html = renderClient(v);
+  assert.match(html, /<html lang="ar" dir="rtl">/);
+  assert.match(html, /<bdi>Pay by card<\/bdi>[\s\S]*قيد المراجعة/, 'the part is being checked');
+  assert.match(html, /<bdi>Gift wrap<\/bdi> <span class="tag">أُضيف أثناء العمل<\/span>/, 'the branch-only part is marked added');
+  assert.match(html, /بانتظارك[\s\S]*أي جهاز دفع تستخدمون؟/);
+  for (const absent of ['T-000', 'M-000', 'D-0009', 'claude/', 'bob-worker', 'alice-owner', 'internal title', 'waiting on D-0009', 'Which card provider', '#41', 'T-0003-pay']) assert.ok(!html.includes(absent), absent);
 });
 
 test('a step that is done opens to what it delivered, and a project with every step done says so', t => {

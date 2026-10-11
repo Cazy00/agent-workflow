@@ -9,9 +9,9 @@
 # Copy it only from a release whose wf has `status --client --live`. Turn Pages on once, with GitHub Actions as the
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
 name: wf-client-page
-# Within minutes (MAINT-0014): a push to any branch, or a pull request opening, closing or changing draft state, asks
-# for a rebuild; GitHub Pages deploys only from the trusted branch, so any other ref only dispatches this workflow on
-# it. The build reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
+# Within minutes (MAINT-0014): a push to any branch, or a pull request opening, closing unmerged or changing draft
+# state, asks for a rebuild; GitHub Pages deploys only from the trusted branch, so any other ref only dispatches this
+# workflow on it. The build reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
 on:
   push:
     branches: ['**']

@@ -849,9 +849,14 @@ const expression = (yml, pattern) => {
 };
 test('each GitHub event runs the right job of the client page workflow', () => {
   const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
-  const dispatch = expression(yml, /dispatch:\n(?:\s+#.*\n)*\s+if: (.+)/);
-  const build = expression(yml, /build:\n(?:\s+#.*\n)*\s+if: (.+)/);
+  const dispatch = expression(yml, /\n  dispatch:\n(?:\s+#.*\n)*\s+if: (.+)/);
+  const build = expression(yml, /\n  build:\n(?:\s+#.*\n)*\s+if: (.+)/);
   const cancels = expression(yml, /cancel-in-progress: (.+)/);
+  const group = expression(yml, /group: wf-client-page-(.+)/);
+  // Deploy follows build and nothing else, so it never runs where build does not.
+  const deploy = yml.match(/\n  deploy:\n((?:    .*\n)+)/)?.[1] ?? '';
+  assert.match(deploy, /^    needs: build$/m);
+  assert.doesNotMatch(deploy, /^    if:/m);
   const pr = (action, { merged = false, fork = false, ref = 'refs/pull/7/merge' } = {}) => ({ event_name: 'pull_request', ref, actor: 'alice', event: { action, pull_request: { merged, head: { repo: { fork } } } } });
   const cases = [
     ['push to the trusted branch', { event_name: 'push', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
@@ -874,4 +879,7 @@ test('each GitHub event runs the right job of the client page workflow', () => {
   assert.equal(cancels({ event_name: 'workflow_dispatch', ref: 'refs/heads/main' }), false);
   assert.equal(cancels(pr('closed', { merged: true, ref: 'refs/heads/main' })), true, 'a pull request event never joins the trusted build');
   assert.equal(cancels({ event_name: 'push', ref: 'refs/heads/claude/T-0003' }), true);
+  // Only the trusted branch's own runs share the build group, so a pull-request run never replaces a waiting build.
+  for (const ctx of [{ event_name: 'push', ref: 'refs/heads/main' }, { event_name: 'workflow_dispatch', ref: 'refs/heads/main' }, { event_name: 'schedule', ref: 'refs/heads/main' }]) assert.equal(group(ctx), 'build', ctx.event_name);
+  for (const ctx of [pr('closed', { merged: true }), pr('closed', { merged: true, ref: 'refs/heads/main' }), pr('opened'), { event_name: 'push', ref: 'refs/heads/claude/T-0003' }]) assert.notEqual(group(ctx), 'build', `${ctx.event_name} ${ctx.ref}`);
 });

@@ -713,3 +713,56 @@ test('MAINT-0016: a finished pull request that leaves its task Active is told to
   const ready = setup(t, { checkpoint: 'milestone' });
   assert.ok(!out(ready.run('ci', { evidence: evidence(ready.candidate) })).findings.some(f => /stays Active/.test(f)));
 });
+
+const deferring = c => ({ ...c, approval: { ...c.approval, defer_to_acceptance: true } });
+const minorFinding = [{ id: 'N1', severity: 'should fix', status: 'accepted', resolution: 'carried to T-0002' }];
+
+test('MAINT-0016: with defer_to_acceptance a minor accepted finding waits for the acceptance, listed in the task record; a blocking one is still the owner\'s merge', t => {
+  const listed = setup(t, { checkpoint: 'milestone', configEdit: deferring, change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/N1]')); } });
+  const ok = listed.run('ci', { evidence: evidence(listed.candidate, { review: { findings: minorFinding } }) });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.equal(out(ok).merge, 'agent');
+  assert.deepEqual(out(ok).deferred, ['review findings accepted rather than fixed: N1']);
+
+  const unlisted = setup(t, { checkpoint: 'milestone', configEdit: deferring });
+  const missing = unlisted.run('ci', { evidence: evidence(unlisted.candidate, { review: { findings: minorFinding } }) });
+  assert.equal(missing.status, 1);
+  assert.match(out(missing).findings.join(' | '), /accepted findings N1 are not in the task record's accepted_findings \(as REVIEW\/FINDING, for example R-0030\/N1\)/);
+
+  const blocking = setup(t, { checkpoint: 'milestone', configEdit: deferring });
+  const b = blocking.run('ci', { evidence: evidence(blocking.candidate, { review: { findings: [{ id: 'F1', severity: 'blocking', status: 'accepted', resolution: 'for the owner to decide' }] } }) });
+  assert.equal(b.status, 0, b.stdout + b.stderr);
+  assert.equal(out(b).merge, 'owner');
+  assert.match(out(b).owner_reasons.join(' | '), /blocking review findings accepted rather than fixed: F1/);
+});
+
+test('MAINT-0016: with defer_to_acceptance, changed acceptance tests wait for the acceptance; the plan stays the owner\'s merge', t => {
+  const acceptance = setup(t, {
+    checkpoint: 'plan', configEdit: c => deferring({ ...c, paths: { ...c.paths, acceptance_tests: ['tests/acceptance-map.json', 'src/acceptance/**'] } }),
+    change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'); },
+  });
+  const a = acceptance.run('ci', { evidence: evidence(acceptance.candidate) });
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  assert.equal(out(a).merge, 'agent');
+  assert.deepEqual(out(a).deferred, ['it changes acceptance tests: src/acceptance/a.test.js']);
+  const governing = setup(t, { checkpoint: 'plan', configEdit: deferring, change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`); } });
+  const g = governing.run('ci', { evidence: evidence(governing.candidate) });
+  assert.equal(out(g).merge, 'owner');
+  assert.match(out(g).owner_reasons.join(' | '), /plan or requirements: docs\/specs\/feature\.md/);
+});
+
+test('MAINT-0016: auto-merge on a pull request the owner merges, or in a project that has not chosen it, fails wf ci', t => {
+  const env = { WF_PR_AUTO_MERGE: 'on' };
+  const auto = c => ({ ...c, approval: { ...c.approval, auto_merge: true } });
+  const agent = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const own = agent.run('ci', { evidence: evidence(agent.candidate), env });
+  assert.equal(own.status, 0, own.stdout + own.stderr);
+  assert.equal(out(own).merge, 'agent');
+  const owner = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const r = owner.run('ci', { evidence: evidence(owner.candidate, { review: { findings: [{ id: 'F2', severity: 'medium', status: 'accepted', resolution: 'kept' }] } }), env });
+  assert.equal(r.status, 1);
+  assert.match(out(r).findings.join(' | '), /auto-merge is on, but the owner merges this pull request \(review findings accepted rather than fixed: F2\): turn it off with gh pr merge --disable-auto/);
+  const unchosen = setup(t, { checkpoint: 'milestone' });
+  assert.match(out(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env })).findings.join(' | '), /auto-merge is on, but this project has not chosen it/);
+  assert.equal(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env: { WF_PR_AUTO_MERGE: 'off' } }).status, 0, 'off, or unset as an older workflow file leaves it, changes nothing');
+});

@@ -364,7 +364,7 @@ async function main() {
       if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
       deliveryEvidence = parseDeliveryEvidence(fs.readFileSync(file, 'utf8'));
     }
-    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence });
+    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on' });
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }

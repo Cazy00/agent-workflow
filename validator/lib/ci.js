@@ -97,7 +97,7 @@ export function ownerApprovedTest({ trust, candidate, path }) {
 
 // `approved`: the trusted tip's records when the baseline is an intermediate revision (closeout), so the scenarios a gate
 // lets fail are also pending there (MAINT-0012).
-export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null }) {
+export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null, autoMerge = false, acceptanceEvidence = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -277,9 +277,14 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // anything that changes what the owner approved (the plan, requirements, acceptance tests, the workflow), a review
   // finding accepted rather than fixed, or a task in a milestone still waiting for an earlier acceptance needs the owner.
   let merge = null;
-  const ownerReasons = [];
+  const ownerReasons = [], deferred = [];
   if (trust?.label === 'owner-merge') {
     const checkpoint = checkpointOf(config);
+    // MAINT-0016: with defer_to_acceptance the owner approves these at the milestone's acceptance, where the acceptance
+    // evidence lists them (lib/acceptance-evidence.js), rather than one pull request at a time; off, as by default, they
+    // stay the owner's merge.
+    const defer = config.approval?.defer_to_acceptance === true && agentMerges(checkpoint);
+    const later = reason => (defer ? deferred : ownerReasons).push(reason);
     const of = category => classes.filter(c => c.category === category).map(c => c.path);
     if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
     if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
@@ -288,11 +293,22 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category)).map(c => c.path);
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
-    if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
-    if (waiting.length) ownerReasons.push(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
-    if (done.length) ownerReasons.push(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${done.join(', ')}`);
-    const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted').map(f => f.id);
-    if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.join(', ')}`);
+    if (acceptanceTests.length) later(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
+    if (waiting.length) later(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
+    if (done.length) later(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${done.join(', ')}`);
+    const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted');
+    if (!defer) { if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.map(f => f.id).join(', ')}`); }
+    else {
+      const blocking = accepted.filter(isBlocking).map(f => f.id), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
+      if (blocking.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${blocking.join(', ')}`);
+      if (minor.length) {
+        deferred.push(`review findings accepted rather than fixed: ${minor.join(', ')}`);
+        // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
+        const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
+        const missing = minor.filter(id => !listed.some(e => e.split('/').pop() === id));
+        if (missing.length) { findings.push(`accepted findings ${missing.join(', ')} are not in the task record's accepted_findings (as REVIEW/FINDING, for example R-0030/N1), so the milestone's acceptance would not list them`); fail = true; }
+      }
+    }
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;
@@ -300,9 +316,16 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     }
     merge = ownerReasons.length ? 'owner' : 'agent';
   }
+  // MAINT-0016: auto-merge lands a pull request as soon as its required checks pass, so in owner-merge mode it must never be
+  // on for one the owner merges, or in a project that has not chosen it. `wf ci` is a required check: failing it here stops
+  // the merge while the other checks still run. It cannot stop an agent that merges by hand against the rule.
+  if (autoMerge && trust?.label === 'owner-merge') {
+    if (config.approval?.auto_merge !== true) { findings.push('auto-merge is on, but this project has not chosen it (approval.auto_merge): turn it off with gh pr merge --disable-auto'); fail = true; }
+    else if (merge === 'owner') { findings.push(`auto-merge is on, but the owner merges this pull request (${ownerReasons.join('; ')}): turn it off with gh pr merge --disable-auto`); fail = true; }
+  }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons } : {}), records: records.counts };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts };
 }

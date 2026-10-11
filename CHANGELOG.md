@@ -13,7 +13,7 @@ Lets the client page show the whole plan and keep up with the work within minute
 
 Moving a project to this pin:
 - Nothing changes without `client.plan`, except that a signed-off stage lists its parts.
-- To use it, write the plan file in the client's language, set `client.plan`, and copy the new `wf-client-page.yml` (an enforcement-path change for the owner). Every pull request that adds a milestone then places it in a step.
+- To use it, write the plan file in the client's language, set `client.plan`, and, if the client page is installed, let `bin/wf-upgrade` refresh `.github/workflows/wf-client-page.yml` (an enforcement-path change for the owner); a copy changed in the project is merged by hand from `templates/github/wf-client-page.yml` with `__TRUSTED_BRANCH__` replaced. Every pull request that adds a milestone then places it in a step.
 
 ## v2.2.0
 

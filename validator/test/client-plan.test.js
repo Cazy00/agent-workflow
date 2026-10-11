@@ -451,7 +451,9 @@ test('the client page workflow rebuilds on any push and deploys only from the tr
   assert.match(yml, /pull_request:\n\s+types: \[opened, reopened, ready_for_review, converted_to_draft, closed\]/);
   assert.match(yml, /schedule:/);
   assert.match(yml, /gh workflow run wf-client-page\.yml --ref __TRUSTED_BRANCH__/);
-  assert.match(yml, /if: github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__'/);
+  assert.match(yml, /if: github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__' && \(github\.event_name != 'pull_request' \|\| !github\.event\.pull_request\.head\.repo\.fork\) && github\.actor != 'dependabot\[bot\]'/);
+  assert.match(yml, /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__' \}\}/, 'a running trusted build is not cancelled');
+  assert.doesNotMatch(yml, /cancel-in-progress: true/);
   assert.match(yml, /if: github\.ref == 'refs\/heads\/__TRUSTED_BRANCH__'/);
   assert.match(yml, /fetch-depth: 0/);
   assert.match(yml, /scripts\/wf status --client --live --candidate "\$GITHUB_SHA" --pull-requests "\$RUNNER_TEMP\/pull-requests\.json"/);

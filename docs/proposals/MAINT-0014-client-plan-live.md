@@ -112,9 +112,9 @@ Workflow rule: a task record is removed once its milestone is accepted. A finish
 `templates/github/wf-client-page.yml` changes:
 
 - Triggers: `push` to any branch, `pull_request` (`opened`, `reopened`, `ready_for_review`, `converted_to_draft`, `closed`), `workflow_dispatch`, and a daily `schedule`.
-- GitHub Pages deploys only from the trusted branch, so a run on any other ref has one job: it dispatches this workflow on the trusted branch (`gh workflow run wf-client-page.yml --ref main`, with `actions: write`; GitHub lets the built-in token start a `workflow_dispatch` run). Only runs on the trusted branch build and deploy. Pull requests from forks get no token with `actions: write` and so cannot trigger a build.
+- GitHub Pages deploys only from the trusted branch, so a run on any other ref has one job: it dispatches this workflow on the trusted branch (`gh workflow run wf-client-page.yml --ref main`, with `actions: write`; GitHub lets the built-in token start a `workflow_dispatch` run). Only runs on the trusted branch build and deploy. Pull requests from forks and Dependabot get no token with `actions: write` and so cannot trigger a build; the dispatch job skips them.
 - The build checks out the trusted branch with full history and all remote branches (`fetch-depth: 0`), writes open pull requests to a file with `gh pr list --json`, and runs `scripts/wf status --client --live --pull-requests FILE`.
-- `concurrency: cancel-in-progress` keeps only the newest build.
+- `concurrency`: a running build on the trusted branch finishes and only the newest waiting one runs next (`cancel-in-progress` is false there, so steady pushes cannot starve the deploy); runs on other refs cancel in progress.
 - If the build fails, nothing deploys and the last good page stays live.
 
 Expected delay from a push to the page: about two to three minutes (dispatch, build, Pages deploy). The mateen-systems rollout measures it.

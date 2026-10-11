@@ -1,10 +1,11 @@
-# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt
-# within minutes of any push and deployed from the trusted branch only. Installed only on request
-# (bin/wf-adopt --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone records word them, and no other
-# record field (no IDs, people, branches or reasons); it grants no authority. A GitHub Pages site is PUBLIC on the internet, even for a private repository (unless your
-# organisation's plan offers private Pages), and anyone with the address can read it: publish only what you would
-# put on a public page, and leave stages out with `client.exclude` in docs/workflow/config.json. Without Pages,
-# render the same page yourself and send the file: scripts/wf status --client > status.html
+# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt within
+# minutes of any push and deployed from the trusted branch only. Installed only on request (bin/wf-adopt
+# --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone
+# records word them, and no other record field (no IDs, people, branches or reasons); it grants no authority. A GitHub
+# Pages site is PUBLIC on the internet, even for a private repository (unless your organisation's plan offers private
+# Pages), and anyone with the address can read it: publish only what you would put on a public page, and leave stages
+# out with `client.exclude` in docs/workflow/config.json. Without Pages, render the same page yourself and send the
+# file: scripts/wf status --client > status.html
 # Copy it only from a release whose wf has `status --client --live`. Turn Pages on once, with GitHub Actions as the
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
 name: wf-client-page
@@ -21,12 +22,15 @@ on:
     - cron: '17 3 * * *'
 permissions:
   contents: read
+# A running build on the trusted branch is never cancelled (under steady pushes it would never deploy): it finishes and
+# only the newest waiting run goes next. Runs on other refs cancel in progress.
 concurrency:
   group: wf-client-page-${{ github.ref == 'refs/heads/__TRUSTED_BRANCH__' && 'build' || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/__TRUSTED_BRANCH__' }}
 jobs:
   dispatch:
-    if: github.ref != 'refs/heads/__TRUSTED_BRANCH__'
+    # A fork's pull request and Dependabot get a read-only token, so they could only fail here.
+    if: github.ref != 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork) && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:

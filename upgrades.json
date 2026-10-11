@@ -39,7 +39,7 @@
   "v2.3.0": {
     "notes": [
       "Optional: write a client plan file (phases and steps in the client's words, each step naming its milestones) and set client.plan in docs/workflow/config.json; a governing-record change.",
-      "If the client page is installed: copy .github/workflows/wf-client-page.yml from this release, so the page rebuilds within minutes of any push and reads the branches (--live); an enforcement-path change for the owner."
+      "If the client page is installed: `bin/wf-upgrade` refreshes .github/workflows/wf-client-page.yml from this release, so the page rebuilds within minutes of any push and reads the branches (--live); an enforcement-path change for the owner. A copy changed in the project is left alone: merge it by hand from templates/github/wf-client-page.yml with __TRUSTED_BRANCH__ replaced."
     ]
   }
 }

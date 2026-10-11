@@ -256,6 +256,33 @@ test('a branch counts only for the records it changed, and never moves a part ba
   assert.equal(part(v, 'Email the receipt').state, 'active');
 });
 
+test('a branch cannot move a part by a record it did not change', t => {
+  const r = standard(t);
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  // The branch forks while T-0003 is Active and leaves it alone, so its copy goes stale when the trusted branch moves on.
+  branch(r, 'claude/T-0004-email', '2026-10-11T09:00:00Z', () => r.task('T-0004', 'Active', 'M-0002', 'Email the receipt'));
+  r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card');
+  r.commit('T-0003 blocked', '2026-10-11T10:00:00Z');
+  const { v } = live(r);
+  assert.equal(part(v, 'Pay by card').state, 'hold', 'the untouched copy on the branch (Active) does not override the trusted branch');
+  assert.equal(part(v, 'Email the receipt').state, 'active');
+});
+
+test('a branch record with a status or an id of the wrong kind is ignored', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-odd', '2026-10-11T09:00:00Z', () => {
+    r.task('T-0003', 'constructor', 'M-0002', 'Pay by card'); // an Object.prototype name is not a status
+    r.task('T-0005', 'toString', 'M-0002', 'Gift wrap');
+    r.write(`${RD}/tasks/T-0007.md`, '---\nrecord: task\nid: [T-0007]\ntitle: Odd\nstatus: Active\nmilestone: M-0002\n---\n# T-0007\n');
+  });
+  const { v } = live(r);
+  assert.equal(part(v, 'Pay by card').state, 'next', 'the trusted Ready state stands');
+  assert.equal(part(v, 'Gift wrap'), undefined);
+  assert.equal(part(v, 'Odd'), undefined, 'an id that is not a task ID adds nothing and does not break the build');
+});
+
 test('Done on a branch is not done until merged, and the newer branch wins', t => {
   const r = standard(t);
   r.commit('plan', '2026-10-01T09:00:00Z');

@@ -33,7 +33,7 @@ export function readBranches({ repo, base, trustedBranch, recordsDir, pullReques
       for (const file of changed.stdout.split('\0').filter(f => f.endsWith('.md'))) {
         const shown = git('show', `${tip}:${file}`);
         const record = shown.status === 0 ? parseFrontMatter(shown.stdout).data : null; // removed on the branch: nothing to show
-        if (!record?.id) continue;
+        if (typeof record?.id !== 'string' || !/^T-\d{4,}$/.test(record.id)) continue; // front matter is anyone's: only a task ID is an id
         const seen = parts.get(record.id);
         if (seen && Date.parse(seen.date) >= Date.parse(date)) continue; // the newer branch wins
         parts.set(record.id, { record, date, checking: Boolean(pr && !pr.isDraft) });
@@ -48,7 +48,7 @@ export function readBranches({ repo, base, trustedBranch, recordsDir, pullReques
 export function overlayTasks(tasks, parts, milestoneIds) {
   const ids = new Set(tasks.map(t => t.id));
   const moved = (t, b) => {
-    const status = FORWARD[b.record.status];
+    const status = Object.hasOwn(FORWARD, b.record.status) ? FORWARD[b.record.status] : null; // not a prototype name like constructor
     if (!status) return t;
     return { ...t, status, client_title: b.record.client_title ?? t.client_title, title: b.record.title ?? t.title, live: b.checking && status === 'Active' ? 'checking' : null };
   };

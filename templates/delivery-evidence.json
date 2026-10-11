@@ -7,7 +7,7 @@
     "revision": "<the same full commit hash>",
     "environment": "<where the implementer checks ran: runner, OS, runtime versions>",
     "checks": [
-      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed>", "reference": "<https link to the CI run or log for this commit>" }
+      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed; under approval.auto_merge a required check GitHub enforces before merge may be enforced, with the pull request's checks page as its reference>", "reference": "<https link to the CI run or log for this commit>" }
     ],
     "execution": {
       "revision": "<the same full commit hash>",
@@ -20,12 +20,15 @@
     "revision": "<the same full commit hash, assembled with the current trusted branch>",
     "environment": "<where the assembled-candidate checks ran>",
     "checks": [
-      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed>", "reference": "<https link to the CI run for this commit>" }
+      { "name": "<required check name exactly as CI reports it>", "result": "<passed | failed | skipped, as observed; under approval.auto_merge a required check GitHub enforces before merge may be enforced, with the pull request's checks page as its reference>", "reference": "<https link to the CI run for this commit>" }
     ]
   },
   "review": {
     "reviewer": "<reviewer identity, different from the implementer>",
     "implementer": "<the tasks' owner, as recorded in the task records>",
+    "level": "<light | standard | deep (procedures/review.md)>",
+    "model": "<the reviewer's model>",
+    "fallback": "<only when a deep review could not use review.second_model: why; otherwise leave this field out>",
     "separate_context": null,
     "context": {
       "provider": "<harness that launched the review, e.g. the tool and its subagent feature>",

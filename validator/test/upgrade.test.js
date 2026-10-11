@@ -202,3 +202,10 @@ test('release tags sort by version number and ignore tags that are not versions 
   assert.equal(plan.to_version, 'v2.0.0', 'the release is still named by its version tag');
   assert.equal(plan.steps_from, 'release v2.0.0');
 });
+
+test('MAINT-0016: the v2.4.0 step adds the trial walker, and the upgrade installs it from its template', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../../upgrades.json', import.meta.url), 'utf8'));
+  assert.ok(manifest['v2.4.0']?.add_files?.includes('.claude/agents/trial-walker.md'));
+  assert.ok(manifest['v2.4.0'].notes.some(n => /wf-protect --apply/.test(n)) && manifest['v2.4.0'].notes.some(n => /AGENTS\.md/.test(n)));
+  assert.match(fs.readFileSync(new URL('../../adapters/upgrade.mjs', import.meta.url), 'utf8'), /\{ path: '\.claude\/agents\/trial-walker\.md', template: 'templates\/claude\/agents\/trial-walker\.md' \}/);
+});

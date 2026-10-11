@@ -16,6 +16,7 @@ const INSTALLED = [
   { path: '.github/workflows/wf-status.yml', template: 'templates/github/wf-status.yml', branch: true },
   { path: '.github/workflows/wf-client-page.yml', template: 'templates/github/wf-client-page.yml', branch: true },
   { path: '.claude/agents/independent-reviewer.md', template: 'templates/claude/agents/independent-reviewer.md' },
+  { path: '.claude/agents/trial-walker.md', template: 'templates/claude/agents/trial-walker.md' },
 ];
 
 export const parseVersion = v => (String(v ?? '').match(/^v?(\d+)\.(\d+)\.(\d+)$/) ?? []).slice(1).map(Number);

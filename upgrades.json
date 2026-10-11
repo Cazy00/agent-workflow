@@ -47,5 +47,15 @@
     "notes": [
       "If the client page is installed: `bin/wf-upgrade` refreshes .github/workflows/wf-client-page.yml, which no longer builds or deploys from a pull-request run (a merged pull request left a failed deploy); an enforcement-path change for the owner."
     ]
+  },
+  "v2.4.0": {
+    "add_files": [".claude/agents/trial-walker.md"],
+    "notes": [
+      "Refresh .github/workflows/wf-ci.yml (bin/wf-upgrade does it where the file is the old release's copy): it now runs when auto-merge is turned on or off and passes that to wf ci. An enforcement change for the owner.",
+      "Optional, owner-merge with checkpoint milestone or plan: turn on approval.auto_merge with bin/wf-setup, then run bin/wf-protect --apply with your own login so GitHub allows auto-merge, and replace AGENTS.md's merge sentence with the new scaffold's (a governing change).",
+      "Optional, same checkpoints: approval.defer_to_acceptance moves changes to acceptance tests, scenario changes from work found along the way, and accepted findings that are not blocking to the milestone's acceptance; the agent lists each accepted finding in its task record's accepted_findings.",
+      "Optional: config.review names a second model for deep and milestone reviews (review.second_model, e.g. codex gpt-6.1-sol at most high) and the paths that always need a deep review (review.deep_paths); bin/wf-setup finds whether Codex is installed and signed in. A project profile that spelled out its own review rules can point to config.review instead.",
+      "Optional: set acceptance_evidence to true so the pull request that accepts a milestone carries its review, the trial walkthrough and what was deferred (templates/acceptance-evidence.json). New scaffolds set it."
+    ]
   }
 }

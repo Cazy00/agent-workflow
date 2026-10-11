@@ -8,8 +8,8 @@ Lets the client page show the whole plan and keep up with the work within minute
 
 - **`client.plan`** names a plan file of phases and steps in the client's words, each step naming the milestones that carry it out (or `done: true` for work before the records). The page leads with Now, Waiting on you and Recently done, then every phase and step with its state (Done, In progress, Next, Later) and its parts; a milestone the plan does not place still shows, marked added, with a warning.
 - **Finished parts stay**: a removed task record is read from the last commit that had it, and a part's done date from the first commit on the trusted branch (its first-parent history, so a merge commit dates what it merged) where it read Done. The tasks directory's history is read in one pass, so a page over a few hundred records builds in seconds, not minutes.
-- **`wf status --client --live`** adds the parts moving on remote branches, and `--pull-requests` marks those with an open pull request *Being checked*. Only parts, only forward, never past the trusted branch's Done.
-- **`templates/github/wf-client-page.yml`** rebuilds on any push or pull request change and deploys from the trusted branch only.
+- **`wf status --client --live`** adds the parts moving on remote branches, and `--pull-requests` marks those with an open pull request *Being checked*. Only parts, only forward: a branch speaks for a part the trusted branch has as Draft or Ready (or lacks), so the trusted branch's Active, Blocked and Done stand.
+- **`templates/github/wf-client-page.yml`** rebuilds on any push or pull request change and deploys from the trusted branch only. It therefore runs on every push to any branch, which uses GitHub Actions minutes on private repositories.
 
 Moving a project to this pin:
 - Nothing changes without `client.plan`, except that a signed-off stage lists its parts.

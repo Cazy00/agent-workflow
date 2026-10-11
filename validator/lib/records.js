@@ -50,11 +50,12 @@ function colors(value, where) {
 const FONT = /^[A-Za-z0-9][A-Za-z0-9 \-]{0,59}$/;
 const repoPath = (v, where) => { if (typeof v !== 'string' || !v || v.startsWith('/') || v.split('/').some(p => p === '..' || p === '.' || p === '') || /[\\\0]/.test(v)) throw new Error(`${where} must be a path inside the repository`); };
 function validateClientConfig(c) {
-  only(c, ['title', 'exclude', 'language', 'detail', 'theme'], 'client');
+  only(c, ['title', 'exclude', 'language', 'detail', 'theme', 'plan'], 'client');
   if (c.detail !== undefined && !['stages', 'parts', 'full'].includes(c.detail)) throw new Error('client.detail must be stages, parts or full');
   if (c.title !== undefined && typeof c.title !== 'string') throw new Error('client.title must be a string');
   if (c.exclude !== undefined && (!Array.isArray(c.exclude) || c.exclude.some(id => !/^M-\d{4}$/.test(id)))) throw new Error('client.exclude must list milestone IDs like M-0001');
   if (c.language !== undefined && !['en', 'ar'].includes(c.language)) throw new Error('client.language must be en or ar');
+  if (c.plan !== undefined) { try { repoPath(c.plan, 'client.plan'); } catch { throw new Error('client.plan must be a path inside the repository ending in .json'); } if (!c.plan.endsWith('.json')) throw new Error('client.plan must be a path inside the repository ending in .json'); }
   if (c.theme === undefined) return;
   only(c.theme, ['colors', 'dark', 'fonts', 'logo', 'radius'], 'client.theme');
   const t = c.theme;

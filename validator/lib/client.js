@@ -13,6 +13,10 @@
 // and speaks the client's language (`client.language`: English or Arabic, which also sets right-to-left). Without a
 // theme it is the default design below. Fonts and logo are embedded, so the page stays one self-contained file.
 import { list, loadAll, loadConfig } from './records.js';
+import { loadPlan, planView } from './client-plan.js';
+import { planBody, PLAN_CSS } from './client-plan-render.js';
+import { overlayTasks } from './client-live.js';
+import { parseFrontMatter } from './frontmatter.js';
 
 const PLACEHOLDER = /coherent journey or demonstrable technical outcome/i;
 const TONE = { Draft: 'planned', Authorised: 'planned', Active: 'active', Blocked: 'review', Verified: 'review', Accepted: 'done', Released: 'done' };
@@ -26,7 +30,7 @@ const STRINGS = {
   en: {
     dir: 'ltr', locale: 'en-GB',
     status: { Draft: 'Planned', Authorised: 'Up next', Active: 'In progress', Blocked: 'Paused for now', Verified: 'Built and checked, awaiting sign-off', Accepted: 'Signed off', Released: 'Delivered' },
-    part: { done: 'Done', active: 'In progress', next: 'Up next', planned: 'Being planned', hold: 'On hold' },
+    part: { done: 'Done', active: 'In progress', next: 'Up next', planned: 'Being planned', hold: 'On hold', checking: 'Being checked' },
     planning: 'The project is being planned.',
     review: t => `${t}: built and checked, and waiting for sign-off.`,
     paused: t => `${t} is paused for now.`,
@@ -71,11 +75,25 @@ const STRINGS = {
     onHold: 'A part on hold is waiting for a decision or for something outside the work.',
     progressOnly: 'This page shows progress only. Approvals and sign-off happen with the project owner.',
     title: t => `${t}: progress`,
+    step: { done: 'Done', active: 'In progress', next: 'Next', later: 'Later' },
+    stepOf: (i, n) => `Step ${i} of ${n}`,
+    allDone: 'Every step is done.',
+    planHeading: 'The plan',
+    recent: 'Recently done',
+    waitingYou: 'Waiting on you',
+    startsNext: t => `Starting next: ${t}`,
+    laterParts: 'Its parts are planned when we reach it.',
+    stepDelivered: n => `What it delivered (${n})`, // not `delivered`: that key is the old page's headline
+    stepParts: n => `Its parts (${n})`,
+    addedStep: 'Added',
+    lastUpdated: 'Last updated',
+    readPlan: 'Each step is done, in progress, next or later; a step is made of parts, which we plan when we reach it. The plan can grow: what we add along the way is marked.',
+    readOnly: 'This page shows progress only; nothing can be changed from it.',
   },
   ar: {
     dir: 'rtl', locale: 'ar-OM-u-nu-latn',
     status: { Draft: 'مخطط لها', Authorised: 'التالية', Active: 'قيد التنفيذ', Blocked: 'متوقفة مؤقتاً', Verified: 'اكتمل البناء والفحص، بانتظار الاعتماد', Accepted: 'معتمدة', Released: 'سُلّمت' },
-    part: { done: 'منجز', active: 'قيد التنفيذ', next: 'التالي', planned: 'قيد التخطيط', hold: 'متوقف' },
+    part: { done: 'منجز', active: 'قيد التنفيذ', next: 'التالي', planned: 'قيد التخطيط', hold: 'متوقف', checking: 'قيد المراجعة' },
     planning: 'المشروع قيد التخطيط.',
     review: t => `${t}: اكتمل البناء والفحص، بانتظار الاعتماد.`,
     paused: t => `${t}: متوقفة مؤقتاً.`,
@@ -120,6 +138,20 @@ const STRINGS = {
     onHold: 'الجزء المتوقف ينتظر قراراً أو أمراً خارج نطاق العمل.',
     progressOnly: 'تعرض هذه الصفحة سير العمل فقط، ويجري الاعتماد مع صاحب المشروع.',
     title: t => `${t}: سير العمل`,
+    step: { done: 'منجزة', active: 'قيد التنفيذ', next: 'التالية', later: 'لاحقاً' },
+    stepOf: (i, n) => `الخطوة ${i} من ${n}`,
+    allDone: 'اكتملت كل الخطوات.',
+    planHeading: 'الخطة',
+    recent: 'أُنجز مؤخراً',
+    waitingYou: 'بانتظارك',
+    startsNext: t => `يبدأ بعد ذلك: ${t}`,
+    laterParts: 'نحدد أجزاءها حين نصل إليها.',
+    stepDelivered: n => `ما أنجزته (${n})`,
+    stepParts: n => `أجزاؤها (${n})`,
+    addedStep: 'أُضيفت',
+    lastUpdated: 'آخر تحديث',
+    readPlan: 'كل خطوة إما منجزة أو قيد التنفيذ أو التالية أو لاحقة، وتتكون من أجزاء نحددها حين نصل إليها. قد تكبر الخطة، وما نضيفه أثناء العمل يظهر بعلامة.',
+    readOnly: 'تعرض هذه الصفحة سير العمل فقط، ولا يمكن تغيير شيء منها.',
   },
 };
 export const LANGUAGES = Object.keys(STRINGS);
@@ -147,7 +179,7 @@ function embed(source, file, kinds, budget) {
   return `data:${MIME[ext]};base64,${bytes.toString('base64')}`;
 }
 
-export function evaluateClient({ source, updated = null }) {
+export function evaluateClient({ source, updated = null, history = null, live = null }) {
   const config = loadConfig(source);
   const rd = config.records_dir ?? 'docs/workflow';
   const client = config.client ?? {};
@@ -157,7 +189,11 @@ export function evaluateClient({ source, updated = null }) {
   const exclude = new Set(list(client.exclude));
   const all = loadAll(source, rd);
   const profile = all.profile?.data ?? {};
-  const tasks = [...all.tasks.values()].map(r => r.data).filter(t => t?.id);
+  const milestoneIds = new Set([...all.milestones.values()].map(r => r.data?.id).filter(Boolean));
+  const recorded = [...all.tasks.values()].map(r => r.data).filter(t => t?.id);
+  // Branches being worked on move their own parts forward (client-live.js); nothing else on the page comes from them.
+  const signedOff = new Set([...all.milestones.values()].map(r => r.data).filter(m => m?.id && TONE[m.status] === 'done').map(m => m.id));
+  const tasks = live ? overlayTasks(recorded, live.parts, milestoneIds, signedOff) : recorded;
   const stages = [...all.milestones.values()]
     .filter(r => r.data?.id && !exclude.has(r.data.id))
     .sort((a, b) => String(a.data.id).localeCompare(String(b.data.id)))
@@ -167,13 +203,20 @@ export function evaluateClient({ source, updated = null }) {
       const tone = TONE[known];
       const planned = [...new Set(list(m.tasks))];
       // The plan's order first, then work found along the way, by ID.
-      const own = tasks.filter(t => t.milestone === m.id).sort((a, b) => {
+      // A finished milestone's removed task records come back from history, so a done step keeps what it delivered.
+      // Detail 'stages' lists no parts, so it reads no history.
+      const kept = tasks.filter(t => t.milestone === m.id);
+      const recovered = tone === 'done' && history && detail !== 'stages' ? planned.filter(id => !kept.some(t => t.id === id)).map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id) : [];
+      const own = [...kept, ...recovered].sort((a, b) => {
         const [x, y] = [planned.indexOf(a.id), planned.indexOf(b.id)];
         return (x === -1 ? Infinity : x) - (y === -1 ? Infinity : y) || a.id.localeCompare(b.id);
       });
       // Task records are removed once a milestone is accepted, so a signed-off stage is complete by definition.
       const finished = tone === 'done';
       const total = finished ? null : Math.max(planned.length, own.length);
+      // What a finished stage delivered, counted as an open one is, from its plan and the records still kept: the same
+      // at every detail and with or without history, so a step's progress does not depend on either.
+      const delivered = finished ? Math.max(planned.length, kept.length) : null;
       const done = finished ? null : own.filter(t => t.status === 'Done').length;
       // A stage's `client_` wording replaces the team's field by field; a field it leaves out keeps the record's own.
       const outcome = text(m.client_outcome) ?? text(m.outcome);
@@ -183,9 +226,13 @@ export function evaluateClient({ source, updated = null }) {
         outcome: outcome && outcome !== title ? outcome : null,
         measure: text(m.client_measure) ?? text(m.measure),
         status: say.status[known], tone, finished, paused: known === 'Blocked', upNext: known === 'Authorised',
-        parts: total ? { done, total } : null,
+        parts: total ? { done, total } : null, delivered,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
-        items: finished || detail === 'stages' ? [] : own.map(t => ({ id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state: PART[t.status] ?? 'planned', added: planned.length > 0 && !planned.includes(t.id) })),
+        moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
+        items: detail === 'stages' ? [] : own.map(t => {
+          const state = finished ? 'done' : t.live === 'checking' ? 'checking' : PART[t.status] ?? 'planned';
+          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: !planned.includes(t.id) && (planned.length > 0 || t.branchOnly === true), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
+        }),
       };
     });
   const current = stages.find(s => s.tone === 'review' && !s.paused) ?? stages.find(s => s.tone === 'active') ?? stages.find(s => s.paused) ?? null;
@@ -204,7 +251,7 @@ export function evaluateClient({ source, updated = null }) {
   // queue looks forward from the focus; an unfinished stage before it still shows its parts in the list below.
   const focus = current ?? stages.find(s => !s.finished) ?? null;
   const later = focus ? stages.slice(stages.indexOf(focus) + 1).filter(s => !s.finished) : [];
-  const now = focus && detail !== 'stages' ? { stage: focus.id, review: focus.tone === 'review' && !focus.paused, paused: focus.paused, items: focus.items.filter(i => i.state === 'active').map(i => i.title) } : null;
+  const now = focus && detail !== 'stages' ? { stage: focus.id, review: focus.tone === 'review' && !focus.paused, paused: focus.paused, items: focus.items.filter(i => i.state === 'active' || i.state === 'checking').map(i => i.title) } : null;
   let next = [];
   if (detail !== 'stages' && focus) {
     const rank = { next: 0, planned: 1 };
@@ -224,6 +271,23 @@ export function evaluateClient({ source, updated = null }) {
   const open = stages.filter(s => !s.finished && s.parts);
   const overall = open.length ? { done: open.reduce((n, s) => n + s.parts.done, 0), total: open.reduce((n, s) => n + s.parts.total, 0) } : null;
 
+  // The five parts finished most recently, newest first, when history gives their dates.
+  const recent = stages.flatMap(s => s.items).filter(i => i.doneAt).sort((a, b) => Date.parse(b.doneAt) - Date.parse(a.doneAt)).slice(0, 5).map(i => ({ title: i.title, date: i.doneAt }));
+
+  // The whole plan (MAINT-0014), when the project keeps one: phases and steps from the plan file, states from the stages.
+  const warnings = [];
+  let plan = null;
+  if (client.plan) {
+    plan = planView({ plan: loadPlan(source, client.plan), stages, known: milestoneIds, exclude });
+    for (const id of plan.unplaced) warnings.push(`client.plan: ${id} is in no step of the client plan; it shows as an added step at the end until a step lists it`);
+  }
+
+  warnings.push(...(history?.warnings ?? [])); // read lazily while the stages were built
+  if (live) {
+    warnings.push(...live.warnings);
+    if (live.newest && (!updated || Date.parse(live.newest) > Date.parse(updated))) updated = live.newest;
+  }
+
   const theme = client.theme ?? null;
   const budget = { used: 0 };
   const look = theme ? {
@@ -238,8 +302,8 @@ export function evaluateClient({ source, updated = null }) {
     goal: text(profile.client_measure) ?? text(profile.measure),
     headline, headline_title: current?.title ?? (!current && delivered !== stages.length ? upNext?.title : null) ?? null, delivered, total: stages.length,
     current: current ? stages.indexOf(current) : null,
-    overall, now, next, then, waiting,
-    stages, updated, look,
+    overall, now, next, then, waiting, recent,
+    stages, updated, look, plan, warnings,
   };
 }
 
@@ -261,6 +325,7 @@ const ICON = {
   next: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" /></svg>',
   planned: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" stroke-dasharray="2.4 2.2" /></svg>',
   hold: '<svg viewBox="0 0 16 16"><path d="M6 4.5v7M10 4.5v7" /></svg>',
+  checking: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" /><path d="M5.5 8.2l1.8 1.8 3.2-3.6" /></svg>',
 };
 
 export function renderClient(view) {
@@ -369,10 +434,10 @@ export function renderClient(view) {
   .panel .items { margin-top: 0; } .panel .item { grid-template-columns: 1.25rem minmax(0, 1fr); border-top: 0; padding: .2rem 0; }
   .icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transform: translateY(.15rem); }
   .icon .fill { fill: currentColor; stroke: none; }
-  .item.done .icon { color: var(--done); } .item.active .icon { color: var(--active); } .item.next .icon { color: var(--text); } .item.planned .icon { color: var(--planned); } .item.hold .icon { color: var(--review); }
+  .item.done .icon { color: var(--done); } .item.active .icon, .item.checking .icon { color: var(--active); } .item.next .icon { color: var(--text); } .item.planned .icon { color: var(--planned); } .item.hold .icon { color: var(--review); }
   .item.done .name { color: var(--muted); }
   .item .state { font-size: .85rem; color: var(--muted); white-space: nowrap; }
-  .item.active .state { color: var(--active); font-weight: 600; } .item.hold .state { color: var(--review); font-weight: 600; }
+  .item.active .state, .item.checking .state { color: var(--active); font-weight: 600; } .item.hold .state { color: var(--review); font-weight: 600; }
   .tag { display: inline-block; font-size: .8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .45rem; white-space: nowrap; }
   ol.route { list-style: none; margin: 0; padding: 0; position: relative; }
   ol.route::before, ol.route::after { content: ""; position: absolute; inset-inline-start: 1.05rem; top: 1.1rem; width: 2px; border-radius: 1px; }
@@ -409,12 +474,13 @@ export function renderClient(view) {
   footer p { margin: 0 0 .4rem; }
   @media (prefers-reduced-motion: reduce) { ol.route::after { animation: none; } }
   @media print { body { background: #fff; } ol.route::after { animation: none; } .current .body, .panel { border-color: #bbb; } }
+  ${view.plan ? PLAN_CSS : ''}
 </style>
 </head>
 <body>
 ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.logo}" alt="${esc(view.title)}">` : `<p>${esc(view.title)}</p>`}</div></div>` : ''}
 <main>
-  <header>
+  ${view.plan ? planBody(view, say, { esc, bdi, ICON, partList, band, look }) : `<header>
     ${!band && look?.logo ? `<img class="logo" src="${look.logo}" alt="${esc(view.title)}">` : ''}
     ${band ? '' : `<p class="project">${esc(view.title)}</p>`}
     <h1>${headline}</h1>
@@ -433,7 +499,7 @@ ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.l
   <footer>
     <p>${esc(when ? say.updated(when) : say.updatedLatest)} ${esc(say.onHold)}</p>
     <p>${esc(say.progressOnly)}</p>
-  </footer>
+  </footer>`}
 </main>
 </body>
 </html>

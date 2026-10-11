@@ -10,7 +10,7 @@ This repository maintains the workflow itself. Workflow changes need independent
 - Review, acceptance, release: `procedures/review.md`, `procedures/accept-release.md`; fewer CI round trips: `procedures/delivery.md`; manual-mode signing rounds, dry runs and closeout: `procedures/approval-evidence.md`.
 - Deployment, incidents, maintenance, upgrades: `procedures/operate.md`.
 - Feedback and maintenance: `procedures/maintenance.md`.
-- Validation: `npm test`; command usage: `QUICKSTART.md`; release history: `CHANGELOG.md`, with `upgrades.json` for what an upgrade changes. Owner view: `wf status` (derived, read-only); adopting projects also get it as a pinned GitHub issue from `templates/github/wf-status.yml`. Client view: `wf status --client` (plain-language HTML; optional Pages publishing from `templates/github/wf-client-page.yml`).
+- Validation: `npm test`; command usage: `QUICKSTART.md`; release history: `CHANGELOG.md`, with `upgrades.json` for what an upgrade changes. Owner view: `wf status` (derived, read-only); adopting projects also get it as a pinned GitHub issue from `templates/github/wf-status.yml`. Client view: `wf status --client` (plain-language HTML, the whole plan with `client.plan`, live within minutes: MAINT-0014; optional Pages publishing from `templates/github/wf-client-page.yml`).
 - Reusable records: `templates/`. Run evidence, reviews and handoffs go on the task's GitHub pull request or issue, never into the repository; `npm test` enforces this.
 - Owner ideas awaiting evaluation (no authority): `docs/proposals/ideas-backlog.md`.
 

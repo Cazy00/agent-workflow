@@ -1,39 +1,69 @@
-# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, published
-# after each push to the trusted branch. Installed only on request (bin/wf-adopt --client-page); delete this file to
-# stop publishing. It shows stage titles, outcomes and progress as the milestone records word them, and no other
-# record field (no IDs, people, branches or reasons); it grants no authority. A GitHub Pages site is PUBLIC on the internet, even for a private repository (unless your
-# organisation's plan offers private Pages), and anyone with the address can read it: publish only what you would
-# put on a public page, and leave stages out with `client.exclude` in docs/workflow/config.json. Without Pages,
-# render the same page yourself and send the file: scripts/wf status --client > status.html
-# Copy it only from a release whose wf has `status --client`. Turn Pages on once, with GitHub Actions as the
+# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt within
+# minutes of any push and deployed from the trusted branch only. Installed only on request (bin/wf-adopt
+# --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone
+# records word them, and no other record field (no IDs, people, branches or reasons); it grants no authority. A GitHub
+# Pages site is PUBLIC on the internet, even for a private repository (unless your organisation's plan offers private
+# Pages), and anyone with the address can read it: publish only what you would put on a public page, and leave stages
+# out with `client.exclude` in docs/workflow/config.json. Without Pages, render the same page yourself and send the
+# file: scripts/wf status --client > status.html
+# Copy it only from a release whose wf has `status --client --live`. Turn Pages on once, with GitHub Actions as the
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
 name: wf-client-page
+# Within minutes (MAINT-0014): a push to any branch, or a pull request opening, closing or changing draft state, asks
+# for a rebuild; GitHub Pages deploys only from the trusted branch, so any other ref only dispatches this workflow on
+# it. The build reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
 on:
   push:
-    branches: [__TRUSTED_BRANCH__]
+    branches: ['**']
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
 permissions:
   contents: read
+# A running build on the trusted branch is never cancelled (under steady pushes it would never deploy): it finishes and
+# only the newest waiting run goes next. Runs on other refs cancel in progress.
 concurrency:
-  group: wf-client-page
-  cancel-in-progress: true
+  group: wf-client-page-${{ github.ref == 'refs/heads/__TRUSTED_BRANCH__' && 'build' || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/__TRUSTED_BRANCH__' }}
 jobs:
+  dispatch:
+    # A fork's pull request and Dependabot get a read-only token, so they could only fail here.
+    if: github.ref != 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork) && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Ask for a rebuild on the trusted branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run wf-client-page.yml --ref __TRUSTED_BRANCH__ --repo "$GITHUB_REPOSITORY"
   build:
     if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - name: List the open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json headRefName,isDraft,isCrossRepository > "$RUNNER_TEMP/pull-requests.json"
       - name: Render the client page
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/site"
-          scripts/wf status --client --candidate "$GITHUB_SHA" > "$RUNNER_TEMP/site/index.html"
+          scripts/wf status --client --live --candidate "$GITHUB_SHA" --pull-requests "$RUNNER_TEMP/pull-requests.json" > "$RUNNER_TEMP/site/index.html"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/site

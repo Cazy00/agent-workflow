@@ -68,3 +68,21 @@ test('matchesAny reads the config\'s glob forms', () => {
   assert.equal(matchesAny(['src/auth/**'], 'src/orders/a.js'), false);
   assert.equal(matchesAny(undefined, 'src/a.js'), false);
 });
+
+// The independent review of MAINT-0016 (C1): matching the trusted branch is not enough. Deleting or reverting reviewed
+// work, or settling a conflict by taking the trusted branch's side, also leaves the head equal to it.
+test('deleting or reverting reviewed work, or taking the trusted branch\'s side of a conflict, does not carry over', t => {
+  const a = repo(t);
+  a.write('src/guard.js', 'guard\n'); const reviewedA = a.commit('T-0001: a guard');
+  a.git('rm', '-q', 'src/guard.js'); const headA = a.commit('T-0001: drop the guard');
+  assert.match(carried(a, a.base, headA, reviewedA).why ?? 'carried', /src\/guard\.js/, 'a deleted file');
+  const b = repo(t);
+  b.write('src/shared.js', 'one\ntwo checked\nthree\nfour\nfive\n'); const reviewedB = b.commit('T-0001: validate');
+  b.write('src/shared.js', 'one\ntwo\nthree\nfour\nfive\n'); const headB = b.commit('T-0001: revert the validation');
+  assert.match(carried(b, b.base, headB, reviewedB).why ?? 'carried', /src\/shared\.js/, 'a reverted change');
+  const c = repo(t);
+  c.write('src/shared.js', 'ONE by the task\ntwo\nthree\nfour\nfive\n'); const reviewedC = c.commit('T-0001: shared');
+  c.git('switch', '-q', 'main'); c.write('src/shared.js', 'ONE by main\ntwo\nthree\nfour\nfive\n'); const main = c.commit('main edits shared');
+  c.git('switch', '-q', 'T-0001'); c.git('merge', '-q', '--no-edit', '-X', 'theirs', 'main'); const headC = c.git('rev-parse', 'HEAD');
+  assert.match(carried(c, main, headC, reviewedC).why ?? 'carried', /src\/shared\.js/, 'the trusted branch\'s side of a conflict');
+});

@@ -47,6 +47,7 @@ export function dirSource(root) {
     changedSince() { return null; },
     changedPaths() { return null; },
     blob() { return null; },
+    mergeBase() { return null; },
     claimBranches() { return null; },
   };
 }
@@ -104,6 +105,7 @@ export function gitSource(repo, revision) {
       return r.stdout.split('\0').filter(Boolean);
     },
     blob(rel) { safePath(rel); const r = git('rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}:${rel}`); return r.status === 0 ? r.stdout.trim() : null; },
+    mergeBase(commit) { if (!/^[a-f0-9]{40,64}$/.test(commit)) return null; const r = git('merge-base', commit, rev); return r.status === 0 ? r.stdout.trim() : null; },
     // Every commit anywhere in this revision's history that added or modified rel, newest first. --full-history
     // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path
     // used and removed on a merged or fast-forwarded branch still counts.

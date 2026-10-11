@@ -800,3 +800,11 @@ test('MAINT-0016: under auto_merge, wf next says to turn on auto-merge for a fin
     assert.match(JSON.stringify(view), pattern, String(auto));
   }
 });
+
+test('MAINT-0016 review C1: deleting reviewed work after the review needs a new review', t => {
+  const p = setup(t, { checkpoint: 'milestone', change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/guard.js', 'export const guard = true;\n'); } });
+  p.git('rm', '-q', 'src/guard.js'); p.git('commit', '-qm', 'T-0001: drop the guard'); const head = p.git('rev-parse', 'HEAD');
+  const r = runAt(p, p.baseline, head, evidence(head, { verification: { revision: p.candidate, execution: { revision: p.candidate, tests: [] } }, review: reviewedAt(p, p.candidate) }));
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(out(r).findings.join(' | '), /the review of [0-9a-f]{12} does not carry over \(changed since [0-9a-f]{12}: src\/guard\.js\)/);
+});

@@ -363,6 +363,7 @@ test('the wf ci workflow summary names who merges, lists failing reasons and nev
   assert.match(owner.summary, /\*\*Merge:\*\* the owner\./);
   assert.equal(owner.out.trim(), '::notice title=The owner merges this::it changes acceptance tests: a ::warning::x y', 'a path cannot start a workflow command of its own');
   assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [] }).summary, /the agent may merge this once every required check has passed/);
+  assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [], deferred: ['it changes acceptance tests: a'] }).summary, /\*\*For the owner at the milestone’s acceptance:\*\*\n- it changes acceptance tests: a/);
   const failed = run({ verdict: 'fail', findings: ['production: src/a.js', 'production path src/a.js must belong to exactly one selected task (found 0)', 'readiness T-0001: Needs discovery or resolution', '  readiness is stale', 'unverified: x', 'note: y'] }).summary;
   assert.match(failed, /- production path src\/a\.js must belong/);
   assert.match(failed, /- readiness is stale/);
@@ -765,4 +766,11 @@ test('MAINT-0016: auto-merge on a pull request the owner merges, or in a project
   const unchosen = setup(t, { checkpoint: 'milestone' });
   assert.match(out(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env })).findings.join(' | '), /auto-merge is on, but this project has not chosen it/);
   assert.equal(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env: { WF_PR_AUTO_MERGE: 'off' } }).status, 0, 'off, or unset as an older workflow file leaves it, changes nothing');
+});
+
+test('MAINT-0016: the wf ci workflow runs when auto-merge is turned on or off, and passes it to the gate as an environment value', () => {
+  const template = fs.readFileSync(fileURLToPath(new URL('../../templates/github/wf-ci.yml', import.meta.url)), 'utf8');
+  assert.match(template, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
+  assert.match(template, /WF_PR_AUTO_MERGE: \$\{\{ github\.event\.pull_request\.auto_merge && 'on' \|\| 'off' \}\}/);
+  assert.doesNotMatch(template, /--auto-merge/, 'an older pinned validator would refuse an unknown option');
 });

@@ -12,10 +12,13 @@
 # integration gate (`wf ci`), which needs the agent's delivery evidence for a production change: it reads it from the
 # pull request description, so editing the description reruns this check on the same head. In manual mode the
 # owner's signed receipts are checked on the owner's machine (`wf closeout`), so here it checks the records only.
+# Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
+# to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it
+# on, so GitHub cannot merge it on the other checks alone.
 name: wf
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled]
 permissions:
   contents: read
 concurrency:
@@ -59,6 +62,8 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           # Untrusted text: passed through the environment into a file, never into the script itself.
           DESCRIPTION: ${{ github.event.pull_request.body }}
+          # Whether auto-merge is on (MAINT-0016): an environment value, which an older pinned validator ignores.
+          WF_PR_AUTO_MERGE: ${{ github.event.pull_request.auto_merge && 'on' || 'off' }}
         run: |
           set -euo pipefail
           wf() { node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" "$@"; }
@@ -81,6 +86,7 @@ jobs:
               const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
               if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
               if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
+              if (r.deferred?.length) lines.push("**For the owner at the milestone’s acceptance:**", ...r.deferred.map(x => `- ${x}`));
               fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             ' "$RUNNER_TEMP/ci.json" || true
             exit "$code"

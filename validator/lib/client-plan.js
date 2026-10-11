@@ -52,8 +52,9 @@ function step({ title, summary, done, added, stages }) {
   const moving = stages.some(s => s.moving) || items.some(i => i.state === 'active' || i.state === 'checking');
   const state = done || (stages.length && stages.every(s => s.finished)) ? 'done'
     : stages.some(s => s.tone === 'active' || s.tone === 'review') || moving ? 'active' : 'later';
-  const total = stages.reduce((n, s) => n + (s.parts?.total ?? s.items.length), 0);
-  const doneParts = stages.reduce((n, s) => n + (s.parts?.done ?? s.items.filter(i => i.state === 'done').length), 0); // items are empty at detail 'stages'
+  // Counts, not items: items are empty at detail 'stages', and a finished stage's removed parts need history to list.
+  const total = stages.reduce((n, s) => n + (s.finished ? s.delivered : s.parts?.total ?? 0), 0);
+  const doneParts = stages.reduce((n, s) => n + (s.finished ? s.delivered : s.parts?.done ?? 0), 0);
   const parts = total ? { done: doneParts, total } : null;
   return {
     title, summary, state, added, items, parts,

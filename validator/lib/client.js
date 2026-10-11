@@ -203,8 +203,9 @@ export function evaluateClient({ source, updated = null, history = null, live = 
       const planned = [...new Set(list(m.tasks))];
       // The plan's order first, then work found along the way, by ID.
       // A finished milestone's removed task records come back from history, so a done step keeps what it delivered.
+      // Detail 'stages' lists no parts, so it reads no history.
       const kept = tasks.filter(t => t.milestone === m.id);
-      const recovered = tone === 'done' && history ? planned.filter(id => !kept.some(t => t.id === id)).map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id) : [];
+      const recovered = tone === 'done' && history && detail !== 'stages' ? planned.filter(id => !kept.some(t => t.id === id)).map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id) : [];
       const own = [...kept, ...recovered].sort((a, b) => {
         const [x, y] = [planned.indexOf(a.id), planned.indexOf(b.id)];
         return (x === -1 ? Infinity : x) - (y === -1 ? Infinity : y) || a.id.localeCompare(b.id);
@@ -212,6 +213,9 @@ export function evaluateClient({ source, updated = null, history = null, live = 
       // Task records are removed once a milestone is accepted, so a signed-off stage is complete by definition.
       const finished = tone === 'done';
       const total = finished ? null : Math.max(planned.length, own.length);
+      // What a finished stage delivered, counted as an open one is, from its plan and the records still kept: the same
+      // at every detail and with or without history, so a step's progress does not depend on either.
+      const delivered = finished ? Math.max(planned.length, kept.length) : null;
       const done = finished ? null : own.filter(t => t.status === 'Done').length;
       // A stage's `client_` wording replaces the team's field by field; a field it leaves out keeps the record's own.
       const outcome = text(m.client_outcome) ?? text(m.outcome);
@@ -221,12 +225,12 @@ export function evaluateClient({ source, updated = null, history = null, live = 
         outcome: outcome && outcome !== title ? outcome : null,
         measure: text(m.client_measure) ?? text(m.measure),
         status: say.status[known], tone, finished, paused: known === 'Blocked', upNext: known === 'Authorised',
-        parts: total ? { done, total } : null,
+        parts: total ? { done, total } : null, delivered,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
         moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
         items: detail === 'stages' ? [] : own.map(t => {
           const state = finished ? 'done' : t.live === 'checking' ? 'checking' : PART[t.status] ?? 'planned';
-          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: planned.length > 0 && !planned.includes(t.id), doneAt: state === 'done' ? history?.doneDate(t.id) ?? null : null };
+          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: planned.length > 0 && !planned.includes(t.id), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
         }),
       };
     });

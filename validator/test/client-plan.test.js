@@ -30,12 +30,14 @@ export function repo(t, { client = { plan: 'docs/client-page/plan.json' } } = {}
   const config = JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8'));
   write(`${RD}/config.json`, JSON.stringify({ ...config, repository: 'acme/shop', client }));
   write(`${RD}/profile.md`, '---\nrecord: profile\nproject: shop\nworkflow_version: v1\napproval_mechanism: owner-merge\napproval_label: owner-merge\ncoordinator: alice-owner\nmeasure: A customer can order a cake online.\nreadiness: Ready\nrequired_checks: [test]\nsetup_budget_days: 2\n---\n# Profile\n');
-  const milestone = (id, status, title, tasks = []) => write(`${RD}/milestones/${id}.md`, `---\nrecord: milestone\nid: ${id}\noutcome: ${title} works.\nclient_title: ${title}\nstatus: ${status}\ncoordinator: agent\nowner: alice-owner\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nauthority: owner\nlimits: x\ndemonstration: x\nstop_conditions: x\nrelease_authority: owner\ntasks: [${tasks.join(', ')}]\n---\n# ${id} — ${title}\n`);
-  const task = (id, status, milestoneId, title) => write(`${RD}/tasks/${id}.md`, `---\nrecord: task\nid: ${id}\ntitle: ${id} internal title for bob-worker\nclient_title: ${title}\nstatus: ${status}\nmilestone: ${milestoneId}\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nbranch: claude/${id}-work\nresume_condition: waiting on D-0009\n---\n# ${id}\n`);
+  const milestoneText = (id, status, title, tasks = []) => `---\nrecord: milestone\nid: ${id}\noutcome: ${title} works.\nclient_title: ${title}\nstatus: ${status}\ncoordinator: agent\nowner: alice-owner\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nauthority: owner\nlimits: x\ndemonstration: x\nstop_conditions: x\nrelease_authority: owner\ntasks: [${tasks.join(', ')}]\n---\n# ${id} — ${title}\n`;
+  const milestone = (id, ...rest) => write(`${RD}/milestones/${id}.md`, milestoneText(id, ...rest));
+  const taskText = (id, status, milestoneId, title) => `---\nrecord: task\nid: ${id}\ntitle: ${id} internal title for bob-worker\nclient_title: ${title}\nstatus: ${status}\nmilestone: ${milestoneId}\nowner: bob-worker\nscope: [src]\ngoverning: [PROFILE]\nacceptance: []\nbranch: claude/${id}-work\nresume_condition: waiting on D-0009\n---\n# ${id}\n`;
+  const task = (id, ...rest) => write(`${RD}/tasks/${id}.md`, taskText(id, ...rest));
   const plan = value => write('docs/client-page/plan.json', JSON.stringify(value));
   const commit = (message, date) => { git(['add', '-A'], date); git(['commit', '-qm', message], date); return git(['rev-parse', 'HEAD']); };
   git(['init', '-q', '-b', 'main']);
-  return { dir, git, write, rm, milestone, task, plan, commit };
+  return { dir, git, write, rm, milestone, task, plan, commit, milestoneText, taskText };
 }
 
 // The shop's plan: Foundations (done before records, then M-0001), Ordering (M-0002, M-0003) and a later step.
@@ -166,6 +168,42 @@ test('with detail "stages" a step still counts its parts and sees a moving part'
   assert.equal(ordering().state, 'active', 'the items are hidden, but a task in progress still moves its step');
 });
 
+test('a step counts a finished milestone by its planned parts, whatever the detail and with or without history', t => {
+  for (const detail of ['full', 'stages']) {
+    const r = repo(t, { client: { plan: 'docs/client-page/plan.json', detail } });
+    r.milestone('M-0001', 'Active', 'Menu online', ['T-0001', 'T-0002']);
+    r.task('T-0001', 'Done', 'M-0001', 'Put the menu online');
+    r.task('T-0002', 'Done', 'M-0001', 'Show prices');
+    r.milestone('M-0002', 'Active', 'Online ordering', ['T-0003', 'T-0004']);
+    r.task('T-0003', 'Ready', 'M-0002', 'Choose a cake');
+    r.task('T-0004', 'Ready', 'M-0002', 'Pay by card');
+    r.plan({ phases: [{ title: 'All', steps: [{ title: 'Ordering', milestones: ['M-0001', 'M-0002'] }] }] });
+    r.commit('work', '2026-09-01T09:00:00Z');
+    r.milestone('M-0001', 'Accepted', 'Menu online', ['T-0001', 'T-0002']);
+    r.rm(`${RD}/tasks/T-0001.md`); r.rm(`${RD}/tasks/T-0002.md`);
+    r.commit('accept M-0001', '2026-09-02T09:00:00Z');
+    for (const history of [null, gitHistory(r.dir, 'main', RD)]) {
+      const ordering = view(r, { source: gitSource(r.dir, 'main'), history }).plan.steps[0];
+      const label = `detail ${detail}, ${history ? 'with' : 'without'} history`;
+      assert.deepEqual(ordering.parts, { done: 2, total: 4 }, label);
+      assert.equal(ordering.progress, 0.5, label);
+    }
+  }
+});
+
+test('history is asked only for what the page shows', t => {
+  const asked = [];
+  const history = { lastVersion: id => { asked.push(`record ${id}`); return null; }, doneDate: id => { asked.push(`done ${id}`); return null; } };
+  view(standard(t, { client: {} }), { history });
+  assert.deepEqual(asked, [], 'without a plan there is no Recently done, and M-0001 keeps its record');
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', detail: 'stages' } });
+  r.rm(`${RD}/tasks/T-0001.md`);
+  view(r, { history });
+  assert.deepEqual(asked, [], 'detail "stages" lists no parts, and counts a finished stage by its plan');
+  view(standard(t), { history });
+  assert.deepEqual(asked.sort(), ['done T-0001', 'done T-0002']);
+});
+
 test('a finished step keeps its parts after their records are removed, with the dates they were done', t => {
   const r = standard(t);
   r.task('T-0001', 'Active', 'M-0001', 'Put the menu online');
@@ -209,6 +247,81 @@ test('a shallow clone has no history to read, and still renders', t => {
   assert.ok(v.recent.every(p => p.date === '2026-09-02T09:00:00Z'), 'the only commit is the one the record was Done at');
 });
 
+const part = (v, title) => v.plan.steps.flatMap(s => s.items).find(i => i.title === title);
+
+// Many commits at once, through one `git fast-import`: each entry is { date, files: { path: text | null } }.
+function importCommits(r, entries) {
+  const from = r.git(['rev-parse', 'main']);
+  const data = text => `data ${Buffer.byteLength(text)}\n${text}\n`;
+  const stream = entries.map(({ date, files }, i) => `commit refs/heads/main\ncommitter Fixture <fixture@example.invalid> ${Date.parse(date) / 1000} +0000\n${data(`commit ${i}`)}${i ? '' : `from ${from}\n`}${Object.entries(files).map(([file, text]) => text == null ? `D ${file}\n` : `M 100644 inline ${file}\n${data(text)}`).join('')}\n`).join('');
+  const done = spawnSync('git', ['-C', r.dir, 'fast-import', '--quiet', '--force'], { input: stream, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(done.status, 0, done.stderr);
+}
+
+test('history is read in one pass: hundreds of parts, each done in its own commit, build in under 3 seconds', t => {
+  const r = repo(t);
+  const M = 10, N = 30; // 300 parts; the first six milestones are accepted and their records removed
+  const mid = m => `M-${String(m).padStart(4, '0')}`;
+  const tid = (m, n) => `T-${String(m * 100 + n).padStart(4, '0')}`;
+  const ids = m => Array.from({ length: N }, (_, n) => tid(m, n + 1));
+  r.plan({ phases: [{ title: 'All', steps: Array.from({ length: M }, (_, m) => ({ title: `Step ${m + 1}`, milestones: [mid(m + 1)] })) }] });
+  for (let m = 1; m <= M; m++) r.milestone(mid(m), 'Active', `Milestone ${m}`, ids(m));
+  r.commit('plan', '2026-01-01T00:00:00Z');
+  let minute = 0;
+  const at = () => new Date(Date.parse('2026-01-02T00:00:00Z') + 60000 * minute++).toISOString().replace('.000Z', 'Z');
+  const entries = [];
+  for (let m = 1; m <= M; m++) entries.push({ date: at(), files: Object.fromEntries(ids(m).map(id => [`${RD}/tasks/${id}.md`, r.taskText(id, 'Ready', mid(m), `Part ${id}`)])) });
+  for (let m = 1; m <= M; m++) for (const id of ids(m)) {
+    entries.push({ date: at(), files: { [`${RD}/tasks/${id}.md`]: r.taskText(id, 'Active', mid(m), `Part ${id}`) } });
+    entries.push({ date: at(), files: { [`${RD}/tasks/${id}.md`]: r.taskText(id, 'Done', mid(m), `Part ${id}`) } });
+  }
+  for (let m = 1; m <= 6; m++) {
+    entries.push({ date: at(), files: { [`${RD}/milestones/${mid(m)}.md`]: r.milestoneText(mid(m), 'Accepted', `Milestone ${m}`, ids(m)) } });
+    entries.push({ date: at(), files: Object.fromEntries(ids(m).map(id => [`${RD}/tasks/${id}.md`, null])) });
+  }
+  importCommits(r, entries);
+  const started = performance.now();
+  const v = view(r, { source: gitSource(r.dir, 'main'), history: gitHistory(r.dir, 'main', RD) });
+  const html = renderClient(v);
+  const took = performance.now() - started;
+  t.diagnostic(`built in ${Math.round(took)} ms over ${entries.length + 1} commits`);
+  assert.ok(took < 3000, `took ${Math.round(took)} ms`);
+  const items = v.plan.steps.flatMap(s => s.items);
+  assert.equal(items.length, M * N, 'every removed record comes back');
+  assert.ok(items.every(i => i.state === 'done' && i.doneAt), 'and every part has its date');
+  // Each part's Done commit is the second of its two, after the ten creation commits: minute 10 + 2k + 1.
+  const doneAt = k => new Date(Date.parse('2026-01-02T00:00:00Z') + 60000 * (M + 2 * k + 1)).toISOString().replace('.000Z', 'Z');
+  assert.equal(items.find(i => i.title === `Part ${tid(1, 1)}`).doneAt, doneAt(0));
+  assert.deepEqual(v.recent.map(p => [p.title, p.date]), [5, 4, 3, 2, 1].map(k => [`Part ${tid(M, N - 5 + k)}`, doneAt(M * N - 6 + k)]));
+  assert.match(html, /Part T-0101/);
+});
+
+test('a part merged by a merge commit is dated when it reached the trusted branch', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-09-01T09:00:00Z');
+  r.git(['switch', '-q', '-c', 'side']);
+  r.task('T-0003', 'Done', 'M-0002', 'Pay by card');
+  r.commit('T-0003 done on its branch', '2026-09-05T09:00:00Z');
+  r.git(['switch', '-q', 'main']);
+  r.write('README.md', 'other work\n');
+  r.commit('other work', '2026-09-06T09:00:00Z');
+  r.git(['merge', '-q', '--no-ff', '-m', 'merge T-0003', 'side'], '2026-09-08T09:00:00Z');
+  const v = view(r, { source: gitSource(r.dir, 'main'), history: gitHistory(r.dir, 'main', RD) });
+  assert.equal(part(v, 'Pay by card').doneAt, '2026-09-08T09:00:00Z', 'the merge, not the commit on the side branch');
+});
+
+test('a record reads Done by its front matter, as the records are read', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-09-01T09:00:00Z');
+  r.write(`${RD}/tasks/T-0003.md`, r.taskText('T-0003', 'Ready', 'M-0002', 'Pay by card').replace('status: Ready', 'status:  Done'));
+  r.commit('T-0003 done, with two spaces', '2026-09-03T09:00:00Z');
+  const history = gitHistory(r.dir, 'main', RD);
+  assert.equal(history.doneDate('T-0003'), '2026-09-03T09:00:00Z');
+  assert.equal(history.doneDate('T-0004'), null, 'never Done');
+  assert.equal(history.lastVersion('T-0003'), null, 'never removed');
+  assert.equal(history.doneDate('../T-0003'), null, 'only a task ID is looked up');
+});
+
 // A branch as GitHub Actions' checkout has it: a remote-tracking ref at the branch's tip.
 function branch(r, name, date, change) {
   r.git(['switch', '-q', '-c', name, 'main']);
@@ -224,7 +337,6 @@ const live = (r, extra = {}) => {
   const reading = readBranches({ repo: r.dir, base, trustedBranch: 'main', recordsDir: RD, now: Date.parse('2026-10-11T12:00:00Z'), ...extra });
   return { reading, v: view(r, { source: gitSource(r.dir, base), history: gitHistory(r.dir, base, RD), live: reading }) };
 };
-const part = (v, title) => v.plan.steps.flatMap(s => s.items).find(i => i.title === title);
 
 test('a part being worked on a branch shows in progress, and being checked once its pull request is open', t => {
   const r = standard(t);

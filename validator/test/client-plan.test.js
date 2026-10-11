@@ -463,6 +463,27 @@ test('a branch moves a part only from Draft or Ready: the trusted branch\'s Acti
   assert.equal(part(v, 'Choose a cake').state, 'done');
 });
 
+test('an open, non-draft pull request shows a trusted Active part as being checked, never a Blocked or Done one', t => {
+  const r = standard(t);
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  r.task('T-0004', 'Blocked', 'M-0002', 'Email the receipt');
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-10T09:00:00Z', () => {
+    r.task('T-0003', 'Done', 'M-0002', 'Pay by card');
+    r.task('T-0004', 'Active', 'M-0002', 'Email the receipt');
+    r.task('T-0002', 'Active', 'M-0002', 'Choose a cake');
+  });
+  const pr = isDraft => [{ headRefName: 'claude/T-0003-pay', isDraft, isCrossRepository: false }];
+  let { v } = live(r, { pullRequests: pr(false) });
+  assert.equal(part(v, 'Pay by card').state, 'checking', 'trusted Active, branch Done, open pull request');
+  assert.equal(part(v, 'Email the receipt').state, 'hold', 'trusted Blocked stands');
+  assert.equal(part(v, 'Choose a cake').state, 'done', 'trusted Done stands');
+  ({ v } = live(r, { pullRequests: pr(true) }));
+  assert.equal(part(v, 'Pay by card').state, 'active', 'a draft pull request is not being checked');
+  ({ v } = live(r));
+  assert.equal(part(v, 'Pay by card').state, 'active', 'no pull request');
+});
+
 test('a part that exists only on a branch is added even when its milestone lists no tasks', t => {
   const r = standard(t);
   r.commit('plan', '2026-10-01T09:00:00Z');

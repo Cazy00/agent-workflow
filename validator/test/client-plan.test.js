@@ -830,11 +830,56 @@ test('the client page workflow rebuilds on any push and deploys only from the tr
   assert.match(yml, /pull_request:\n\s+types: \[opened, reopened, ready_for_review, converted_to_draft, closed\]/);
   assert.match(yml, /schedule:/);
   assert.match(yml, /gh workflow run wf-client-page\.yml --ref __TRUSTED_BRANCH__/);
-  assert.match(yml, /if: github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__' && \(github\.event_name != 'pull_request' \|\| !github\.event\.pull_request\.head\.repo\.fork\) && github\.actor != 'dependabot\[bot\]'/);
-  assert.match(yml, /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__' \}\}/, 'a running trusted build is not cancelled');
   assert.doesNotMatch(yml, /cancel-in-progress: true/);
-  assert.match(yml, /if: github\.ref == 'refs\/heads\/__TRUSTED_BRANCH__'/);
   assert.match(yml, /fetch-depth: 0/);
   assert.match(yml, /scripts\/wf status --client --live --candidate "\$GITHUB_SHA" --pull-requests "\$RUNNER_TEMP\/pull-requests\.json"/);
   assert.doesNotMatch(yml, /uses: [^@\n]+@(?![0-9a-f]{40}\b)/, 'actions pinned by commit');
+});
+
+// MAINT-0015: which job each GitHub event runs, by evaluating the template's own `if:` and concurrency expressions.
+// A merged pull request's `closed` run must not build or deploy: GitHub Pages refuses a deploy from it (mateen-systems
+// run 38116833457), and the merge's own push to the trusted branch already rebuilds the page.
+const expression = (yml, pattern) => {
+  const text = yml.match(pattern)?.[1];
+  assert.ok(text, `expression ${pattern} in the template`);
+  const js = text.replace(/\$\{\{\s*|\s*\}\}/g, '').replaceAll('__TRUSTED_BRANCH__', 'main')
+    .replace(/!=/g, '!==').replace(/([^!=])==/g, '$1===')
+    .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`);
+  return ctx => new Function('ctx', `return (${js});`)(ctx);
+};
+test('each GitHub event runs the right job of the client page workflow', () => {
+  const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
+  const dispatch = expression(yml, /\n  dispatch:\n(?:\s+#.*\n)*\s+if: (.+)/);
+  const build = expression(yml, /\n  build:\n(?:\s+#.*\n)*\s+if: (.+)/);
+  const cancels = expression(yml, /cancel-in-progress: (.+)/);
+  const group = expression(yml, /group: wf-client-page-(.+)/);
+  // Deploy follows build and nothing else, so it never runs where build does not.
+  const deploy = yml.match(/\n  deploy:\n((?:    .*\n)+)/)?.[1] ?? '';
+  assert.match(deploy, /^    needs: build$/m);
+  assert.doesNotMatch(deploy, /^    if:/m);
+  const pr = (action, { merged = false, fork = false, ref = 'refs/pull/7/merge' } = {}) => ({ event_name: 'pull_request', ref, actor: 'alice', event: { action, pull_request: { merged, head: { repo: { fork } } } } });
+  const cases = [
+    ['push to the trusted branch', { event_name: 'push', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
+    ['push to a task branch', { event_name: 'push', ref: 'refs/heads/claude/T-0003', actor: 'alice', event: {} }, 'dispatch'],
+    ['dispatched run', { event_name: 'workflow_dispatch', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
+    ['daily schedule', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
+    ['pull request opened', pr('opened'), 'dispatch'],
+    ['pull request marked ready', pr('ready_for_review'), 'dispatch'],
+    ['pull request closed without merging', pr('closed'), 'dispatch'],
+    ['pull request merged (merge ref)', pr('closed', { merged: true }), 'none'],
+    ['pull request merged (trusted ref)', pr('closed', { merged: true, ref: 'refs/heads/main' }), 'none'],
+    ['fork pull request', pr('opened', { fork: true }), 'none'],
+    ['Dependabot push', { event_name: 'push', ref: 'refs/heads/dependabot/npm', actor: 'dependabot[bot]', event: {} }, 'none'],
+  ];
+  for (const [name, ctx, expected] of cases) {
+    const ran = [dispatch(ctx) && 'dispatch', build(ctx) && 'build'].filter(Boolean);
+    assert.deepEqual(ran, expected === 'none' ? [] : [expected], name);
+  }
+  assert.equal(cancels({ event_name: 'push', ref: 'refs/heads/main' }), false, 'a running trusted build is never cancelled');
+  assert.equal(cancels({ event_name: 'workflow_dispatch', ref: 'refs/heads/main' }), false);
+  assert.equal(cancels(pr('closed', { merged: true, ref: 'refs/heads/main' })), true, 'a pull request event never joins the trusted build');
+  assert.equal(cancels({ event_name: 'push', ref: 'refs/heads/claude/T-0003' }), true);
+  // Only the trusted branch's own runs share the build group, so a pull-request run never replaces a waiting build.
+  for (const ctx of [{ event_name: 'push', ref: 'refs/heads/main' }, { event_name: 'workflow_dispatch', ref: 'refs/heads/main' }, { event_name: 'schedule', ref: 'refs/heads/main' }]) assert.equal(group(ctx), 'build', ctx.event_name);
+  for (const ctx of [pr('closed', { merged: true }), pr('closed', { merged: true, ref: 'refs/heads/main' }), pr('opened'), { event_name: 'push', ref: 'refs/heads/claude/T-0003' }]) assert.notEqual(group(ctx), 'build', `${ctx.event_name} ${ctx.ref}`);
 });

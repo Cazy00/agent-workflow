@@ -44,11 +44,12 @@ function setup(t, { label = 'owner-merge', checkpoint, configEdit = c => c, base
   change(p);
   git('add', '-A'); git('commit', '-qm', 'T-0001: candidate'); const candidate = git('rev-parse', 'HEAD');
   const evidenceFile = path.join(temp, 'evidence.json');
-  const run = (cmd, { evidence, raw, args = [] } = {}) => {
+  const run = (cmd, { evidence, raw, args = [], env = {} } = {}) => {
     const extra = [];
     if (evidence !== undefined || raw !== undefined) { fs.writeFileSync(evidenceFile, raw ?? JSON.stringify(evidence)); extra.push('--delivery-evidence', evidenceFile); }
-    return spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', ...extra, ...args], { encoding: 'utf8' });
+    return spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', ...extra, ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
   };
+
   return { ...p, temp, baseline, candidate, run };
 }
 
@@ -644,4 +645,71 @@ test('completing an automated scenario that has no mapped test needs the owner, 
   const e = q.run('ci', { evidence: runs(q, 'passed', 'failed') });
   assert.equal(e.status, 1, e.stdout);
   assert.match(out(e).findings.join('\n'), /it completes acceptance scenarios without a test run \(AC-001-3\)/);
+});
+
+// MAINT-0016: what lets a pull request finish without waiting or re-reviewing.
+const runAt = (p, baseline, candidate, ev, env = {}) => {
+  const file = path.join(p.temp, 'evidence-at.json'); fs.writeFileSync(file, JSON.stringify(ev));
+  return spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', '--delivery-evidence', file], { encoding: 'utf8', env: { ...process.env, ...env } });
+};
+// The trusted branch moves after the review (another change merges), and the task's branch merges it in.
+function mainMoves(p) {
+  p.git('branch', 'task', p.candidate);
+  p.git('reset', '-q', '--hard', p.baseline);
+  p.write('src/b.js', 'export const b = 2;\n'); p.git('add', '-A'); p.git('commit', '-qm', 'another change merges'); const main = p.git('rev-parse', 'HEAD');
+  p.git('switch', '-q', 'task'); p.git('merge', '-q', '--no-edit', main);
+  return { main, head: p.git('rev-parse', 'HEAD') };
+}
+const reviewedAt = (p, rev) => ({ context: { provider: 'claude-code subagent', context_id: 'ctx-1', inherited_context: false, candidate: rev, launch_evidence: 'https://github.com/fixture/project/pull/1#issuecomment-1' } });
+
+test('MAINT-0016: review and verification of the reviewed commit carry over a merge of the trusted branch; integration does not', t => {
+  const p = setup(t, { checkpoint: 'milestone' });
+  const { main, head } = mainMoves(p);
+  const e = evidence(head, { verification: { revision: p.candidate, execution: { revision: p.candidate, tests: [] } }, review: reviewedAt(p, p.candidate) });
+  const r = runAt(p, main, head, e);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(out(r).findings.some(f => /^note: the review of [0-9a-f]{12} carries over/.test(f)), out(r).findings.join(' | '));
+  assert.equal(out(r).merge, 'agent');
+  const stale = runAt(p, main, head, { ...e, integration: { ...e.integration, revision: p.candidate } });
+  assert.equal(stale.status, 1);
+  assert.match(out(stale).findings.join(' | '), /integration evidence is not for this candidate revision/);
+});
+
+test('MAINT-0016: a commit of the task\'s own code after the review needs a new review', t => {
+  const p = setup(t, { checkpoint: 'milestone' });
+  p.write('src/a.js', 'export const result = 2;\n'); p.git('add', '-A'); p.git('commit', '-qm', 'T-0001: after review'); const head = p.git('rev-parse', 'HEAD');
+  const r = runAt(p, p.baseline, head, evidence(head, { review: reviewedAt(p, p.candidate) }));
+  assert.equal(r.status, 1);
+  assert.match(out(r).findings.join(' | '), /the review of [0-9a-f]{12} does not carry over \(changed since [0-9a-f]{12}: src\/a\.js\)/);
+});
+
+test('MAINT-0016: with auto_merge, required checks may be enforced by GitHub rather than waited for', t => {
+  const auto = c => ({ ...c, approval: { ...c.approval, auto_merge: true } });
+  const enforcedCheck = { name: 'unit', result: 'enforced', reference: 'https://github.com/fixture/project/pull/1/checks' };
+  const p = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const e = evidence(p.candidate, { verification: { checks: [check('lint'), enforcedCheck] }, integration: { revision: p.candidate, environment: 'GitHub Actions, required before merge', checks: [enforcedCheck] } });
+  const r = p.run('ci', { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'agent');
+  const off = setup(t, { checkpoint: 'milestone' });
+  const r2 = off.run('ci', { evidence: evidence(off.candidate, { integration: { revision: off.candidate, environment: 'x', checks: [enforcedCheck] } }) });
+  assert.equal(r2.status, 1);
+  assert.match(out(r2).findings.join(' | '), /"enforced", which only a project with approval\.auto_merge may use/);
+});
+
+test('MAINT-0016: a change to a deep path needs a deep review by the second model, or a stated fallback', t => {
+  const review = { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' }, deep_paths: ['src/**'] };
+  const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, review }) });
+  const at = over => p.run('ci', { evidence: evidence(p.candidate, { review: over }) });
+  assert.match(out(at({})).findings.join(' | '), /need a deep review \(review\.deep_paths\): src\/a\.js; this review's level is standard/);
+  assert.match(out(at({ level: 'deep' })).findings.join(' | '), /a deep review is by gpt-6\.1-sol/);
+  assert.equal(at({ level: 'deep', model: 'gpt-6.1-sol' }).status, 0);
+  assert.equal(at({ level: 'deep', model: 'claude-opus-5-5', fallback: 'codex is not signed in on this machine' }).status, 0);
+});
+
+test('MAINT-0016: a finished pull request that leaves its task Active is told to carry the Done record', t => {
+  const p = setup(t, { checkpoint: 'milestone', change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('status: Ready', 'status: Active')); } });
+  assert.ok(out(p.run('ci', { evidence: evidence(p.candidate) })).findings.some(f => /^note: T-0001 stays Active in this pull request; mark it Done as its last commit/.test(f)));
+  const ready = setup(t, { checkpoint: 'milestone' });
+  assert.ok(!out(ready.run('ci', { evidence: evidence(ready.candidate) })).findings.some(f => /stays Active/.test(f)));
 });

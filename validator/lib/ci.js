@@ -1,13 +1,14 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
 import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths } from './paths.js';
+import { classifyPaths, matchesAny } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
-import { evidenceErrors } from './delivery-evidence.js';
+import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
+import { carriedFrom } from './carry.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
@@ -150,6 +151,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // checked, not its truth; the owner's merge or code-owner review still carries the approval.
   const prMode = trust?.mode === 'enforced';
   let attested = null;
+  let carried = {};
   const covered = prMode && selected.length > 0 && production.length > 0;
   if (covered) {
     const owners = [...new Set(selected.map(id => candidateRecords.tasks.get(id)?.data?.owner))];
@@ -158,7 +160,20 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       findings.push('delivery evidence for this candidate is missing: post it in the pull request description (procedures/execute.md *Checkpoints and task records*); the `wf ci` check reruns when the description is edited');
       fail = true;
     } else {
-      const errors = evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks });
+      // MAINT-0016: review and verification of an earlier revision carry over when the commits since added only the
+      // trusted branch's changes and records (lib/carry.js); integration stays the exact candidate's.
+      for (const [stage, from] of [['verification', deliveryEvidence.verification?.revision], ['review', deliveryEvidence.review?.context?.candidate]]) {
+        if (typeof from !== 'string' || from === candidate.name) continue;
+        const c = carriedFrom({ config, baseline, candidate, from });
+        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records`); }
+        else findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
+      }
+      // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md).
+      const deep = production.filter(p => matchesAny(config.review?.deep_paths, p));
+      const errors = [
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried }),
+        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null }),
+      ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;
     }
@@ -182,6 +197,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       if (outside.length) { findings.push(`outside the ready subset [${gate.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }
       if (!statusOk) { findings.push(`task status is ${gate.status}; production changes need Ready or Active; a task Ready only for a subset cannot be marked Done`); fail = true; }
     } else fail = true;
+    // MAINT-0016: a task's Done record travels as its pull request's last commit (procedures/execute.md); left Active, it
+    // needs a records pull request of its own later, one more round of checks.
+    if (attested && gate.status === 'Active') findings.push(`note: ${id} stays Active in this pull request; mark it Done as its last commit (procedures/execute.md) unless more of its work follows, or its Done record needs a pull request of its own`);
     const t = candidateRecords.tasks.get(id)?.data ?? {};
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(baselineRecords.profile?.data?.required_checks), trust, stage: 'integrate' });
     for (const error of lifecycle.errors) { findings.push(error); fail = true; }
@@ -198,7 +216,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // the project's acceptance tests are owner-approved. It must be pending by the baseline's records and the
     // candidate's alike, so this candidate cannot excuse its own test, and a scenario it completes must pass.
     const pending = ownerTests ? pendingIn([baselineRecords, candidateRecords, ...(approved ? [approved] : [])], selected) : new Map();
-    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending });
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending, carriedFrom: carried.verification ?? null });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
     for (const w of acceptance.pending ?? []) findings.push(`note: ${pendingNote(w)}`);
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);

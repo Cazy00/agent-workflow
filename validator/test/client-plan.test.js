@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirSource, gitSource, loadConfig } from '../lib/index.js';
 import { loadPlan } from '../lib/client-plan.js';
 import { gitHistory } from '../lib/client-history.js';
-import { evaluateClient } from '../lib/client.js';
+import { evaluateClient, renderClient } from '../lib/client.js';
 import { readBranches } from '../lib/client-live.js';
 
 // MAINT-0014: the client page's whole plan, from a plan file, with finished parts from history and live branch states.
@@ -320,4 +320,57 @@ test('an old branch without a pull request is ignored, and a reading failure fal
   const broken = readBranches({ repo: path.join(os.tmpdir(), 'wf-plan-no-such-dir'), base: 'main', trustedBranch: 'main', recordsDir: RD });
   assert.equal(broken.parts.size, 0);
   assert.match(broken.warnings.join('\n'), /live reading skipped/);
+});
+
+test('the plan page shows now, waiting, recently done and every step, without IDs, branches or people', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  r.write(`${RD}/decisions/D-0009.md`, '---\nrecord: decision\nid: D-0009\nquestion: Which card provider?\nclient_question: Which card machine do you use?\ntype: decision\nowner: alice-owner\naffects: [M-0002]\nrequired_before: implement\nstatus: Open\n---\n# D-0009\n');
+  r.commit('decision', '2026-10-02T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-11T11:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  const { v } = live(r);
+  const html = renderClient(v);
+  assert.match(html, /<h1>Now working on ordering a cake\.<\/h1>/, 'English sentence case, as today\'s headline');
+  assert.match(html, /Step 3 of 4/);
+  assert.match(html, /<section class="panel now"[\s\S]*Pay by card[\s\S]*Ordering a cake/);
+  assert.match(html, /<h2 id="waiting">[\s\S]*Waiting on you[\s\S]*Which card machine do you use\?/);
+  assert.match(html, /<h2 id="plan">The plan<\/h2>/);
+  assert.match(html, /<h3><bdi>Foundations<\/bdi><\/h3>/);
+  assert.match(html, /<li class="step done">[\s\S]*Accounts and sign-in/);
+  assert.match(html, /<li class="step active current">[\s\S]*Ordering a cake[\s\S]*Choose a cake[\s\S]*Pay by card[\s\S]*Email the receipt/);
+  assert.match(html, /<li class="step next">[\s\S]*Deliveries[\s\S]*Its parts are planned when we reach it\./);
+  assert.match(html, /<time data-ago datetime="2026-10-11T11:00:00Z"/);
+  for (const absent of ['T-000', 'M-000', 'D-0009', 'claude/', 'bob-worker', 'alice-owner', 'internal title', 'waiting on D-0009', 'Which card provider']) assert.ok(!html.includes(absent), absent);
+  assert.doesNotMatch(html, /<script src|https?:\/\/(?!www\.w3\.org)/, 'still self-contained: one inline script, no requests');
+});
+
+test('the plan page escapes plan text, keeps right-to-left text apart, and speaks Arabic', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', language: 'ar' } });
+  r.plan({ phases: [{ title: 'الأساسات <b>', summary: 'Summary with <script>alert(1)</script>', steps: [{ title: 'تجهيز المحل', milestones: ['M-0001', 'M-0002', 'M-0003'] }, { title: 'الطلبات', added: '2026-11-02' }] }] });
+  const html = renderClient(view(r));
+  assert.match(html, /<html lang="ar" dir="rtl">/);
+  assert.match(html, /<bdi>الأساسات &lt;b&gt;<\/bdi>/);
+  assert.ok(!html.includes('<script>alert'), 'plan text is escaped');
+  assert.match(html, /الخطة/);
+  assert.match(html, /الخطوة 1 من 2/);
+  assert.match(html, /أُضيفت/, 'an added step carries its mark');
+});
+
+test('a step that is done opens to what it delivered, and a project with every step done says so', t => {
+  const r = standard(t);
+  for (const [id, title, tasks] of [['M-0002', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']], ['M-0003', 'Daily orders', []]]) r.milestone(id, 'Accepted', title, tasks);
+  r.plan({ phases: [{ title: 'All', steps: [{ title: 'Menu', milestones: ['M-0001'] }, { title: 'Ordering', milestones: ['M-0002', 'M-0003'] }] }] });
+  const html = renderClient(view(r));
+  assert.match(html, /<h1>Every step is done\.<\/h1>/);
+  assert.match(html, /<details class="more"><summary>What it delivered \(3\)<\/summary>[\s\S]*Choose a cake/);
+  assert.doesNotMatch(html, /Step \d+ of/);
+});
+
+test('a plan with no steps to show renders without throwing', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', exclude: ['M-0001', 'M-0002', 'M-0003'] } });
+  r.plan({ phases: [{ title: 'All', steps: [{ title: 'Everything', milestones: ['M-0001', 'M-0002', 'M-0003'] }] }] });
+  const v = view(r);
+  assert.equal(v.plan.steps.length, 0);
+  assert.doesNotThrow(() => renderClient(v));
+  assert.match(renderClient(v), /<h1>Every step is done\.<\/h1>/);
 });

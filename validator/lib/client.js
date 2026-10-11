@@ -14,6 +14,7 @@
 // theme it is the default design below. Fonts and logo are embedded, so the page stays one self-contained file.
 import { list, loadAll, loadConfig } from './records.js';
 import { loadPlan, planView } from './client-plan.js';
+import { planBody, PLAN_CSS } from './client-plan-render.js';
 import { overlayTasks } from './client-live.js';
 import { parseFrontMatter } from './frontmatter.js';
 
@@ -74,6 +75,20 @@ const STRINGS = {
     onHold: 'A part on hold is waiting for a decision or for something outside the work.',
     progressOnly: 'This page shows progress only. Approvals and sign-off happen with the project owner.',
     title: t => `${t}: progress`,
+    step: { done: 'Done', active: 'In progress', next: 'Next', later: 'Later' },
+    stepOf: (i, n) => `Step ${i} of ${n}`,
+    allDone: 'Every step is done.',
+    planHeading: 'The plan',
+    recent: 'Recently done',
+    waitingYou: 'Waiting on you',
+    startsNext: t => `Starting next: ${t}`,
+    laterParts: 'Its parts are planned when we reach it.',
+    stepDelivered: n => `What it delivered (${n})`, // not `delivered`: that key is the old page's headline
+    stepParts: n => `Its parts (${n})`,
+    addedStep: 'Added',
+    lastUpdated: 'Last updated',
+    readPlan: 'Each step is done, in progress, next or later; a step is made of parts, which we plan when we reach it. The plan can grow: what we add along the way is marked.',
+    readOnly: 'This page shows progress only; nothing can be changed from it.',
   },
   ar: {
     dir: 'rtl', locale: 'ar-OM-u-nu-latn',
@@ -123,6 +138,20 @@ const STRINGS = {
     onHold: 'الجزء المتوقف ينتظر قراراً أو أمراً خارج نطاق العمل.',
     progressOnly: 'تعرض هذه الصفحة سير العمل فقط، ويجري الاعتماد مع صاحب المشروع.',
     title: t => `${t}: سير العمل`,
+    step: { done: 'منجزة', active: 'قيد التنفيذ', next: 'التالية', later: 'لاحقاً' },
+    stepOf: (i, n) => `الخطوة ${i} من ${n}`,
+    allDone: 'اكتملت كل الخطوات.',
+    planHeading: 'الخطة',
+    recent: 'أُنجز مؤخراً',
+    waitingYou: 'بانتظارك',
+    startsNext: t => `يبدأ بعد ذلك: ${t}`,
+    laterParts: 'نحدد أجزاءها حين نصل إليها.',
+    stepDelivered: n => `ما أنجزته (${n})`,
+    stepParts: n => `أجزاؤها (${n})`,
+    addedStep: 'أُضيفت',
+    lastUpdated: 'آخر تحديث',
+    readPlan: 'كل خطوة إما منجزة أو قيد التنفيذ أو التالية أو لاحقة، وتتكون من أجزاء نحددها حين نصل إليها. قد تكبر الخطة، وما نضيفه أثناء العمل يظهر بعلامة.',
+    readOnly: 'تعرض هذه الصفحة سير العمل فقط، ولا يمكن تغيير شيء منها.',
   },
 };
 export const LANGUAGES = Object.keys(STRINGS);
@@ -439,12 +468,13 @@ export function renderClient(view) {
   footer p { margin: 0 0 .4rem; }
   @media (prefers-reduced-motion: reduce) { ol.route::after { animation: none; } }
   @media print { body { background: #fff; } ol.route::after { animation: none; } .current .body, .panel { border-color: #bbb; } }
+  ${view.plan ? PLAN_CSS : ''}
 </style>
 </head>
 <body>
 ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.logo}" alt="${esc(view.title)}">` : `<p>${esc(view.title)}</p>`}</div></div>` : ''}
 <main>
-  <header>
+  ${view.plan ? planBody(view, say, { esc, bdi, ICON, partList }) : `<header>
     ${!band && look?.logo ? `<img class="logo" src="${look.logo}" alt="${esc(view.title)}">` : ''}
     ${band ? '' : `<p class="project">${esc(view.title)}</p>`}
     <h1>${headline}</h1>
@@ -463,7 +493,7 @@ ${band ? `<div class="band"><div class="inner">${look.logo ? `<img src="${look.l
   <footer>
     <p>${esc(when ? say.updated(when) : say.updatedLatest)} ${esc(say.onHold)}</p>
     <p>${esc(say.progressOnly)}</p>
-  </footer>
+  </footer>`}
 </main>
 </body>
 </html>

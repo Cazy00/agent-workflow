@@ -53,8 +53,10 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     });
   }
   for (const k of ['deferred', 'tests_changed']) if (!Array.isArray(e[k]) || !e[k].every(text)) errors.push(`acceptance evidence ${k} must be a list of lines (empty when there is nothing)`);
-  // Every finding the milestone's tasks accepted rather than fixed (their accepted_findings) is listed for the owner.
-  const owed = [...records.tasks.values()].map(t => t.data).filter(t => t?.milestone === milestone).flatMap(t => list(t.accepted_findings));
+  // Every finding the milestone's tasks accepted rather than fixed (their accepted_findings) is listed for the owner. Read
+  // from the trusted branch's records as well as the candidate's (the independent review of MAINT-0016, I1): the
+  // acceptance pull request may also remove the Done task records, which would otherwise empty this check.
+  const owed = [...new Set([records].flat().flatMap(r => [...r.tasks.values()]).map(t => t.data).filter(t => t?.milestone === milestone).flatMap(t => list(t.accepted_findings)))];
   const missing = owed.filter(id => !(Array.isArray(e.deferred) ? e.deferred : []).some(d => typeof d === 'string' && d.includes(id)));
   if (missing.length) errors.push(`deferred must list the findings the milestone's tasks accepted rather than fixed: ${missing.join(', ')}`);
   return errors;

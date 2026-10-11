@@ -808,3 +808,22 @@ test('MAINT-0016 review C1: deleting reviewed work after the review needs a new 
   assert.equal(r.status, 1, r.stdout);
   assert.match(out(r).findings.join(' | '), /the review of [0-9a-f]{12} does not carry over \(changed since [0-9a-f]{12}: src\/guard\.js\)/);
 });
+
+test('MAINT-0016 review I1: removing the milestone\'s task records in the acceptance pull request does not hide their accepted findings', t => {
+  const p = setup(t, {
+    checkpoint: 'milestone', configEdit: c => ({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true } }),
+    baselineEdit: q => q.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/N1]')),
+    change: q => { q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')); fs.rmSync(path.join(q.repo, taskPath)); },
+  });
+  const block = deferred => ({
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: p.baseline,
+    review: { reviewer: 'codex exec', model: 'gpt-6.1-sol', revision: p.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1' },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred, tests_changed: [],
+  });
+  const raw = deferred => `Accept M-0001\n\n<!-- agent-workflow:acceptance-evidence@1 -->\n\`\`\`json\n${JSON.stringify(block(deferred))}\n\`\`\`\n`;
+  const hidden = p.run('ci', { raw: raw([]) });
+  assert.equal(hidden.status, 1, hidden.stdout);
+  assert.match(out(hidden).findings.join(' | '), /deferred must list the findings the milestone's tasks accepted rather than fixed: R-0001\/N1/);
+  const listed = p.run('ci', { raw: raw(['R-0001/N1: kept for the owner, a test-helper note']) });
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+});

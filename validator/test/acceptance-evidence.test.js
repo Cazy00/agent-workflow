@@ -86,3 +86,12 @@ test('the acceptance evidence template has exactly the checked fields', () => {
   assert.deepEqual(Object.keys(t), ['schema', 'milestone', 'candidate', 'review', 'walkthrough', 'deferred', 'tests_changed']);
   assert.equal(t.schema, 'agent-workflow/acceptance-evidence@1');
 });
+
+// The independent review of MAINT-0016 (I1): the acceptance pull request may also remove the milestone's Done task
+// records, so the findings they accepted are read from the trusted branch's records as well as the candidate's.
+test('findings accepted on the trusted branch are owed even when the candidate no longer has the task record', t => {
+  const r = repo(t);
+  const trusted = records(['R-0001/N1']), candidate = { tasks: new Map() };
+  assert.match(errorsAt(r, r.head, { ...evidence(r.accepted), deferred: [] }, [trusted, candidate]).join(' | '), /deferred must list the findings the milestone's tasks accepted rather than fixed: R-0001\/N1/);
+  assert.deepEqual(errorsAt(r, r.head, evidence(r.accepted), [trusted, candidate]), []);
+});

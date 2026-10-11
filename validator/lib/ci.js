@@ -281,7 +281,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // (acceptance_evidence; lib/acceptance-evidence.js): the milestone's review, the trial walkthrough, and what was deferred.
   const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
   if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
-    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, records: candidateRecords });
+    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, records: [baselineRecords, candidateRecords] });
     for (const e of errors) findings.push(`acceptance evidence: ${e}`);
     if (errors.length) fail = true;
   }

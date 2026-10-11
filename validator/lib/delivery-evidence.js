@@ -5,20 +5,23 @@ import { WfError } from './records.js';
 
 const REVIEW_AREAS = ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'];
 export const DELIVERY_MARKER = '<!-- agent-workflow:delivery-evidence@1 -->';
+// Evidence from a pull request description: a marked block, the JSON in a fenced block after the marker (MAINT-0016
+// reuses this for the acceptance evidence). A text without the marker holds none (null); two marked blocks are ambiguous.
+export function parseMarked(text, marker, what) {
+  const raw = String(text ?? '');
+  if (Buffer.byteLength(raw, 'utf8') > 128 * 1024) throw new WfError(`${what} is larger than 128 KiB`);
+  const parse = json => { try { return JSON.parse(json); } catch { throw new WfError(`the ${what} is not valid JSON`); } };
+  const parts = raw.split(marker);
+  if (parts.length === 1) return null;
+  if (parts.length > 2) throw new WfError(`the text holds more than one ${what} block; keep only the one for the current head`);
+  const fenced = parts[1].match(/^\s*```(?:json)?[^\n]*\n([\s\S]*?)\n\s*```/);
+  return parse(fenced ? fenced[1] : parts[1].trim());
+}
 // Delivery evidence from a file: the JSON itself, a marked comment (the marker, then the JSON), or a pull request
-// description holding the marker followed by a fenced JSON block, which is how the `wf ci` workflow passes it. A text
-// without the marker holds no evidence (null); two marked blocks are ambiguous and refused.
+// description holding the marker followed by a fenced JSON block, which is how the `wf ci` workflow passes it.
 export function parseDeliveryEvidence(text) {
   const raw = String(text ?? '');
-  if (Buffer.byteLength(raw, 'utf8') > 128 * 1024) throw new WfError('delivery evidence is larger than 128 KiB');
-  const parse = json => { try { return JSON.parse(json); } catch { throw new WfError('the delivery evidence is not valid JSON'); } };
-  if (raw.trim().startsWith('{')) return parse(raw);
-  const parts = raw.split(DELIVERY_MARKER);
-  if (parts.length === 1) return null;
-  if (parts.length > 2) throw new WfError('the text holds more than one delivery evidence block; keep only the one for the current head');
-  const after = parts[1];
-  const fenced = after.match(/^\s*```(?:json)?[^\n]*\n([\s\S]*?)\n\s*```/);
-  return parse(fenced ? fenced[1] : after.trim());
+  return parseMarked(raw.trim().startsWith('{') ? `${DELIVERY_MARKER}\n${raw}` : raw, DELIVERY_MARKER, 'delivery evidence');
 }
 
 const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -31,7 +34,7 @@ const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verificatio
 
 // Agent-attested evidence for the exact candidate. Every problem is an error; nothing becomes `unverified`. A finding the
 // agent accepted rather than fixed needs a stated resolution, and ci.js leaves that candidate's merge to the owner.
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks }) {
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {} }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -43,12 +46,21 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   for (const stage of ['verification', 'integration']) {
     const s = evidence[stage];
     if (!isObject(s)) { errors.push(`${stage} evidence is missing`); continue; }
-    if (s.revision !== revision) errors.push(`${stage} evidence is not for this candidate revision`);
+    // MAINT-0016: verification of an earlier revision counts where ci.js found it carries over; integration is always
+    // the exact candidate's.
+    if (s.revision !== revision && !(stage === 'verification' && carried.verification && s.revision === carried.verification)) errors.push(`${stage} evidence is not for this candidate revision`);
     if (typeof s.environment !== 'string' || !s.environment.trim()) errors.push(`${stage} evidence needs its environment`);
     if (!Array.isArray(s.checks) || !s.checks.length) { errors.push(`${stage} evidence has no checks`); continue; }
     if (new Set(s.checks.map(c => c?.name)).size !== s.checks.length) errors.push(`${stage} contains duplicate check names`);
-    for (const c of s.checks) if (!isObject(c) || typeof c.name !== 'string' || !c.name.trim() || c.result !== 'passed' || !reference(c.reference)) errors.push(`${stage} check ${JSON.stringify(c?.name)} did not pass or has no https reference`);
-    for (const name of requiredChecks) if (!s.checks.some(c => c?.name === name && c.result === 'passed')) errors.push(`${stage}: required check ${name} did not pass`);
+    // MAINT-0016: under auto-merge GitHub requires the profile's checks before any merge, so a required check may be
+    // `enforced` rather than waited for; what the agent ran itself is listed too, and at least one of those passed.
+    const counts = c => c?.result === 'passed' || (enforcedChecks && c?.result === 'enforced' && requiredChecks.includes(c?.name));
+    for (const c of s.checks) {
+      if (isObject(c) && c.result === 'enforced' && !enforcedChecks) errors.push(`${stage} check ${JSON.stringify(c.name)} is "enforced", which only a project with approval.auto_merge may use`);
+      else if (!isObject(c) || typeof c.name !== 'string' || !c.name.trim() || !counts(c) || !reference(c.reference)) errors.push(`${stage} check ${JSON.stringify(c?.name)} did not pass or has no https reference`);
+    }
+    for (const name of requiredChecks) if (!s.checks.some(c => c?.name === name && counts(c))) errors.push(`${stage}: required check ${name} did not pass`);
+    if (stage === 'verification' && !s.checks.some(c => c?.result === 'passed')) errors.push('verification lists no check the agent ran and saw pass');
   }
   const r = evidence.review;
   if (!isObject(r)) return [...errors, 'independent review evidence is missing'];
@@ -61,7 +73,7 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   else {
     for (const k of ['provider', 'context_id']) if (typeof x[k] !== 'string' || !x[k].trim()) errors.push(`review context needs ${k}`);
     if (x.inherited_context !== false) errors.push('review context must not inherit the implementer\'s context');
-    if (x.candidate !== revision) errors.push('review was not of this candidate revision');
+    if (x.candidate !== revision && !(carried.review && x.candidate === carried.review)) errors.push('review was not of this candidate revision');
     if (!reference(x.launch_evidence)) errors.push('review context needs an https launch_evidence reference');
   }
   for (const area of REVIEW_AREAS) if (!Array.isArray(r.coverage) || !r.coverage.includes(area)) errors.push(`review did not cover ${area}`);
@@ -72,5 +84,21 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   }
   if (!sameSet(r.tasks, taskIds)) errors.push('review must cover exactly the candidate\'s tasks');
   if (!reference(r.report)) errors.push('review needs an https reference to its report');
+  return errors;
+}
+
+// MAINT-0016: the review's level (procedures/review.md). A change to a path the project names in review.deep_paths needs a
+// deep review, by the configured second model or with the reason it could not be used (review.fallback); running out of
+// a second model is then a recorded fallback, not a stop.
+export const REVIEW_LEVELS = ['light', 'standard', 'deep'];
+const BLOCKING = /^(?:blocking|critical|high)$/i;
+export const isBlocking = f => BLOCKING.test(String(f?.severity ?? '').trim());
+export function reviewLevelErrors({ review, deep = [], secondModel = null }) {
+  if (!isObject(review)) return [];
+  const errors = [];
+  if (review.level !== undefined && !REVIEW_LEVELS.includes(review.level)) errors.push(`review level must be one of ${REVIEW_LEVELS.join(', ')}`);
+  for (const k of ['model', 'fallback']) if (review[k] !== undefined && (typeof review[k] !== 'string' || !review[k].trim())) errors.push(`review ${k} must be a non-empty text when given`);
+  if (deep.length && review.level !== 'deep') errors.push(`it changes paths that need a deep review (review.deep_paths): ${deep.join(', ')}; this review's level is ${review.level ?? 'standard'}`);
+  else if (deep.length && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model), or says in review.fallback why it could not be`);
   return errors;
 }

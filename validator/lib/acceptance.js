@@ -80,7 +80,7 @@ export function pendingChange(before, after, testedBefore = null, testedAfter = 
 export const pendingRun = (m, runs, waiting) => ({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
 export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.status}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must pass from then on`;
 
-export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map() }) {
+export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map(), carriedFrom = null }) {
   const errors = [];
   const unverified = [];
   const waived = [];
@@ -182,7 +182,7 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
   for (const d of ids.values()) if (d.method === 'automated' && requiredAcceptance.includes(d.id) && !(Array.isArray(maps) && maps.some(m => m.acceptance === d.id))) errors.push(`missing automated coverage for ${d.id}`);
   if (!execution && enforced) unverified.push(`execution: no verification receipt; agents must substantiate the required test runs on the pull request; this validator has not authenticated them (${typeof enforced === 'string' ? enforced : 'enforced'} mode)`);
   else {
-    if (execution?.revision !== candidate.name || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
+    if ((execution?.revision !== candidate.name && !(carriedFrom && execution?.revision === carriedFrom)) || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {
       const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
       if (runs.length === 1 && runs[0].status === 'passed') continue;

@@ -409,3 +409,38 @@ test('the plan draws its timeline, and only a step with no milestones says its p
   assert.doesNotMatch(html.match(/<style>[\s\S]*<\/style>/)[0].match(/ol\.steps[^{]*\{[^}]*\}/g).join(''), /\bleft:|\bright:/);
   assert.match(html, /\.panel\.now \.item \{ grid-template-columns: 1\.25rem minmax\(0, 1fr\) auto/);
 });
+
+const run = (dir, ...args) => spawnSync(process.execPath, [cli, 'status', '--client', '--repo', dir, ...args], { encoding: 'utf8' });
+
+test('wf status --client --live reads the branches, takes pull requests, and warns on standard error', t => {
+  const r = standard(t);
+  r.milestone('M-0004', 'Draft', 'Gift cards', []);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  r.git(['update-ref', 'refs/remotes/origin/main', r.git(['rev-parse', 'main'])]);
+  const now = new Date(Date.now() - 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+  branch(r, 'claude/T-0003-pay', now, () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  const prs = path.join(r.dir, '..', `${path.basename(r.dir)}-prs.json`);
+  fs.writeFileSync(prs, JSON.stringify([{ headRefName: 'claude/T-0003-pay', isDraft: false, isCrossRepository: false }]));
+  t.after(() => fs.rmSync(prs, { force: true }));
+  const plain = run(r.dir, '--candidate', 'main');
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.match(plain.stdout, /Pay by card[\s\S]*?Up next/, 'without --live the trusted branch alone');
+  assert.match(plain.stderr, /wf status --client: client\.plan: M-0004 is in no step/);
+  const withLive = run(r.dir, '--candidate', 'main', '--live', '--pull-requests', prs);
+  assert.equal(withLive.status, 0, withLive.stderr);
+  assert.match(withLive.stdout, /Pay by card[\s\S]*?Being checked/);
+  assert.match(withLive.stdout, new RegExp(`datetime="${now}"`));
+});
+
+test('a plan error stops wf status --client; a directory source renders without history', t => {
+  const r = standard(t);
+  const ok = run(r.dir);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /The plan/);
+  assert.doesNotMatch(ok.stdout, /Recently done/);
+  r.plan({ phases: [{ title: 'A', steps: [{ title: 'S', milestones: ['M-0009'] }] }] });
+  const bad = run(r.dir);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /names M-0009, which has no milestone record/);
+  assert.match(run(r.dir, '--json').stderr, /--client is only for status/);
+});

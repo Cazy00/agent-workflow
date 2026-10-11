@@ -19,6 +19,8 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
+import { gitHistory } from './lib/client-history.js';
+import { readBranches } from './lib/client-live.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
@@ -33,7 +35,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
-    status --client [--candidate REV]: the same records as one plain-language HTML page for a client (no IDs, people or reasons)
+    status --client [--candidate REV] [--live] [--pull-requests FILE]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: --delivery-evidence EXTERNAL_FILE (JSON, or a pull request description holding the marked block) is required for a
@@ -54,6 +56,7 @@ async function main() {
     if (a === '--json') { o.json = true; continue; }
     if (a === '--unsandboxed') { o.unsandboxed = true; continue; }
     if (a === '--client') { o.client = true; continue; }
+    if (a === '--live') { o.live = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -66,7 +69,8 @@ async function main() {
     else throw new WfError(`unexpected argument: ${a}`);
   }
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
-  if (o.client && (cmd !== 'status' || o.json || o['pull-requests'] || o['trust-key'])) throw new WfError('--client is only for status, alone: it prints the client page as HTML');
+  if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
+  if (o.live && !o.client) throw new WfError('--live is only for status --client');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
     const result = prepareReview({ repo: path.resolve(o.repo ?? process.cwd()), baseline: o.baseline, candidate: o.candidate, tasks: o.task ? [o.task] : [], evidence: o.evidence });
@@ -232,8 +236,20 @@ async function main() {
   }
   // The client page (MAINT-0008): plain-language progress as one HTML file, from the candidate's records.
   if (cmd === 'status' && o.client) {
-    const date = candidate.kind === 'git' ? gitRunner(repo)('show', '-s', '--no-show-signature', '--format=%cI', candidate.name, '--') : null;
-    process.stdout.write(renderClient(evaluateClient({ source: candidate, updated: date?.status === 0 ? date.stdout.trim() : new Date().toISOString() })));
+    const isGit = candidate.kind === 'git';
+    const date = isGit ? gitRunner(repo)('show', '-s', '--no-show-signature', '--format=%cI', candidate.name, '--') : null;
+    let pullRequests = null;
+    if (o['pull-requests']) {
+      try { pullRequests = JSON.parse(fs.readFileSync(o['pull-requests'], 'utf8')); } catch (e) { throw new WfError(`--pull-requests: ${e.message}`); }
+      if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
+    }
+    // History and branches need Git: a directory source renders from the working tree alone.
+    const history = isGit ? gitHistory(repo, candidate.name, rd) : null;
+    const live = o.live && isGit ? readBranches({ repo, base: candidate.name, trustedBranch: config.trusted_branch ?? 'main', recordsDir: rd, pullRequests }) : null;
+    let view;
+    try { view = evaluateClient({ source: candidate, updated: date?.status === 0 ? date.stdout.trim() : new Date().toISOString(), history, live }); } catch (e) { throw new WfError(e.message); }
+    for (const w of view.warnings) process.stderr.write(`wf status --client: ${w}\n`);
+    process.stdout.write(renderClient(view));
     return 0;
   }
   // The derived view grants nothing. With the trust options it also reports a trusted branch that moved past approval.

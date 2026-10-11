@@ -14,6 +14,7 @@
 // theme it is the default design below. Fonts and logo are embedded, so the page stays one self-contained file.
 import { list, loadAll, loadConfig } from './records.js';
 import { loadPlan, planView } from './client-plan.js';
+import { overlayTasks } from './client-live.js';
 import { parseFrontMatter } from './frontmatter.js';
 
 const PLACEHOLDER = /coherent journey or demonstrable technical outcome/i;
@@ -28,7 +29,7 @@ const STRINGS = {
   en: {
     dir: 'ltr', locale: 'en-GB',
     status: { Draft: 'Planned', Authorised: 'Up next', Active: 'In progress', Blocked: 'Paused for now', Verified: 'Built and checked, awaiting sign-off', Accepted: 'Signed off', Released: 'Delivered' },
-    part: { done: 'Done', active: 'In progress', next: 'Up next', planned: 'Being planned', hold: 'On hold' },
+    part: { done: 'Done', active: 'In progress', next: 'Up next', planned: 'Being planned', hold: 'On hold', checking: 'Being checked' },
     planning: 'The project is being planned.',
     review: t => `${t}: built and checked, and waiting for sign-off.`,
     paused: t => `${t} is paused for now.`,
@@ -77,7 +78,7 @@ const STRINGS = {
   ar: {
     dir: 'rtl', locale: 'ar-OM-u-nu-latn',
     status: { Draft: 'مخطط لها', Authorised: 'التالية', Active: 'قيد التنفيذ', Blocked: 'متوقفة مؤقتاً', Verified: 'اكتمل البناء والفحص، بانتظار الاعتماد', Accepted: 'معتمدة', Released: 'سُلّمت' },
-    part: { done: 'منجز', active: 'قيد التنفيذ', next: 'التالي', planned: 'قيد التخطيط', hold: 'متوقف' },
+    part: { done: 'منجز', active: 'قيد التنفيذ', next: 'التالي', planned: 'قيد التخطيط', hold: 'متوقف', checking: 'قيد المراجعة' },
     planning: 'المشروع قيد التخطيط.',
     review: t => `${t}: اكتمل البناء والفحص، بانتظار الاعتماد.`,
     paused: t => `${t}: متوقفة مؤقتاً.`,
@@ -159,7 +160,10 @@ export function evaluateClient({ source, updated = null, history = null, live = 
   const exclude = new Set(list(client.exclude));
   const all = loadAll(source, rd);
   const profile = all.profile?.data ?? {};
-  const tasks = [...all.tasks.values()].map(r => r.data).filter(t => t?.id);
+  const milestoneIds = new Set([...all.milestones.values()].map(r => r.data?.id).filter(Boolean));
+  const recorded = [...all.tasks.values()].map(r => r.data).filter(t => t?.id);
+  // Branches being worked on move their own parts forward (client-live.js); nothing else on the page comes from them.
+  const tasks = live ? overlayTasks(recorded, live.parts, milestoneIds) : recorded;
   const stages = [...all.milestones.values()]
     .filter(r => r.data?.id && !exclude.has(r.data.id))
     .sort((a, b) => String(a.data.id).localeCompare(String(b.data.id)))
@@ -192,7 +196,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
         moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
         items: detail === 'stages' ? [] : own.map(t => {
-          const state = finished ? 'done' : PART[t.status] ?? 'planned';
+          const state = finished ? 'done' : t.live === 'checking' ? 'checking' : PART[t.status] ?? 'planned';
           return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: planned.length > 0 && !planned.includes(t.id), doneAt: state === 'done' ? history?.doneDate(t.id) ?? null : null };
         }),
       };
@@ -213,7 +217,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
   // queue looks forward from the focus; an unfinished stage before it still shows its parts in the list below.
   const focus = current ?? stages.find(s => !s.finished) ?? null;
   const later = focus ? stages.slice(stages.indexOf(focus) + 1).filter(s => !s.finished) : [];
-  const now = focus && detail !== 'stages' ? { stage: focus.id, review: focus.tone === 'review' && !focus.paused, paused: focus.paused, items: focus.items.filter(i => i.state === 'active').map(i => i.title) } : null;
+  const now = focus && detail !== 'stages' ? { stage: focus.id, review: focus.tone === 'review' && !focus.paused, paused: focus.paused, items: focus.items.filter(i => i.state === 'active' || i.state === 'checking').map(i => i.title) } : null;
   let next = [];
   if (detail !== 'stages' && focus) {
     const rank = { next: 0, planned: 1 };
@@ -240,9 +244,13 @@ export function evaluateClient({ source, updated = null, history = null, live = 
   const warnings = [];
   let plan = null;
   if (client.plan) {
-    const known = new Set([...all.milestones.values()].map(r => r.data?.id).filter(Boolean));
-    plan = planView({ plan: loadPlan(source, client.plan), stages, known, exclude });
+    plan = planView({ plan: loadPlan(source, client.plan), stages, known: milestoneIds, exclude });
     for (const id of plan.unplaced) warnings.push(`client.plan: ${id} is in no step of the client plan; it shows as an added step at the end until a step lists it`);
+  }
+
+  if (live) {
+    warnings.push(...live.warnings);
+    if (live.newest && (!updated || Date.parse(live.newest) > Date.parse(updated))) updated = live.newest;
   }
 
   const theme = client.theme ?? null;
@@ -282,6 +290,7 @@ const ICON = {
   next: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" /></svg>',
   planned: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" stroke-dasharray="2.4 2.2" /></svg>',
   hold: '<svg viewBox="0 0 16 16"><path d="M6 4.5v7M10 4.5v7" /></svg>',
+  checking: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" /><path d="M5.5 8.2l1.8 1.8 3.2-3.6" /></svg>',
 };
 
 export function renderClient(view) {
@@ -390,10 +399,10 @@ export function renderClient(view) {
   .panel .items { margin-top: 0; } .panel .item { grid-template-columns: 1.25rem minmax(0, 1fr); border-top: 0; padding: .2rem 0; }
   .icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transform: translateY(.15rem); }
   .icon .fill { fill: currentColor; stroke: none; }
-  .item.done .icon { color: var(--done); } .item.active .icon { color: var(--active); } .item.next .icon { color: var(--text); } .item.planned .icon { color: var(--planned); } .item.hold .icon { color: var(--review); }
+  .item.done .icon { color: var(--done); } .item.active .icon, .item.checking .icon { color: var(--active); } .item.next .icon { color: var(--text); } .item.planned .icon { color: var(--planned); } .item.hold .icon { color: var(--review); }
   .item.done .name { color: var(--muted); }
   .item .state { font-size: .85rem; color: var(--muted); white-space: nowrap; }
-  .item.active .state { color: var(--active); font-weight: 600; } .item.hold .state { color: var(--review); font-weight: 600; }
+  .item.active .state, .item.checking .state { color: var(--active); font-weight: 600; } .item.hold .state { color: var(--review); font-weight: 600; }
   .tag { display: inline-block; font-size: .8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .45rem; white-space: nowrap; }
   ol.route { list-style: none; margin: 0; padding: 0; position: relative; }
   ol.route::before, ol.route::after { content: ""; position: absolute; inset-inline-start: 1.05rem; top: 1.1rem; width: 2px; border-radius: 1px; }

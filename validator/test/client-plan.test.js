@@ -9,6 +9,7 @@ import { dirSource, gitSource, loadConfig } from '../lib/index.js';
 import { loadPlan } from '../lib/client-plan.js';
 import { gitHistory } from '../lib/client-history.js';
 import { evaluateClient } from '../lib/client.js';
+import { readBranches } from '../lib/client-live.js';
 
 // MAINT-0014: the client page's whole plan, from a plan file, with finished parts from history and live branch states.
 const root = fileURLToPath(new URL('../..', import.meta.url));
@@ -206,4 +207,90 @@ test('a shallow clone has no history to read, and still renders', t => {
   const v = view(r, { source: gitSource(shallow, 'HEAD'), history: gitHistory(shallow, 'HEAD', RD) });
   assert.equal(v.plan.steps[2].parts.done, 2);
   assert.ok(v.recent.every(p => p.date === '2026-09-02T09:00:00Z'), 'the only commit is the one the record was Done at');
+});
+
+// A branch as GitHub Actions' checkout has it: a remote-tracking ref at the branch's tip.
+function branch(r, name, date, change) {
+  r.git(['switch', '-q', '-c', name, 'main']);
+  change();
+  const tip = r.commit(`${name} work`, date);
+  r.git(['update-ref', `refs/remotes/origin/${name}`, tip]);
+  r.git(['switch', '-q', 'main']);
+  return tip;
+}
+const live = (r, extra = {}) => {
+  const base = r.git(['rev-parse', 'main']);
+  r.git(['update-ref', 'refs/remotes/origin/main', base]);
+  const reading = readBranches({ repo: r.dir, base, trustedBranch: 'main', recordsDir: RD, now: Date.parse('2026-10-11T12:00:00Z'), ...extra });
+  return { reading, v: view(r, { source: gitSource(r.dir, base), history: gitHistory(r.dir, base, RD), live: reading }) };
+};
+const part = (v, title) => v.plan.steps.flatMap(s => s.items).find(i => i.title === title);
+
+test('a part being worked on a branch shows in progress, and being checked once its pull request is open', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-11T11:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  let { v, reading } = live(r);
+  assert.equal(part(v, 'Pay by card').state, 'active');
+  assert.equal(v.plan.steps[2].state, 'active');
+  assert.equal(reading.newest, '2026-10-11T11:00:00Z');
+  assert.equal(v.updated, '2026-10-11T11:00:00Z', 'updated is the newest change the page read');
+  ({ v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', isDraft: false, isCrossRepository: false }] }));
+  assert.equal(part(v, 'Pay by card').state, 'checking');
+  ({ v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', isDraft: true, isCrossRepository: false }] }));
+  assert.equal(part(v, 'Pay by card').state, 'active', 'a draft pull request is still being built');
+});
+
+test('a branch counts only for the records it changed, and never moves a part back', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  // An old branch whose copy of T-0002 still reads Ready: it did not change T-0002, so T-0002 stays Done.
+  branch(r, 'claude/T-0004-email', '2026-10-10T09:00:00Z', () => r.task('T-0004', 'Active', 'M-0002', 'Email the receipt'));
+  r.task('T-0003', 'Done', 'M-0002', 'Pay by card');
+  r.commit('T-0003 merged', '2026-10-10T10:00:00Z');
+  // A stale branch that still says T-0003 is Active: the trusted branch's Done wins.
+  branch(r, 'claude/T-0003-old', '2026-10-09T09:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  const { v } = live(r);
+  assert.equal(part(v, 'Choose a cake').state, 'done');
+  assert.equal(part(v, 'Pay by card').state, 'done');
+  assert.equal(part(v, 'Email the receipt').state, 'active');
+});
+
+test('Done on a branch is not done until merged, and the newer branch wins', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-a', '2026-10-10T09:00:00Z', () => r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card'));
+  branch(r, 'claude/T-0003-b', '2026-10-11T09:00:00Z', () => r.task('T-0003', 'Done', 'M-0002', 'Pay by card'));
+  const { v } = live(r);
+  assert.equal(part(v, 'Pay by card').state, 'active', 'the newer branch says Done, which shows as in progress until merged');
+});
+
+test('a part that exists only on a branch shows as added; a branch cannot change anything else', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0005-wrap', '2026-10-11T09:00:00Z', () => {
+    r.task('T-0005', 'Active', 'M-0002', 'Gift wrap');
+    r.task('T-0006', 'Active', 'M-0099', 'Unknown milestone');
+    r.milestone('M-0002', 'Active', 'Renamed by a branch', ['T-0002', 'T-0003', 'T-0004']);
+    r.plan({ phases: [{ title: 'Branch plan', steps: [{ title: 'Nope' }] }] });
+  });
+  const { v } = live(r);
+  assert.deepEqual([part(v, 'Gift wrap').state, part(v, 'Gift wrap').added], ['active', true]);
+  assert.equal(part(v, 'Unknown milestone'), undefined, 'a part of a milestone the trusted branch lacks is ignored');
+  assert.deepEqual(v.plan.phases.map(p => p.title), ['Foundations', 'Ordering']);
+  assert.equal(v.stages.find(s => s.id === 'M-0002').title, 'Online ordering');
+});
+
+test('an old branch without a pull request is ignored, and a reading failure falls back with a warning', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-stale', '2026-09-20T09:00:00Z', () => r.task('T-0003', 'Active', 'M-0002', 'Pay by card'));
+  let { v } = live(r);
+  assert.equal(part(v, 'Pay by card').state, 'next', 'older than 14 days and no pull request');
+  ({ v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-stale', isDraft: false, isCrossRepository: false }] }));
+  assert.equal(part(v, 'Pay by card').state, 'checking', 'an open pull request keeps an old branch in view');
+  // Outside the fixture: Git finds the enclosing repository for a missing directory inside one.
+  const broken = readBranches({ repo: path.join(os.tmpdir(), 'wf-plan-no-such-dir'), base: 'main', trustedBranch: 'main', recordsDir: RD });
+  assert.equal(broken.parts.size, 0);
+  assert.match(broken.warnings.join('\n'), /live reading skipped/);
 });

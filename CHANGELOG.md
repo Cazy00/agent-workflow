@@ -2,6 +2,49 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.4.0
+
+Lets the agent stop only for decisions, sizes review to the change, and has a milestone's trial walked in a browser before the owner tries it (MAINT-0016). In mateen-systems' M-0003, the owner:
+- sent 41 messages, 29 of them "merged", "continue" or "what now";
+- merged 13 pull requests unread;
+- waited 7 h 25 min while the agent waited on CI with nothing needed from the owner;
+- found in the trial what no check had.
+
+Of 23 reviews, the first review of each large task and the milestone review found real problems; seven re-checks of a merged-in head found nothing.
+
+- **`approval.auto_merge`** (owner-merge, checkpoint `milestone` or `plan`):
+  - The agent turns on auto-merge for the pull requests `wf ci` leaves to it, and GitHub merges them once every required check passes.
+  - The delivery evidence may give a required check as `enforced`, so it is posted without waiting for CI.
+  - `wf-ci.yml` runs when auto-merge is turned on or off, and `wf ci` fails a pull request the owner merges that has it on. `bin/wf-protect --apply` allows auto-merge for such a project.
+- **`approval.defer_to_acceptance`** (same checkpoints):
+  - These wait for the milestone's acceptance instead of each waiting for the owner's merge: changes to acceptance tests, scenario changes from work found along the way, and accepted findings that are not blocking. `wf ci` reports them as `deferred`.
+  - Each accepted finding is listed in its task record's `accepted_findings`.
+  - The plan, requirements, workflow, blocking findings and the acceptance itself stay the owner's merge.
+- **Review in proportion:**
+  - `review.level` (`light`, `standard`, `deep`).
+  - `config.review.second_model` (a reviewer from another model family, at no more than `max_effort`) and `config.review.deep_paths`.
+  - A fallback when the second model is unavailable.
+  - Review and verification carry over a merge of the trusted branch or a records commit (`lib/carry.js`).
+- **The trial walk and the acceptance evidence:**
+  - The `trial-walker` agent walks the owner's trial steps in a browser, in each language and screen size, before the owner is asked.
+  - With `acceptance_evidence` (the default for new scaffolds), the pull request that accepts a milestone carries the milestone review, the walk and everything deferred (`templates/acceptance-evidence.json`), checked by `wf ci`.
+- **`wf next`** reads `origin/<trusted branch>` when the local branch is behind it, and says so. **`wf evidence`** starts the delivery evidence.
+- **Procedures:**
+  - A task lead per task.
+  - A fresh helper per fix round.
+  - Effort by review level.
+  - Parallel task leads for independent tasks.
+  - Defaults instead of questions when fix rounds run out.
+  - One rerun and a found task for an unreliable check.
+
+Corpus: 35,133 words before, 37,248 after; `procedures/execute.md` 1,838 → 2,087 words, `procedures/review.md` 931 → 1,138, `procedures/accept-release.md` 520 → 665.
+
+Moving a project to this pin:
+- `bin/wf-upgrade` refreshes `.github/workflows/wf-ci.yml` (an enforcement change for the owner) and adds `.claude/agents/trial-walker.md`.
+- The new settings are opt-in, chosen with `bin/wf-setup`:
+  - with auto-merge, rerun `bin/wf-protect --apply` and replace `AGENTS.md`'s merge sentence with the new scaffold's;
+  - to require the acceptance evidence, set `acceptance_evidence`.
+
 ## v2.3.1
 
 Stops the client page workflow from deploying from a pull-request run (MAINT-0015). In v2.3.0 a merged pull request's `closed` run went to the build and deploy jobs, and GitHub Pages refused the deploy (environment protection), so every merge left a failed run, while the merge's own push to the trusted branch had already rebuilt the page.

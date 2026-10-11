@@ -42,5 +42,10 @@
       "If the client page is installed: `bin/wf-upgrade` refreshes .github/workflows/wf-client-page.yml from this release, so the page rebuilds within minutes of any push and reads the branches (--live); an enforcement-path change for the owner. A copy changed in the project is left alone: merge it by hand from templates/github/wf-client-page.yml with __TRUSTED_BRANCH__ replaced.",
       "The client-page workflow now runs on every push to any branch and on pull-request changes, which uses GitHub Actions minutes on private repositories."
     ]
+  },
+  "v2.3.1": {
+    "notes": [
+      "If the client page is installed: `bin/wf-upgrade` refreshes .github/workflows/wf-client-page.yml, which no longer builds or deploys from a pull-request run (a merged pull request left a failed deploy); an enforcement-path change for the owner."
+    ]
   }
 }

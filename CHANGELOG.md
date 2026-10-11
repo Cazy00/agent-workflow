@@ -2,6 +2,16 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.3.1
+
+Stops the client page workflow from deploying from a pull-request run (MAINT-0015). In v2.3.0 a merged pull request's `closed` run went to the build and deploy jobs, and GitHub Pages refused the deploy (environment protection), so every merge left a failed run, while the merge's own push to the trusted branch had already rebuilt the page.
+
+- **`templates/github/wf-client-page.yml`**: a pull-request run only dispatches a rebuild on the trusted branch, and a merged pull request does nothing; build and deploy run only for pushes, dispatches and the schedule on the trusted branch. Pull-request runs never join the trusted build's concurrency group.
+- A test now evaluates the template's job conditions and concurrency for each GitHub event.
+
+Moving a project to this pin:
+- If the client page is installed, `bin/wf-upgrade` refreshes `.github/workflows/wf-client-page.yml` (an enforcement-path change for the owner); a copy changed in the project is merged by hand from `templates/github/wf-client-page.yml` with `__TRUSTED_BRANCH__` replaced.
+
 ## v2.3.0
 
 Lets the client page show the whole plan and keep up with the work within minutes (MAINT-0014). Before this, the page showed only the milestones on the trusted branch and changed only when work was merged: a part being built all day read as not started, the steps after the current milestone were nowhere, and a signed-off stage listed nothing it delivered.

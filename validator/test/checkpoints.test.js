@@ -792,3 +792,11 @@ test('MAINT-0016: with acceptance_evidence, the pull request that accepts a mile
   const without = setup(t, { checkpoint: 'milestone', change: accept });
   assert.equal(without.run('ci').status, 0, 'a project that has not asked for it is unchanged');
 });
+
+test('MAINT-0016: under auto_merge, wf next says to turn on auto-merge for a finished task\'s pull request', t => {
+  for (const [auto, pattern] of [[true, /turn on auto-merge \(gh pr merge --auto\)/], [false, /merge it yourself only when that reports merge: agent/]]) {
+    const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, approval: { ...c.approval, auto_merge: auto } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('status: Ready', 'status: Done')); } });
+    const view = evaluateNext({ baseline: gitSource(p.repo, p.baseline), candidate: gitSource(p.repo, p.candidate) });
+    assert.match(JSON.stringify(view), pattern, String(auto));
+  }
+});

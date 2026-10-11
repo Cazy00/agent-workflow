@@ -204,15 +204,24 @@ async function main() {
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
   if (!o.baseline && !['records', 'status', 'next'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
-  // `wf next` defaults its baseline to the local trusted branch, named by the working tree's config. Right after
-  // bin/wf-adopt the adoption is not committed there yet: read the working tree then, and say so.
-  let uncommitted = null;
+  // `wf next` defaults its baseline to the trusted branch named by the working tree's config. `git fetch` moves
+  // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
+  // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
+  let baselineNote = null;
   if (!o.baseline && cmd === 'next') {
     let branch = 'main', adopted = false;
     try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; adopted = true; } catch { /* reported below */ }
-    const tip = gitRunner(repo)('rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`);
-    if (tip.status === 0 && (!adopted || gitSource(repo, tip.stdout.trim()).read('docs/workflow/config.json') != null)) o.baseline = tip.stdout.trim();
-    else if (adopted) uncommitted = `the adoption is not on ${branch} yet, so this reads the working tree: commit the scaffold (docs/workflow/, scripts/wf, AGENTS.md, CLAUDE.md, .github/, .gitignore) to ${branch}`;
+    const run = gitRunner(repo);
+    const tipOf = ref => { const r = run('rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`); return r.status === 0 ? r.stdout.trim() : null; };
+    const contains = (older, newer) => run('merge-base', '--is-ancestor', older, newer).status === 0;
+    const local = tipOf(`refs/heads/${branch}`), remote = tipOf(`refs/remotes/origin/${branch}`);
+    let tip = local ?? remote;
+    if (local && remote && local !== remote) {
+      if (contains(local, remote)) { tip = remote; baselineNote = `the local ${branch} is behind origin/${branch}, so this reads origin/${branch} as last fetched; git fetch origin ${branch}:${branch} moves the local branch`; }
+      else if (!contains(remote, local)) baselineNote = `the local ${branch} and origin/${branch} have diverged; this reads the local ${branch}`;
+    }
+    if (tip && (!adopted || gitSource(repo, tip).read('docs/workflow/config.json') != null)) o.baseline = tip;
+    else if (adopted) baselineNote = `the adoption is not on ${branch} yet, so this reads the working tree: commit the scaffold (docs/workflow/, scripts/wf, AGENTS.md, CLAUDE.md, .github/, .gitignore) to ${branch}`;
   }
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
@@ -274,7 +283,7 @@ async function main() {
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
     const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
-    if (uncommitted) view.note = uncommitted;
+    if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
   }

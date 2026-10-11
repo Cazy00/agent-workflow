@@ -15,7 +15,15 @@ import { fileURLToPath } from 'node:url';
 import { dirSource, list, listedOwners, loadAll, loadConfig, validateRecords } from '../validator/lib/index.js';
 import { parseFrontMatter } from '../validator/lib/frontmatter.js';
 import { DETAIL, LANGUAGES, titleOf } from '../validator/lib/client.js';
-import { CHECKPOINTS } from '../validator/lib/checkpoint.js';
+import { CHECKPOINTS, agentMerges } from '../validator/lib/checkpoint.js';
+
+// Whether a second reviewer can run on this machine (MAINT-0016): the Codex CLI on PATH, and whether it is signed in.
+export function detectReviewers({ run = spawnSync } = {}) {
+  const version = run('codex', ['--version'], { encoding: 'utf8', timeout: 5000 });
+  if (version.error || version.status !== 0) return { codex: { installed: false } };
+  const login = run('codex', ['login', 'status'], { encoding: 'utf8', timeout: 5000 });
+  return { codex: { installed: true, version: String(version.stdout ?? '').trim().split('\n')[0].slice(0, 80), signed_in: login.status === 0 } };
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -99,6 +107,7 @@ export async function readState({ project, workflowRepo }) {
   const file = rel(project);
   const adopted = fs.existsSync(file('docs/workflow/config.json'));
   const state = { project, name: path.basename(project), adopted };
+  state.reviewers = detectReviewers();
   if (!adopted) {
     const repository = remoteRepository(project);
     const tags = (git(workflowRepo, 'tag', '--sort=-v:refname').stdout ?? '').split('\n').filter(t => /^v\d+\.\d+\.\d+$/.test(t)).slice(0, 12);
@@ -122,7 +131,8 @@ export async function readState({ project, workflowRepo }) {
   const milestones = [...loadAll(source, rd).milestones.values()].filter(r => r.data?.id).sort((a, b) => a.data.id.localeCompare(b.data.id));
   state.settings = {
     owners, shared: owners.length >= 2,
-    approval: { label: config.approval?.label ?? 'manual', checkpoint: config.approval?.checkpoint ?? null, approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true },
+    approval: { label: config.approval?.label ?? 'manual', checkpoint: config.approval?.checkpoint ?? null, approver: config.approval?.approver ?? '', agent_identity: config.approval?.agent_identity ?? '', derived_baselines: config.approval?.derived_baselines === true, auto_merge: config.approval?.auto_merge === true, defer_to_acceptance: config.approval?.defer_to_acceptance === true },
+    review: { second_model: config.review?.second_model ?? null, deep_paths: list(config.review?.deep_paths) }, acceptance_evidence: config.acceptance_evidence === true,
     project: profile.project ?? '', measure: profile.measure ?? '',
     client: { title: config.client?.title ?? '', language: config.client?.language ?? 'en', detail: config.client?.detail ?? 'full', exclude: list(config.client?.exclude), themed: Boolean(config.client?.theme) },
     milestones: milestones.map(r => ({ id: r.data.id, title: titleOf(r) ?? r.data.outcome ?? r.data.id })),
@@ -210,6 +220,15 @@ export function saveSettings({ project, form }) {
     if (!CHECKPOINTS.includes(checkpoint)) throw new Error('choose when the agent stops for you: milestone, change or plan');
     next.approval.checkpoint = checkpoint;
   }
+  // MAINT-0016: auto-merge and approvals at acceptance need a checkpoint where the agent merges its own pull requests:
+  // kept as they were unless the form sends them, and dropped where they no longer apply (a note says so).
+  const dropped = [];
+  for (const key of ['auto_merge', 'defer_to_acceptance']) {
+    if (form.approval && Object.hasOwn(form.approval, key)) next.approval[key] = form.approval[key] === true;
+    if (next.approval[key] !== undefined && !(label === 'owner-merge' && agentMerges(next.approval.checkpoint))) { if (next.approval[key]) dropped.push(key); delete next.approval[key]; }
+  }
+  if (has('review')) next.review = form.review;
+  if (has('acceptance_evidence')) next.acceptance_evidence = form.acceptance_evidence === true;
   if (MECHANISM[label]) next.approval.mechanism = MECHANISM[label];
   if (has('production')) next.paths = { ...(next.paths ?? {}), production: items(form.production ?? [], 'production paths', { frontMatter: false }) };
   const title = Object.hasOwn(client, 'title') ? oneLine(client.title, 'the client page title') : config.client?.title ?? '';
@@ -244,6 +263,9 @@ export function saveSettings({ project, form }) {
   if (nextProfile !== profileText) { fs.writeFileSync(file(profilePath), nextProfile); changed.push(profilePath); }
   // What the owner reads after saving: plain words, and what to ask the agent to bring along in the same pull request.
   const notes = [];
+  if (next.approval.auto_merge && config.approval?.auto_merge !== true) notes.push('The agent\'s pull requests will merge by themselves once their checks pass; yours still wait for you. After this is merged, run bin/wf-protect --apply with your own login so GitHub allows auto-merge, and tell the agent to update its instructions on merging (AGENTS.md) in the same pull request.');
+  if (next.approval.defer_to_acceptance && config.approval?.defer_to_acceptance !== true) notes.push('Changes to acceptance tests, and review notes the agent accepted rather than fixed, will be listed for you when you accept the milestone, instead of each waiting for your merge. The plan, requirements and workflow still wait for you.');
+  for (const key of dropped) notes.push(`${key === 'auto_merge' ? 'Auto-merge' : 'Approving at acceptance'} is off: it needs a checkpoint where the agent merges its own pull requests.`);
   const was = config.approval?.label ?? 'manual';
   if (label !== was) notes.push(label === 'enforced'
     ? 'GitHub now enforces your approval. Make sure your step "Switch to enforced mode" is done first. Tell the agent to update its instructions on merging (AGENTS.md) in the same pull request.'

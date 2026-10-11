@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { adoptArguments, createSetupServer, saveSettings, setFrontMatter, tickStep } from '../../adapters/setup.mjs';
+import { adoptArguments, createSetupServer, detectReviewers, saveSettings, setFrontMatter, tickStep } from '../../adapters/setup.mjs';
 import { dirSource, loadConfig, validateRecords } from '../lib/index.js';
 
 // bin/wf-setup (MAINT-0009): a local page that adopts the workflow and edits its settings later. These tests cover what
@@ -238,4 +238,25 @@ test('a legacy owner-merge project without a checkpoint keeps none on an unrelat
   const config = JSON.parse(fs.readFileSync(file, 'utf8')); delete config.approval.checkpoint; fs.writeFileSync(file, JSON.stringify(config, null, 2));
   saveSettings({ project: dir, form: form({ dir, approval: { label: 'owner-merge', approver: 'owner', agent_identity: '' }, measure: 'A customer can order online.' }) });
   assert.equal(loadConfig(dirSource(dir)).approval.checkpoint, undefined);
+});
+
+test('MAINT-0016: settings save auto-merge, approvals at acceptance, the second reviewer and acceptance evidence, and drop them where they do not apply', t => {
+  const dir = project(t);
+  const approval = { label: 'owner-merge', checkpoint: 'milestone', approver: 'owner', agent_identity: '', auto_merge: true, defer_to_acceptance: true };
+  const review = { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } };
+  const r = saveSettings({ project: dir, form: form({ dir, approval, review, acceptance_evidence: true }) });
+  const config = loadConfig(dirSource(dir));
+  assert.deepEqual([config.approval.auto_merge, config.approval.defer_to_acceptance, config.acceptance_evidence, config.review.second_model.model], [true, true, true, 'gpt-6.1-sol']);
+  assert.ok(r.notes.some(n => /bin\/wf-protect --apply/.test(n)), r.notes.join(' | '));
+  const switched = saveSettings({ project: dir, form: form({ dir, approval: { ...approval, checkpoint: 'change' } }) });
+  const after = loadConfig(dirSource(dir));
+  assert.deepEqual([after.approval.auto_merge, after.approval.defer_to_acceptance], [undefined, undefined], 'dropped where the owner merges every change');
+  assert.ok(switched.notes.some(n => /Auto-merge is off/.test(n)), switched.notes.join(' | '));
+  assert.throws(() => saveSettings({ project: dir, form: form({ dir, approval, review: { second_model: { tool: 'codex', model: 'bad model' } } }) }), /plain name/);
+});
+
+test('MAINT-0016: setup finds whether Codex is installed and signed in', () => {
+  const run = (cmd, args) => (args[0] === '--version' ? { status: 0, stdout: 'codex-cli 1.4.0\n' } : { status: 1, stdout: '' });
+  assert.deepEqual(detectReviewers({ run }), { codex: { installed: true, version: 'codex-cli 1.4.0', signed_in: false } });
+  assert.deepEqual(detectReviewers({ run: () => ({ error: new Error('spawn codex ENOENT'), status: null }) }), { codex: { installed: false } });
 });

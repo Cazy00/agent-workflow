@@ -87,6 +87,7 @@ let state = null;
 const changed = () => { if (state?.adopted) statusLine.textContent = 'Unsaved changes.'; };
 const value = name => app.querySelector(`[name="${name}"]`)?.value ?? '';
 const picked = name => app.querySelector(`[name="${name}"]:checked`)?.value ?? '';
+const ticked = name => app.querySelector(`[name="${name}"]`)?.checked === true;
 const show = (kind, html) => { const box = app.querySelector('#message'); box.className = `message ${kind}`; box.innerHTML = html; box.hidden = false; box.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' }); };
 
 // The main question: when the agent stops for you (owner-merge's checkpoint). The same checks and independent review
@@ -164,6 +165,8 @@ function renderSettings() {
       ${label === 'owner-merge' && !s.approval.checkpoint ? '<p class="hint">Not chosen yet: you merge every pull request, and the agent does not stop between milestones. Pick one to change that.</p>' : ''}
       <div class="choices">${Object.keys(PRESETS).map(k => choice('checkpoint', k, PRESETS[k], label === 'owner-merge' ? s.approval.checkpoint === k : k === 'milestone')).join('')}</div>
       <p class="hint">${PRESET_HINT}</p>
+      <label class="choice"><input type="checkbox" name="auto_merge"${s.approval.auto_merge ? ' checked' : ''}><strong>Let the agent's pull requests merge by themselves</strong><p>Once their checks pass, GitHub merges them, so the agent never stops to wait for checks or for you. Yours still wait for you. It needs the protection step.</p></label>
+      <label class="choice"><input type="checkbox" name="defer_to_acceptance"${s.approval.defer_to_acceptance ? ' checked' : ''}><strong>Approve tests and accepted review notes when you accept the milestone</strong><p>They are listed for you at acceptance instead of each waiting for your merge. Changes to your plan, requirements and the workflow still wait for you.</p></label>
     </section>
     <section><h2>How approval is proven</h2>
       ${label === 'owner-merge' ? '' : `<p class="hint">You approve every change, ${label === 'manual' ? 'with your signing key' : 'through GitHub\'s code-owner review'}.</p>`}
@@ -174,6 +177,13 @@ function renderSettings() {
     <section><h2>Accounts</h2>
       <label class="field"><span>Your GitHub username</span><input type="text" name="approver" value="${esc(s.approval.approver)}" autocomplete="off"></label>
       ${accountFields(s.approval.agent_identity)}
+    </section>
+    <section><h2>Reviews and your trial</h2>
+      <p class="hint">${state.reviewers?.codex?.installed ? `Codex is installed (${esc(state.reviewers.codex.version)})${state.reviewers.codex.signed_in ? ' and signed in' : ', but not signed in: run codex login'}.` : 'Codex was not found on PATH here. Without it every review uses a fresh Claude reviewer; tick Codex below if the agent runs it from elsewhere.'}</p>
+      <label class="choice"><input type="checkbox" name="second_model"${s.review.second_model ? ' checked' : ''}><strong>Use Codex for deep reviews and the milestone review</strong><p>Another model family catches what Claude misses. Small changes get a quick Claude review either way. If Codex runs out or is signed out, a Claude reviewer takes over and says why.</p></label>
+      <label class="field"><span>Codex model</span><input type="text" name="second_model_name" value="${esc(s.review.second_model?.model ?? 'gpt-6.1-sol')}" autocomplete="off"></label>
+      <label class="field"><span>Highest effort</span><select name="second_model_effort">${['low', 'medium', 'high', 'xhigh'].map(e => `<option value="${e}"${(s.review.second_model?.max_effort ?? 'high') === e ? ' selected' : ''}>${e}</option>`).join('')}</select></label>
+      <label class="choice"><input type="checkbox" name="acceptance_evidence"${s.acceptance_evidence ? ' checked' : ''}><strong>Walk your trial in a browser before you try it</strong><p>Before asking you to accept a milestone, the agent walks your trial steps in a browser in each language, fixes what fails, corrects the steps and posts screenshots.</p></label>
     </section>
     <section><h2>The project</h2>
       <label class="field"><span>Name</span><input type="text" name="project" value="${esc(s.project)}"></label>
@@ -203,7 +213,9 @@ function renderSettings() {
     try {
       const r = await api('/api/settings', {
         // A project without a checkpoint shows none picked and keeps none until the owner picks one.
-        approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '' },
+        approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '', auto_merge: ticked('auto_merge'), defer_to_acceptance: ticked('defer_to_acceptance') },
+        review: { ...(s.review.deep_paths.length ? { deep_paths: s.review.deep_paths } : {}), second_model: ticked('second_model') ? { tool: 'codex', model: value('second_model_name'), max_effort: value('second_model_effort') } : null },
+        acceptance_evidence: ticked('acceptance_evidence'),
         project: value('project'), measure: value('measure'),
         client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },
       });

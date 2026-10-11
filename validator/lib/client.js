@@ -231,7 +231,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
         moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
         items: detail === 'stages' ? [] : own.map(t => {
           const state = finished ? 'done' : t.live === 'checking' ? 'checking' : PART[t.status] ?? 'planned';
-          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: planned.length > 0 && !planned.includes(t.id), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
+          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: t.branchOnly === true || (planned.length > 0 && !planned.includes(t.id)), doneAt: state === 'done' && client.plan ? history?.doneDate(t.id) ?? null : null }; // only the plan page lists them
         }),
       };
     });
@@ -282,6 +282,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
     for (const id of plan.unplaced) warnings.push(`client.plan: ${id} is in no step of the client plan; it shows as an added step at the end until a step lists it`);
   }
 
+  warnings.push(...(history?.warnings ?? [])); // read lazily while the stages were built
   if (live) {
     warnings.push(...live.warnings);
     if (live.newest && (!updated || Date.parse(live.newest) > Date.parse(updated))) updated = live.newest;

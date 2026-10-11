@@ -9,6 +9,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const PREFIX = 'refs/remotes/origin/';
 // The states a branch may give a part; anything else leaves the trusted branch's.
 const FORWARD = { Active: 'Active', Blocked: 'Blocked', Done: 'Active' };
+// The trusted states a branch may move a part out of.
+const OPEN = new Set(['Draft', 'Ready']);
 
 export function readBranches({ repo, base, trustedBranch, recordsDir, pullRequests = null, now = Date.now(), maxAgeDays = 14 }) {
   const parts = new Map();
@@ -39,6 +41,7 @@ export function readBranches({ repo, base, trustedBranch, recordsDir, pullReques
         const shown = git('show', `${tip}:${file}`);
         const record = shown.status === 0 ? parseFrontMatter(shown.stdout).data : null; // removed on the branch: nothing to show
         if (typeof record?.id !== 'string' || !/^T-\d{4,}$/.test(record.id)) continue; // front matter is anyone's: only a task ID is an id
+        if (file !== `${recordsDir}/tasks/${record.id}.md`) continue; // only the record named for a task speaks for it
         const seen = parts.get(record.id);
         if (seen && seen.at >= at) continue; // the newer branch wins
         parts.set(record.id, { record, at, checking: Boolean(pr && !pr.isDraft) });
@@ -59,11 +62,11 @@ export function overlayTasks(tasks, parts, milestoneIds, finished = new Set()) {
     if (!status) return t;
     return { ...t, status, client_title: b.record.client_title ?? t.client_title, title: b.record.title ?? t.title, live: b.checking && status === 'Active' ? 'checking' : null };
   };
-  const out = tasks.map(t => { const b = parts.get(t.id); return b && t.status !== 'Done' && !finished.has(t.milestone) ? moved(t, b) : t; });
+  const out = tasks.map(t => { const b = parts.get(t.id); return b && OPEN.has(t.status) && !finished.has(t.milestone) ? moved(t, b) : t; });
   for (const [id, b] of parts) {
     if (ids.has(id) || !milestoneIds.has(b.record.milestone) || finished.has(b.record.milestone)) continue;
     const added = moved({ id, milestone: b.record.milestone, status: 'Draft', title: null, client_title: null }, b);
-    if (added.status !== 'Draft') out.push(added);
+    if (added.status !== 'Draft') out.push({ ...added, branchOnly: true });
   }
   return out;
 }

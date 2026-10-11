@@ -35,7 +35,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
-    status --client [--candidate REV] [--live] [--pull-requests FILE]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
+    status --client [--candidate REV] [--live [--pull-requests FILE]]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
   ci: --delivery-evidence EXTERNAL_FILE (JSON, or a pull request description holding the marked block) is required for a
@@ -71,6 +71,7 @@ async function main() {
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
+  if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
     const result = prepareReview({ repo: path.resolve(o.repo ?? process.cwd()), baseline: o.baseline, candidate: o.candidate, tasks: o.task ? [o.task] : [], evidence: o.evidence });

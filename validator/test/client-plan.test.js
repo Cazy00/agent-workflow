@@ -247,6 +247,46 @@ test('a shallow clone has no history to read, and still renders', t => {
   assert.ok(v.recent.every(p => p.date === '2026-09-02T09:00:00Z'), 'the only commit is the one the record was Done at');
 });
 
+test('a history Git cannot read gives one warning, and the page still renders', t => {
+  const r = standard(t);
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-not-a-repo-'));
+  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+  const history = gitHistory(elsewhere, 'main', RD);
+  assert.deepEqual(history.warnings, [], 'nothing is read until a question is asked');
+  const v = view(r, { history });
+  assert.equal(history.warnings.length, 1);
+  assert.match(v.warnings.join('\n'), /history could not be read from Git/);
+  assert.equal(v.plan.steps[2].parts.done, 1);
+  assert.doesNotMatch(renderClient(v), /history could not be read/, 'the warning goes to standard error, not to the page');
+});
+
+test('a shallow clone gives no warning', t => {
+  const r = standard(t);
+  r.commit('one', '2026-09-01T09:00:00Z');
+  const shallow = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-shallow-'));
+  t.after(() => fs.rmSync(shallow, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['clone', '-q', '--depth', '1', `file://${r.dir}`, shallow]).status, 0);
+  const history = gitHistory(shallow, 'HEAD', RD);
+  const v = view(r, { source: gitSource(shallow, 'HEAD'), history });
+  assert.deepEqual(v.warnings, []);
+});
+
+test('without client.plan, a finished stage lists its parts, closed, recovered from history', t => {
+  const r = standard(t, { client: {} });
+  r.task('T-0001', 'Done', 'M-0001', 'Put the menu online');
+  r.commit('T-0001 done', '2026-09-05T09:00:00Z');
+  r.rm(`${RD}/tasks/T-0001.md`);
+  r.commit('remove T-0001 after acceptance', '2026-09-07T09:00:00Z');
+  const v = view(r, { source: gitSource(r.dir, 'main'), history: gitHistory(r.dir, 'main', RD) });
+  assert.equal(v.plan, null);
+  assert.deepEqual(v.stages.find(s => s.id === 'M-0001').items.map(i => [i.title, i.state]), [['Put the menu online', 'done']]);
+  const html = renderClient(v);
+  const closed = html.match(/<details class="more">(?:(?!<\/details>)[\s\S])*Put the menu online[\s\S]*?<\/details>/);
+  assert.ok(closed, 'the part sits inside a closed <details class="more">');
+  assert.match(closed[0], /Done/);
+  assert.doesNotMatch(closed[0], /<details[^>]*\bopen\b/);
+});
+
 const part = (v, title) => v.plan.steps.flatMap(s => s.items).find(i => i.title === title);
 
 // Many commits at once, through one `git fast-import`: each entry is { date, files: { path: text | null } }.
@@ -258,7 +298,7 @@ function importCommits(r, entries) {
   assert.equal(done.status, 0, done.stderr);
 }
 
-test('history is read in one pass: hundreds of parts, each done in its own commit, build in under 3 seconds', t => {
+test('history is read in one pass: hundreds of parts, each done in its own commit, build in under 10 seconds', t => {
   const r = repo(t);
   const M = 10, N = 30; // 300 parts; the first six milestones are accepted and their records removed
   const mid = m => `M-${String(m).padStart(4, '0')}`;
@@ -285,7 +325,8 @@ test('history is read in one pass: hundreds of parts, each done in its own commi
   const html = renderClient(v);
   const took = performance.now() - started;
   t.diagnostic(`built in ${Math.round(took)} ms over ${entries.length + 1} commits`);
-  assert.ok(took < 3000, `took ${Math.round(took)} ms`);
+  // The bound exists to catch a Git call per part (~97 s for this history), not to time the machine: a loaded suite is slower.
+  assert.ok(took < 10000, `took ${Math.round(took)} ms over ${entries.length + 1} commits`);
   const items = v.plan.steps.flatMap(s => s.items);
   assert.equal(items.length, M * N, 'every removed record comes back');
   assert.ok(items.every(i => i.state === 'done' && i.doneAt), 'and every part has its date');
@@ -404,6 +445,40 @@ test('Done on a branch is not done until merged, and the newer branch wins', t =
   branch(r, 'claude/T-0003-b', '2026-10-11T09:00:00Z', () => r.task('T-0003', 'Done', 'M-0002', 'Pay by card'));
   const { v } = live(r);
   assert.equal(part(v, 'Pay by card').state, 'active', 'the newer branch says Done, which shows as in progress until merged');
+});
+
+test('a branch moves a part only from Draft or Ready: the trusted branch\'s Active, Blocked and Done stand', t => {
+  const r = standard(t);
+  r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card');
+  r.task('T-0004', 'Active', 'M-0002', 'Email the receipt');
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0003-pay', '2026-10-10T09:00:00Z', () => {
+    r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+    r.task('T-0004', 'Blocked', 'M-0002', 'Email the receipt');
+    r.task('T-0002', 'Active', 'M-0002', 'Choose a cake');
+  });
+  const { v } = live(r, { pullRequests: [{ headRefName: 'claude/T-0003-pay', isDraft: false, isCrossRepository: false }] });
+  assert.equal(part(v, 'Pay by card').state, 'hold', 'a branch\'s Active does not lift a part the trusted branch paused');
+  assert.equal(part(v, 'Email the receipt').state, 'active', 'a branch\'s Blocked does not pause a part the trusted branch has in progress');
+  assert.equal(part(v, 'Choose a cake').state, 'done');
+});
+
+test('a part that exists only on a branch is added even when its milestone lists no tasks', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0009-orders', '2026-10-11T09:00:00Z', () => r.task('T-0009', 'Active', 'M-0003', 'List orders'));
+  const { v } = live(r);
+  assert.deepEqual([part(v, 'List orders').state, part(v, 'List orders').added], ['active', true]);
+  assert.equal(part(v, 'Pay by card').added, false, 'a recorded part is not');
+});
+
+test('only the record named for a task speaks for it: a branch cannot use another file under tasks/', t => {
+  const r = standard(t);
+  r.commit('plan', '2026-10-01T09:00:00Z');
+  branch(r, 'claude/T-0042-other', '2026-10-10T09:00:00Z', () => r.write(`${RD}/tasks/notes.md`, r.taskText('T-0003', 'Active', 'M-0002', 'Pay by card')));
+  assert.equal(part(live(r).v, 'Pay by card').state, 'next');
+  branch(r, 'claude/T-0043-other', '2026-10-10T10:00:00Z', () => r.write(`${RD}/tasks/T-0099.md`, r.taskText('T-0004', 'Active', 'M-0002', 'Email the receipt')));
+  assert.equal(part(live(r).v, 'Email the receipt').state, 'planned', 'a file named for one task cannot claim another');
 });
 
 test('a part that exists only on a branch shows as added; a branch cannot change anything else', t => {
@@ -678,6 +753,17 @@ test('wf status --client --live reads the branches, takes pull requests, and war
   assert.equal(withLive.status, 0, withLive.stderr);
   assert.match(withLive.stdout, /Pay by card[\s\S]*?Being checked/);
   assert.match(withLive.stdout, new RegExp(`datetime="${now}"`));
+});
+
+test('--pull-requests with --client needs --live', t => {
+  const r = standard(t);
+  const prs = path.join(r.dir, '..', `${path.basename(r.dir)}-prs2.json`);
+  fs.writeFileSync(prs, '[]');
+  t.after(() => fs.rmSync(prs, { force: true }));
+  const out = run(r.dir, '--pull-requests', prs);
+  assert.equal(out.status, 2);
+  assert.match(out.stderr, /--pull-requests needs --live with --client/);
+  assert.equal(run(r.dir, '--live', '--pull-requests', prs).status, 0);
 });
 
 test('a plan error stops wf status --client; a directory source renders without history', t => {

@@ -4,7 +4,7 @@
 // merge commit is dated by the merge. The tasks directory's history is read once, on first use: one `git log` lists
 // every version of every record and one `git cat-file --batch` reads them, where a Git call per record took minutes
 // for a few hundred. Without history (a shallow clone) a removed record is simply missing and a date is the oldest
-// commit available; if Git fails, every answer is null.
+// commit available (no warning: that is how the clone is). If Git fails, every answer is null and `warnings` says so once.
 import { gitRunner } from './git.js';
 import { parseFrontMatter } from './frontmatter.js';
 
@@ -12,13 +12,13 @@ const ID = /^T-\d{4,}$/;
 const NONE = /^0+$/; // the object name Git shows for the side of a change where the file does not exist
 const LIMIT = 256 * 1024 * 1024;
 
-function readHistory(repo, revision, recordsDir) {
+function readHistory(repo, revision, recordsDir, fail) {
   // id -> its versions, oldest first: { date, blob } where it was added or changed, { removed: blob } where it was removed.
   const versions = new Map();
   const texts = new Map();
   const prefix = `${recordsDir}/tasks/`;
   const log = gitRunner(repo, { maxBuffer: LIMIT })('log', '--reverse', '--first-parent', '--diff-merges=first-parent', '--no-renames', '--no-abbrev', '--raw', '-z', '--format=commit %H %cI', revision, '--', prefix);
-  if (log.error || log.status !== 0) return { versions, texts };
+  if (log.error || log.status !== 0) { fail(); return { versions, texts }; }
   // With -z: `commit <sha> <date>` NUL, then per file `:<modes> <before> <after> <status>` NUL `<path>` NUL.
   const tokens = log.stdout.split('\0');
   let date = null;
@@ -37,7 +37,7 @@ function readHistory(repo, revision, recordsDir) {
   if (!blobs.length) return { versions, texts };
   // `<sha> blob <size>` LF, the bytes, LF; or `<sha> missing` LF.
   const cat = gitRunner(repo, { maxBuffer: LIMIT, encoding: 'buffer', input: Buffer.from(`${blobs.join('\n')}\n`) })('cat-file', '--batch');
-  if (cat.error || cat.status !== 0) return { versions, texts };
+  if (cat.error || cat.status !== 0) { fail(); return { versions, texts }; }
   const out = cat.stdout;
   for (let at = 0; at < out.length;) {
     const eol = out.indexOf(10, at);
@@ -53,10 +53,13 @@ function readHistory(repo, revision, recordsDir) {
 
 export function gitHistory(repo, revision, recordsDir) {
   let read = null;
-  const history = () => (read ??= readHistory(repo, revision, recordsDir));
+  const warnings = [];
+  const fail = () => { if (!warnings.length) warnings.push('history could not be read from Git; finished parts and Recently done may be missing'); };
+  const history = () => (read ??= readHistory(repo, revision, recordsDir, fail));
   const of = id => (ID.test(id) ? history().versions.get(id) : null) ?? [];
   const text = blob => (blob && history().texts.get(blob)) ?? null;
   return {
+    warnings, // filled when history is first read, for the caller to print once the page is built
     // The record as it read before its last removal.
     lastVersion: id => text(of(id).findLast(v => v.removed)?.removed),
     // Done as every other reader of the records decides it, by the front matter, so `status:  Done` counts.

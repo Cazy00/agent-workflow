@@ -6,22 +6,41 @@ export function planBody(view, say, h) {
   const pct = n => `${Math.round(Math.min(1, Math.max(0, n)) * 100)}%`;
   const bar = n => `<div class="bar" aria-hidden="true"><span style="width:${pct(n)}"></span></div>`;
   const date = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(say.locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); };
+  // Every step in progress, the one leading the headline (a moving one first, a paused one last), and the next.
   const active = plan.steps.filter(s => s.state === 'active');
   const next = plan.steps.find(s => s.state === 'next');
-  const headline = active.length ? say.working(active[0].title) : next ? say.next(next.title) : say.allDone;
-  const named = active[0]?.title ?? next?.title;
-  const h1 = named && headline.includes(named) ? esc(headline).replace(esc(named), bdi(named)) : esc(headline);
-  const nowItems = active.flatMap(s => s.items.filter(i => i.state === 'active' || i.state === 'checking').map(i => ({ ...i, step: s.title })))
-    .sort((a, b) => (a.state === 'checking') - (b.state === 'checking')); // in progress first, then being checked; the sort is stable
-  const now = `<section class="panel now" aria-labelledby="now"><h2 id="now">${esc(say.now)}</h2>${nowItems.length
-    ? `<ul class="items" role="list">${nowItems.map(i => `<li class="item ${i.state}"><span class="icon" aria-hidden="true">${ICON[i.state]}</span><span class="name">${bdi(i.title)} <span class="where">${esc(say.nextIn)} ${bdi(i.step)}</span></span><span class="state">${esc(say.part[i.state])}</span></li>`).join('')}</ul>`
-    : `<p>${next ? esc(say.startsNext(next.title)) : esc(say.allDone)}</p>`}</section>`;
+  const lead = active.find(s => s.moving) ?? active.find(s => !s.paused) ?? active[0];
+  const finished = plan.steps.length > 0 && plan.steps.every(s => s.state === 'done');
+  // A sentence naming a title, with the title kept in its own direction (a function, so `$&` in it stays text).
+  const named = (sentence, title) => { const e = esc(sentence); const t = esc(title); return e.includes(t) ? e.replace(t, () => bdi(title)) : e; };
+  const why = s => s.paused ? say.paused(s.title) : s.review ? say.review(s.title) : say.working(s.title);
+  const h1 = lead ? named(why(lead), lead.title) : next ? named(say.next(next.title), next.title) : esc(finished ? say.allDone : say.planning);
+  const row = (state, name, label) => `<li class="item ${state}"><span class="icon" aria-hidden="true">${ICON[state]}</span><span class="name">${name}</span>${label ? `<span class="state">${esc(label)}</span>` : ''}</li>`;
+  const where = (title, step) => `${bdi(title)} <span class="where">${esc(say.nextIn)} ${bdi(step)}</span>`;
+  const moves = i => i.state === 'active' || i.state === 'checking';
+  // Parts in progress, then being checked (the sort is stable); then each step in progress with no part moving in
+  // view: paused, awaiting sign-off, its part up next, or the step itself (detail 'stages' lists no parts).
+  const rows = [
+    ...active.flatMap(s => s.items.filter(moves).map(i => ({ ...i, step: s.title }))).sort((a, b) => (a.state === 'checking') - (b.state === 'checking'))
+      .map(i => row(i.state, where(i.title, i.step), say.part[i.state])),
+    ...active.filter(s => !s.items.some(moves)).map(s => {
+      if (s.paused) return row('hold', named(say.paused(s.title), s.title));
+      if (s.review) return row('checking', named(say.review(s.title), s.title));
+      const ready = s.items.find(i => i.state === 'next');
+      return ready ? row('next', where(ready.title, s.title), say.part.next) : row('active', bdi(s.title), say.step.active);
+    }),
+  ];
+  const now = `<section class="panel now" aria-labelledby="now"><h2 id="now">${esc(say.now)}</h2>${rows.length
+    ? `<ul class="items" role="list">${rows.join('')}</ul>`
+    : `<p>${next ? named(say.startsNext(next.title), next.title) : esc(finished ? say.allDone : say.planning)}</p>`}</section>`;
   const waiting = view.waiting.length ? `<section class="panel waiting" aria-labelledby="waiting"><h2 id="waiting"><span aria-hidden="true">${ICON.hold}</span>${esc(say.waitingYou)}</h2><ul class="decisions" role="list">${view.waiting.map(d => `<li><p class="question">${bdi(d.question)}</p><p class="meta">${esc(d.proposed ? say.decisionProposed : say.decisionOpen)}. ${esc(say.holds)} ${d.holds.map(bdi).join(view.language === 'ar' ? '، ' : ', ')}</p></li>`).join('')}</ul></section>` : '';
   const recent = view.recent.length ? `<section class="panel recent" aria-labelledby="recent"><h2 id="recent">${esc(say.recent)}</h2><ul class="items" role="list">${view.recent.map(p => `<li class="item done"><span class="icon" aria-hidden="true">${ICON.done}</span><span class="name">${bdi(p.title)}</span><span class="state">${esc(date(p.date))}</span></li>`).join('')}</ul></section>` : '';
+  // Every step in progress is open (the next step when none is); the first carries the highlight.
   const current = active[0] ?? next;
+  const opened = s => active.length ? s.state === 'active' : s === next;
   const step = s => {
     const parts = s.items.length
-      ? s === current ? h.partList(s.items) : `<details class="more"><summary>${esc(s.state === 'done' ? say.stepDelivered(s.items.length) : say.stepParts(s.items.length))}</summary>${h.partList(s.items)}</details>`
+      ? opened(s) ? h.partList(s.items) : `<details class="more"><summary>${esc(s.state === 'done' ? say.stepDelivered(s.items.length) : say.stepParts(s.items.length))}</summary>${h.partList(s.items)}</details>`
       : s.state === 'done' || s.planned ? '' : `<p class="later">${esc(say.laterParts)}</p>`;
     return `<li class="step ${s.state}${s === current ? ' current' : ''}"><span class="marker" aria-hidden="true">${s.state === 'done' ? ICON.done : ''}</span><div class="body"><p class="status">${esc(say.step[s.state])}${s.added ? ` <span class="tag">${esc(say.addedStep)}</span>` : ''}</p><h4>${bdi(s.title)}</h4>${s.summary ? `<p class="outcome">${bdi(s.summary)}</p>` : ''}${s.parts && s.state !== 'done' ? `<div class="parts">${bar(s.progress)}<p>${esc(say.parts(s.parts.done, s.parts.total, s.on_hold))}</p></div>` : ''}${parts}</div></li>`;
   };

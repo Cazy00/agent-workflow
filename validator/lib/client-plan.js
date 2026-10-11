@@ -56,8 +56,15 @@ function step({ title, summary, done, added, stages }) {
   const total = stages.reduce((n, s) => n + (s.finished ? s.delivered : s.parts?.total ?? 0), 0);
   const doneParts = stages.reduce((n, s) => n + (s.finished ? s.delivered : s.parts?.done ?? 0), 0);
   const parts = total ? { done: doneParts, total } : null;
+  // Why a step is in progress when no part is moving: every milestone under way is paused, or every one still open is
+  // built and checked. Now and the headline say so rather than naming the step after it.
+  const open = stages.filter(s => !s.finished);
+  const underway = open.filter(s => s.tone === 'active' || s.tone === 'review');
+  const still = state === 'active' && !moving;
   return {
-    title, summary, state, added, items, parts,
+    title, summary, state, added, items, parts, moving,
+    paused: still && underway.length > 0 && underway.every(s => s.paused),
+    review: still && open.length > 0 && open.every(s => s.tone === 'review' && !s.paused),
     planned: stages.length > 0, // it names milestones, so its parts exist even when the page hides them
     on_hold: stages.reduce((n, s) => n + (s.on_hold ?? 0), 0),
     progress: state === 'done' ? 1 : parts ? parts.done / parts.total : 0,

@@ -484,7 +484,7 @@ test('a plan with no steps to show renders without throwing', t => {
   const v = view(r);
   assert.equal(v.plan.steps.length, 0);
   assert.doesNotThrow(() => renderClient(v));
-  assert.match(renderClient(v), /<h1>Every step is done\.<\/h1>/);
+  assert.match(renderClient(v), /<h1>The project is being planned\.<\/h1>/);
 });
 
 test('a plan page under a brand band shows the title once, in the band', t => {
@@ -500,6 +500,97 @@ test('a plan page without a band shows the project name, and the logo when the t
   r.write('docs/client-page/logo.svg', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4"/></svg>');
   const html = renderClient(view(r));
   assert.match(html, /<img class="logo" src="data:image\/svg\+xml[^"]*" alt="shop">\s*<p class="project">shop<\/p>/);
+});
+
+// The headline and the Now panel of a rendered plan page, as text with the markup kept.
+const top = html => ({ h1: html.match(/<h1>([\s\S]*?)<\/h1>/)[1], now: html.match(/<section class="panel now"[\s\S]*?<\/section>/)[0] });
+
+test('Now and the headline name what is in progress, in every state a step can be in', t => {
+  // A part moving: the part, with its step.
+  let r = standard(t);
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  let { h1, now } = top(renderClient(view(r)));
+  assert.equal(h1, 'Now working on ordering a cake.');
+  assert.match(now, /<li class="item active">[\s\S]*<bdi>Pay by card<\/bdi> <span class="where">in <bdi>Ordering a cake<\/bdi><\/span>[\s\S]*In progress/);
+
+  // The step in progress with no part moving, and a part up next: that part, with its step, not the following step.
+  r = standard(t);
+  ({ h1, now } = top(renderClient(view(r))));
+  assert.equal(h1, 'Now working on ordering a cake.');
+  assert.match(now, /<li class="item next">[\s\S]*<bdi>Pay by card<\/bdi> <span class="where">in <bdi>Ordering a cake<\/bdi><\/span>[\s\S]*Up next/);
+  assert.doesNotMatch(now, /Deliveries/);
+
+  // Nothing up next: the step itself.
+  r.task('T-0003', 'Draft', 'M-0002', 'Pay by card');
+  ({ now } = top(renderClient(view(r))));
+  assert.match(now, /<li class="item active">[\s\S]*<span class="name"><bdi>Ordering a cake<\/bdi><\/span><span class="state">In progress<\/span>/);
+  assert.doesNotMatch(now, /Deliveries|Starting next/);
+
+  // A paused milestone: paused, in the headline and in Now.
+  r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card');
+  r.milestone('M-0002', 'Blocked', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  ({ h1, now } = top(renderClient(view(r))));
+  assert.equal(h1, '<bdi>Ordering a cake</bdi> is paused for now.');
+  assert.match(now, /<li class="item hold">[\s\S]*<bdi>Ordering a cake<\/bdi> is paused for now\./);
+  assert.doesNotMatch(h1 + now, /working on|Deliveries/);
+
+  // Built and checked: the step is in progress, waiting for sign-off.
+  r = standard(t);
+  for (const id of ['T-0003', 'T-0004']) r.task(id, 'Done', 'M-0002', id === 'T-0003' ? 'Pay by card' : 'Email the receipt');
+  r.milestone('M-0002', 'Verified', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  r.milestone('M-0003', 'Verified', 'Daily orders', []);
+  const v = view(r);
+  assert.equal(v.plan.steps[2].state, 'active');
+  ({ h1, now } = top(renderClient(v)));
+  assert.equal(h1, '<bdi>Ordering a cake</bdi>: built and checked, and waiting for sign-off.');
+  assert.match(now, /<bdi>Ordering a cake<\/bdi>: built and checked, and waiting for sign-off\./);
+  assert.doesNotMatch(now, /Deliveries/);
+});
+
+test('every step in progress is open and in Now; the last step in progress is not "every step is done"', t => {
+  const r = standard(t);
+  r.milestone('M-0003', 'Active', 'Daily orders', ['T-0005']);
+  r.task('T-0005', 'Active', 'M-0003', 'List the day\'s orders');
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  r.plan({ phases: [{ title: 'All', steps: [{ title: 'Menu', milestones: ['M-0001'] }, { title: 'Ordering', milestones: ['M-0002'] }, { title: 'Daily orders', milestones: ['M-0003'] }] }] });
+  let html = renderClient(view(r));
+  const { now } = top(html);
+  assert.match(now, /Pay by card[\s\S]*in <bdi>Ordering<\/bdi>[\s\S]*List the day&#39;s orders[\s\S]*in <bdi>Daily orders<\/bdi>/);
+  assert.match(html, /<li class="step active current">[\s\S]*<h4><bdi>Ordering<\/bdi><\/h4>[\s\S]*?<ul class="items"/);
+  assert.match(html, /<li class="step active"><span class="marker"[^>]*><\/span><div class="body">[\s\S]*<h4><bdi>Daily orders<\/bdi><\/h4>(?:(?!<li class="step)[\s\S])*?<\/div><ul class="items" role="list">/, 'the second step in progress lists its parts open, not in a disclosure');
+  assert.doesNotMatch(html, /<details class="more"><summary>Its parts/);
+  // The last step in progress with nothing moving: it is named, and the page never says every step is done.
+  r.task('T-0003', 'Done', 'M-0002', 'Pay by card');
+  r.task('T-0004', 'Done', 'M-0002', 'Email the receipt');
+  r.milestone('M-0002', 'Accepted', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  r.task('T-0005', 'Draft', 'M-0003', 'List the day\'s orders');
+  html = renderClient(view(r));
+  assert.doesNotMatch(html, /Every step is done/);
+  assert.equal(top(html).h1, 'Now working on daily orders.');
+  assert.match(top(html).now, /<bdi>Daily orders<\/bdi><\/span><span class="state">In progress/);
+});
+
+test('a plan with no steps is being planned, and detail "stages" names the steps in progress', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', exclude: ['M-0001', 'M-0002', 'M-0003'] } });
+  r.plan({ phases: [{ title: 'All', steps: [{ title: 'Everything', milestones: ['M-0001', 'M-0002', 'M-0003'] }] }] });
+  let { h1, now } = top(renderClient(view(r)));
+  assert.equal(h1, 'The project is being planned.');
+  assert.match(now, /The project is being planned\./);
+  const s = standard(t, { client: { plan: 'docs/client-page/plan.json', detail: 'stages' } });
+  s.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  ({ h1, now } = top(renderClient(view(s))));
+  assert.equal(h1, 'Now working on ordering a cake.');
+  assert.match(now, /<bdi>Ordering a cake<\/bdi><\/span><span class="state">In progress/);
+  assert.doesNotMatch(now, /Pay by card|Deliveries|Starting next/);
+});
+
+test('the step that starts next keeps its own direction, and a title cannot inject replacement patterns', t => {
+  const r = standard(t);
+  r.milestone('M-0002', 'Authorised', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  r.plan({ phases: [{ title: 'All', steps: [{ title: 'Menu', milestones: ['M-0001'] }, { title: '2 cakes $& more', milestones: ['M-0002', 'M-0003'] }] }] });
+  const { h1, now } = top(renderClient(view(r)));
+  assert.equal(h1, 'Next: <bdi>2 cakes $&amp; more</bdi>.');
+  assert.match(now, /<p>Starting next: <bdi>2 cakes \$&amp; more<\/bdi><\/p>/);
 });
 
 test('Now lists the parts in progress before the parts being checked', t => {

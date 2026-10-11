@@ -47,11 +47,13 @@ export function plan({ config, owners = [], requiredChecks = [], branch, target 
     rules.push({ type: 'pull_request', parameters: { required_approving_review_count: 0, dismiss_stale_reviews_on_push: true, require_code_owner_review: codeOwners, require_last_push_approval: codeOwners && shared, required_review_thread_resolution: false } });
     rules.push({ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true, required_status_checks: checks.map(context => ({ context, integration_id: ACTIONS_APP })) } });
   }
-  // Auto-merge: on for one owner in enforced mode, where code-owner review holds back everything but records; off in
-  // owner-merge mode, where it would let the agent's pull requests merge on their checks alone, and in manual mode,
-  // where the trusted branch moves only by the owner's closeout and a pull request with nothing pending would merge at
-  // once; a shared project's code-owner review holds every pull request, so its setting is left alone.
-  const autoMerge = target === 'enforced' && !shared ? true : !shared ? false : null;
+  // Auto-merge: on for one owner in enforced mode, where code-owner review holds back everything but records, and in
+  // owner-merge mode where the owner chose it (approval.auto_merge, MAINT-0016): the agent turns it on only for pull requests
+  // `wf ci` leaves to it, and `wf ci`, a required check, fails one the owner merges that has it on. Off otherwise in
+  // owner-merge mode, and in manual mode, where the trusted branch moves only by the owner's closeout and a pull request
+  // with nothing pending would merge at once; a shared project's code-owner review holds every pull request, so its
+  // setting is left alone.
+  const autoMerge = shared ? null : target === 'enforced' || (target === 'owner-merge' && config.approval?.auto_merge === true);
   // Ownerless CODEOWNERS lines a single owner may keep: the records that merge on their checks alone.
   const rd = (config.records_dir ?? 'docs/workflow').replace(/^\/+|\/+$/g, '');
   const unowned = shared ? [] : [`/${rd}/tasks/`, `/${rd}/feedback/`, `/${rd}/checkpoints/`]; // planning records (IDEA-18)
@@ -138,7 +140,7 @@ export function checkProtection({ api = ghApi, repository, plan: p }) {
     if (!Array.isArray(ruleset?.bypass_actors)) item(`ruleset ${ruleset?.name ?? id} has no bypass`, false, 'cannot see its bypass list: run this with the repository owner\'s gh login');
     else item(`ruleset ${ruleset.name ?? id} has no bypass`, ruleset.bypass_actors.length === 0, ruleset.bypass_actors.length ? `bypass: ${ruleset.bypass_actors.map(a => `${a.actor_type}${a.actor_id ? ` ${a.actor_id}` : ''}`).join(', ')}` : '');
   }
-  if (p.autoMerge !== null) item(`auto-merge ${p.autoMerge ? 'allowed' : 'off'}`, repo?.allow_auto_merge === p.autoMerge, p.autoMerge ? 'a records-only pull request then merges by itself after its checks' : p.target === 'manual' ? 'in manual mode the trusted branch moves only by your closeout; auto-merge could merge a pull request first' : 'in owner-merge mode auto-merge would let the agent\'s pull requests merge on their checks alone');
+  if (p.autoMerge !== null) item(`auto-merge ${p.autoMerge ? 'allowed' : 'off'}`, repo?.allow_auto_merge === p.autoMerge, p.autoMerge ? (p.target === 'owner-merge' ? 'the agent\'s pull requests then merge by themselves once every required check passes; yours wait for you' : 'a records-only pull request then merges by itself after its checks') : p.target === 'manual' ? 'in manual mode the trusted branch moves only by your closeout; auto-merge could merge a pull request first' : 'in owner-merge mode without approval.auto_merge, auto-merge would let the agent\'s pull requests merge on their checks alone');
   if (p.codeOwners) {
     try {
       const errors = api('GET', `repos/${repository}/codeowners/errors?ref=${encodeURIComponent(p.branch)}`)?.errors ?? [];

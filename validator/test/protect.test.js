@@ -189,3 +189,12 @@ test('wf-sign makes a passphrase-protected key outside any checkout and signs ro
   const trust = createTrust({ publicKey: fs.readFileSync(path.join(dir, 'keys/owner-public-key.pem'), 'utf8'), repository: 'fixture/project', envelopes: all });
   assert.equal(trust.allows('baseline', revision), true);
 });
+
+test('MAINT-0016: owner-merge allows auto-merge only where the owner chose it', () => {
+  const chosen = config('owner-merge'); chosen.approval.checkpoint = 'milestone'; chosen.approval.auto_merge = true;
+  const p = plan({ config: chosen, requiredChecks: ['test'], branch: 'main', target: 'owner-merge' });
+  assert.equal(p.autoMerge, true);
+  assert.equal(p.ruleset.rules.find(r => r.type === 'required_status_checks').parameters.strict_required_status_checks_policy, true, 'GitHub still requires every check on an up-to-date branch');
+  assert.equal(plan({ config: config('owner-merge'), branch: 'main', target: 'owner-merge' }).autoMerge, false);
+  assert.equal(plan({ config: config('manual'), branch: 'main', target: 'manual' }).autoMerge, false);
+});

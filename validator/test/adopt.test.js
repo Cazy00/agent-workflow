@@ -68,7 +68,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
     assert.match(ci, /name: wf ci/);
     // MAINT-0010: the gate reads the delivery evidence from the description, reruns when it is edited, and never
     // places the description's text in the script itself.
-    assert.match(ci, /types: \[opened, synchronize, reopened, edited\]/);
+    assert.match(ci, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
     assert.match(ci, /^\s+DESCRIPTION: \$\{\{ github\.event\.pull_request\.body \}\}$/m);
     assert.equal(ci.match(/github\.event\.pull_request\.body/g).length, 1, 'the description reaches the run only through the environment');
     assert.match(ci, /--delivery-evidence "\$RUNNER_TEMP\/pr-description\.md"/);

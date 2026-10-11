@@ -35,5 +35,11 @@
     "notes": [
       "Optional: give each milestone a client_title, client_outcome and client_measure, and the profile a client_measure, in the client's words and language, for the client page (wf status --client). Each is a governing-record change."
     ]
+  },
+  "v2.3.0": {
+    "notes": [
+      "Optional: write a client plan file (phases and steps in the client's words, each step naming its milestones) and set client.plan in docs/workflow/config.json; a governing-record change.",
+      "If the client page is installed: copy .github/workflows/wf-client-page.yml from this release, so the page rebuilds within minutes of any push and reads the branches (--live); an enforcement-path change for the owner."
+    ]
   }
 }

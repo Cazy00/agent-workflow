@@ -444,3 +444,16 @@ test('a plan error stops wf status --client; a directory source renders without 
   assert.match(bad.stderr, /names M-0009, which has no milestone record/);
   assert.match(run(r.dir, '--json').stderr, /--client is only for status/);
 });
+
+test('the client page workflow rebuilds on any push and deploys only from the trusted branch', () => {
+  const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
+  assert.match(yml, /push:\n\s+branches: \['\*\*'\]/);
+  assert.match(yml, /pull_request:\n\s+types: \[opened, reopened, ready_for_review, converted_to_draft, closed\]/);
+  assert.match(yml, /schedule:/);
+  assert.match(yml, /gh workflow run wf-client-page\.yml --ref __TRUSTED_BRANCH__/);
+  assert.match(yml, /if: github\.ref != 'refs\/heads\/__TRUSTED_BRANCH__'/);
+  assert.match(yml, /if: github\.ref == 'refs\/heads\/__TRUSTED_BRANCH__'/);
+  assert.match(yml, /fetch-depth: 0/);
+  assert.match(yml, /scripts\/wf status --client --live --candidate "\$GITHUB_SHA" --pull-requests "\$RUNNER_TEMP\/pull-requests\.json"/);
+  assert.doesNotMatch(yml, /uses: [^@\n]+@(?![0-9a-f]{40}\b)/, 'actions pinned by commit');
+});

@@ -2,6 +2,19 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.3.0
+
+Lets the client page show the whole plan and keep up with the work within minutes (MAINT-0014). Before this, the page showed only the milestones on the trusted branch and changed only when work was merged: a part being built all day read as not started, the steps after the current milestone were nowhere, and a signed-off stage listed nothing it delivered.
+
+- **`client.plan`** names a plan file of phases and steps in the client's words, each step naming the milestones that carry it out (or `done: true` for work before the records). The page leads with Now, Waiting on you and Recently done, then every phase and step with its state (Done, In progress, Next, Later) and its parts; a milestone the plan does not place still shows, marked added, with a warning.
+- **Finished parts stay**: a removed task record is read from the last commit that had it, and a part's done date from the first commit where it read Done.
+- **`wf status --client --live`** adds the parts moving on remote branches, and `--pull-requests` marks those with an open pull request *Being checked*. Only parts, only forward, never past the trusted branch's Done.
+- **`templates/github/wf-client-page.yml`** rebuilds on any push or pull request change and deploys from the trusted branch only.
+
+Moving a project to this pin:
+- Nothing changes without `client.plan`, except that a signed-off stage lists its parts.
+- To use it, write the plan file in the client's language, set `client.plan`, and copy the new `wf-client-page.yml` (an enforcement-path change for the owner). Every pull request that adds a milestone then places it in a step.
+
 ## v2.2.0
 
 Lets the client page speak the client's words for every stage, not only for each part (MAINT-0013). Before this, a stage showed its milestone's own title, outcome and measure, which are written for the team (technical, with spec references, in the team's language), so a client page in the client's language still showed them in the team's.

@@ -3,7 +3,7 @@ import { parseFrontMatter } from './frontmatter.js';
 import { planningEnforcement } from './planning.js';
 import { validateAcceptanceFiles } from './acceptance-files.js';
 import { validateAttestConfig } from './attest.js';
-import { CHECKPOINTS } from './checkpoint.js';
+import { CHECKPOINTS, agentMerges, checkpointOf } from './checkpoint.js';
 
 export class WfError extends Error {}
 
@@ -78,6 +78,21 @@ function validateClientConfig(c) {
   if (t.radius !== undefined && (typeof t.radius !== 'number' || t.radius < 0 || t.radius > 40)) throw new Error('client.theme.radius must be 0 to 40');
 }
 
+// MAINT-0016: the project's review policy (procedures/review.md). An optional reviewer from another model family, used for
+// deep reviews and the milestone review at no more than max_effort, and the paths whose changes always need a deep review.
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PLAIN = /^[\w.@/:-]{1,80}$/;
+function validateReviewConfig(r) {
+  only(r, ['second_model', 'deep_paths'], 'review');
+  const m = r.second_model;
+  if (m != null) {
+    only(m, ['tool', 'model', 'max_effort'], 'review.second_model');
+    for (const k of ['tool', 'model']) if (typeof m[k] !== 'string' || !PLAIN.test(m[k])) throw new Error(`review.second_model.${k} must be a plain name`);
+    if (m.max_effort !== undefined && !EFFORTS.includes(m.max_effort)) throw new Error(`review.second_model.max_effort must be one of ${EFFORTS.join(', ')}`);
+  }
+  if (r.deep_paths !== undefined && (!Array.isArray(r.deep_paths) || r.deep_paths.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('review.deep_paths must be an array of glob strings');
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
@@ -93,6 +108,16 @@ export function loadConfig(source) {
       if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone or plan');
       if (config.approval.label !== 'owner-merge') throw new Error('approval.checkpoint applies only to owner-merge approval; manual and enforced modes keep their own approval route');
     }
+    // MAINT-0016: the agent's own pull requests merge themselves (auto_merge), and some of the owner's approvals wait for
+    // the milestone's acceptance (defer_to_acceptance); both only where the checkpoint lets the agent merge at all.
+    for (const key of ['auto_merge', 'defer_to_acceptance']) {
+      const v = config.approval?.[key];
+      if (v === undefined) continue;
+      if (typeof v !== 'boolean') throw new Error(`approval.${key} must be true or false`);
+      if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone or plan, where the agent merges its own pull requests`);
+    }
+    if (config.review !== undefined) validateReviewConfig(config.review);
+    if (config.acceptance_evidence !== undefined && typeof config.acceptance_evidence !== 'boolean') throw new Error('acceptance_evidence must be true or false');
     // Removed in v2.0.0 (MAINT-0011). Their disabled defaults, which every scaffold since v1.8.0 wrote, are ignored until
     // bin/wf-upgrade removes them; an enabled one is refused, since it would otherwise stop applying without a word.
     if (config.delegation?.routine?.enabled === true) throw new Error('delegation.routine was removed in v2.0.0: an owner-merge checkpoint lets the agent merge instead; bin/wf-upgrade removes the key');
@@ -120,6 +145,8 @@ export function loadRecord(source, relPath, expected) {
     if (data.status === 'Blocked' && !data.resume_condition) errors.push('a Blocked task must record resume_condition');
     for (const d of list(data.deferred_inputs)) if (!DEFERRED_RE.test(d)) errors.push(`deferred input "${d}" must look like D-0001@verify`);
     if (data.baseline_result != null && !/^(pass$|fail:)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass" or "fail: <summary>" (got "${data.baseline_result}")`);
+    // MAINT-0016: the findings this task's reviews accepted rather than fixed, kept for the milestone's acceptance.
+    if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !/^[\w.-]+\/[\w.-]+$/.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
   }
   if (expected === 'decision') {
     for (const f of ['supersedes', 'superseded_by']) if (data[f] && !ID_RE.decision.test(data[f])) errors.push(`${f} must be a decision id`);

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, gitSource, loadConfig } from '../lib/index.js';
 import { loadPlan } from '../lib/client-plan.js';
+import { evaluateClient } from '../lib/client.js';
 
 // MAINT-0014: the client page's whole plan, from a plan file, with finished parts from history and live branch states.
 const root = fileURLToPath(new URL('../..', import.meta.url));
@@ -87,4 +88,68 @@ test('client.plan must be a repository path to a JSON file', t => {
     if (ok) assert.equal(loadConfig(dirSource(r.dir)).client.plan, plan);
     else assert.throws(() => loadConfig(dirSource(r.dir)), /client\.plan must be a path inside the repository ending in \.json/);
   }
+});
+
+const view = (r, extra = {}) => evaluateClient({ source: dirSource(r.dir), ...extra });
+const states = v => v.plan.steps.map(s => [s.title, s.state]);
+
+test('each step takes its state from its milestones and parts, with exactly one Next', t => {
+  const r = standard(t);
+  let v = view(r);
+  assert.deepEqual(states(v), [['Accounts and sign-in', 'done'], ['Menu online', 'done'], ['Ordering a cake', 'active'], ['Deliveries', 'next']]);
+  r.milestone('M-0002', 'Authorised', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  v = view(r);
+  assert.deepEqual(states(v).slice(2), [['Ordering a cake', 'next'], ['Deliveries', 'later']], 'nothing moving: the first open step is Next');
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  assert.equal(view(r).plan.steps[2].state, 'active', 'a part in progress makes its step in progress');
+  r.task('T-0003', 'Blocked', 'M-0002', 'Pay by card');
+  r.milestone('M-0002', 'Blocked', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  v = view(r);
+  assert.equal(v.plan.steps[2].state, 'active', 'a blocked milestone keeps its step in progress');
+  assert.equal(v.plan.steps[2].on_hold, 1);
+  r.milestone('M-0002', 'Released', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  r.milestone('M-0003', 'Accepted', 'Daily orders', []);
+  assert.deepEqual(states(view(r)).slice(2), [['Ordering a cake', 'done'], ['Deliveries', 'next']]);
+});
+
+test('progress counts each step once, and a step with parts by its share done', t => {
+  const v = view(standard(t));
+  const ordering = v.plan.steps[2];
+  assert.deepEqual(ordering.parts, { done: 1, total: 3 });
+  assert.equal(ordering.progress, 1 / 3);
+  assert.equal(v.plan.progress, (1 + 1 + 1 / 3 + 0) / 4);
+  assert.deepEqual(v.plan.phases.map(p => p.progress), [1, (1 / 3) / 2]);
+  assert.deepEqual(v.plan.position, { index: 3, total: 4 });
+  assert.deepEqual(v.plan.steps[2].items.map(i => [i.title, i.state]), [['Choose a cake', 'done'], ['Pay by card', 'next'], ['Email the receipt', 'planned']]);
+});
+
+test('a milestone no step lists still shows, as an added step at the end, with a warning', t => {
+  const r = standard(t);
+  r.milestone('M-0004', 'Draft', 'Gift cards', []);
+  const v = view(r);
+  assert.deepEqual(v.plan.steps.at(-1), { ...v.plan.steps.at(-1), title: 'Gift cards', summary: 'Gift cards works.', added: true });
+  assert.equal(v.plan.phases.at(-1).steps.at(-1).title, 'Gift cards');
+  assert.match(v.warnings.join('\n'), /M-0004 is in no step of the client plan/);
+});
+
+test('excluded milestones leave their steps; a plan emptied by exclusion still shows unplaced milestones', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', exclude: ['M-0002', 'M-0003'] } });
+  assert.deepEqual(states(view(r)).map(([title]) => title), ['Accounts and sign-in', 'Menu online', 'Deliveries']);
+  r.plan({ phases: [{ title: 'Only', steps: [{ title: 'Ordering', milestones: ['M-0002', 'M-0003'] }] }] });
+  r.milestone('M-0004', 'Draft', 'Gift cards', []);
+  const v = view(r);
+  assert.deepEqual(v.plan.steps.map(s => s.title), ['Menu online', 'Gift cards']);
+  assert.equal(v.plan.phases.length, 1);
+  assert.equal(v.plan.phases[0].title, null, 'the unplaced milestones get an untitled phase when no phase is left');
+});
+
+test('a step naming a milestone with no record stops the page', t => {
+  const r = standard(t);
+  r.plan({ phases: [{ title: 'A', steps: [{ title: 'S', milestones: ['M-0009'] }] }] });
+  assert.throws(() => view(r), /client\.plan: the step "S" names M-0009, which has no milestone record/);
+});
+
+test('without client.plan the view has no plan', t => {
+  const r = standard(t, { client: {} });
+  assert.equal(view(r).plan, null);
 });

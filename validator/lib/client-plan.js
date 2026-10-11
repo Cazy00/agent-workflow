@@ -44,3 +44,48 @@ export function loadPlan(source, file) {
   });
   return plan;
 }
+
+// A step from its milestones' stages. Done: done by hand, or every milestone signed off. In progress: a milestone under
+// way, awaiting sign-off or paused, or a part moving. Next is given afterwards, to the first step neither.
+function step({ title, summary, done, added, stages }) {
+  const items = stages.flatMap(s => s.items);
+  const moving = items.some(i => i.state === 'active' || i.state === 'checking');
+  const state = done || (stages.length && stages.every(s => s.finished)) ? 'done'
+    : stages.some(s => s.tone === 'active' || s.tone === 'review') || moving ? 'active' : 'later';
+  const total = stages.reduce((n, s) => n + (s.parts?.total ?? s.items.length), 0);
+  const parts = total ? { done: items.filter(i => i.state === 'done').length, total } : null;
+  return {
+    title, summary, state, added, items, parts,
+    on_hold: stages.reduce((n, s) => n + (s.on_hold ?? 0), 0),
+    progress: state === 'done' ? 1 : parts ? parts.done / parts.total : 0,
+  };
+}
+const share = steps => steps.length ? steps.reduce((n, s) => n + s.progress, 0) / steps.length : 0;
+
+export function planView({ plan, stages, known, exclude }) {
+  const byId = new Map(stages.map(s => [s.id, s]));
+  const placed = new Set();
+  const phases = plan.phases.map(p => ({
+    title: p.title.trim(), summary: p.summary?.trim() ?? null,
+    steps: p.steps.map(s => {
+      const ids = s.milestones ?? [];
+      for (const id of ids) if (!known.has(id)) throw new Error(`client.plan: the step "${s.title.trim()}" names ${id}, which has no milestone record`);
+      ids.forEach(id => placed.add(id));
+      const own = ids.filter(id => !exclude.has(id)).map(id => byId.get(id)).filter(Boolean);
+      if (ids.length && !own.length) return null; // every milestone it names is left out of the page
+      return step({ title: s.title.trim(), summary: s.summary?.trim() ?? null, done: s.done === true, added: Boolean(s.added), stages: own });
+    }).filter(Boolean),
+  })).filter(p => p.steps.length);
+  // A milestone the plan does not place still shows, so a forgotten line in the plan hides nothing.
+  const unplaced = stages.filter(s => !placed.has(s.id));
+  if (unplaced.length) {
+    if (!phases.length) phases.push({ title: null, summary: null, steps: [] });
+    phases.at(-1).steps.push(...unplaced.map(s => step({ title: s.title, summary: s.outcome, done: false, added: true, stages: [s] })));
+  }
+  const steps = phases.flatMap(p => p.steps);
+  const next = steps.find(s => s.state === 'later');
+  if (next) next.state = 'next';
+  for (const p of phases) p.progress = share(p.steps);
+  const open = steps.findIndex(s => s.state !== 'done');
+  return { phases, steps, progress: share(steps), position: open === -1 ? null : { index: open + 1, total: steps.length }, unplaced: unplaced.map(s => s.id) };
+}

@@ -13,6 +13,7 @@
 // and speaks the client's language (`client.language`: English or Arabic, which also sets right-to-left). Without a
 // theme it is the default design below. Fonts and logo are embedded, so the page stays one self-contained file.
 import { list, loadAll, loadConfig } from './records.js';
+import { loadPlan, planView } from './client-plan.js';
 
 const PLACEHOLDER = /coherent journey or demonstrable technical outcome/i;
 const TONE = { Draft: 'planned', Authorised: 'planned', Active: 'active', Blocked: 'review', Verified: 'review', Accepted: 'done', Released: 'done' };
@@ -224,6 +225,15 @@ export function evaluateClient({ source, updated = null }) {
   const open = stages.filter(s => !s.finished && s.parts);
   const overall = open.length ? { done: open.reduce((n, s) => n + s.parts.done, 0), total: open.reduce((n, s) => n + s.parts.total, 0) } : null;
 
+  // The whole plan (MAINT-0014), when the project keeps one: phases and steps from the plan file, states from the stages.
+  const warnings = [];
+  let plan = null;
+  if (client.plan) {
+    const known = new Set([...all.milestones.values()].map(r => r.data?.id).filter(Boolean));
+    plan = planView({ plan: loadPlan(source, client.plan), stages, known, exclude });
+    for (const id of plan.unplaced) warnings.push(`client.plan: ${id} is in no step of the client plan; it shows as an added step at the end until a step lists it`);
+  }
+
   const theme = client.theme ?? null;
   const budget = { used: 0 };
   const look = theme ? {
@@ -239,7 +249,7 @@ export function evaluateClient({ source, updated = null }) {
     headline, headline_title: current?.title ?? (!current && delivered !== stages.length ? upNext?.title : null) ?? null, delivered, total: stages.length,
     current: current ? stages.indexOf(current) : null,
     overall, now, next, then, waiting,
-    stages, updated, look,
+    stages, updated, look, plan, warnings,
   };
 }
 

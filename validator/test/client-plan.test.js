@@ -153,3 +153,13 @@ test('without client.plan the view has no plan', t => {
   const r = standard(t, { client: {} });
   assert.equal(view(r).plan, null);
 });
+
+test('with detail "stages" a step still counts its parts and sees a moving part', t => {
+  const r = standard(t, { client: { plan: 'docs/client-page/plan.json', detail: 'stages' } });
+  const ordering = () => view(r).plan.steps[2];
+  assert.deepEqual(ordering().parts, { done: 1, total: 3 });
+  assert.equal(ordering().progress, 1 / 3);
+  r.milestone('M-0002', 'Authorised', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
+  r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
+  assert.equal(ordering().state, 'active', 'the items are hidden, but a task in progress still moves its step');
+});

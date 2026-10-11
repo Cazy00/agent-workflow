@@ -186,6 +186,7 @@ export function evaluateClient({ source, updated = null }) {
         status: say.status[known], tone, finished, paused: known === 'Blocked', upNext: known === 'Authorised',
         parts: total ? { done, total } : null,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
+        moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
         items: finished || detail === 'stages' ? [] : own.map(t => ({ id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state: PART[t.status] ?? 'planned', added: planned.length > 0 && !planned.includes(t.id) })),
       };
     });

@@ -49,11 +49,12 @@ export function loadPlan(source, file) {
 // way, awaiting sign-off or paused, or a part moving. Next is given afterwards, to the first step neither.
 function step({ title, summary, done, added, stages }) {
   const items = stages.flatMap(s => s.items);
-  const moving = items.some(i => i.state === 'active' || i.state === 'checking');
+  const moving = stages.some(s => s.moving) || items.some(i => i.state === 'active' || i.state === 'checking');
   const state = done || (stages.length && stages.every(s => s.finished)) ? 'done'
     : stages.some(s => s.tone === 'active' || s.tone === 'review') || moving ? 'active' : 'later';
   const total = stages.reduce((n, s) => n + (s.parts?.total ?? s.items.length), 0);
-  const parts = total ? { done: items.filter(i => i.state === 'done').length, total } : null;
+  const doneParts = stages.reduce((n, s) => n + (s.parts?.done ?? s.items.filter(i => i.state === 'done').length), 0); // items are empty at detail 'stages'
+  const parts = total ? { done: doneParts, total } : null;
   return {
     title, summary, state, added, items, parts,
     on_hold: stages.reduce((n, s) => n + (s.on_hold ?? 0), 0),

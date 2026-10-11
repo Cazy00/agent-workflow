@@ -37,7 +37,7 @@ Of 23 reviews, the first review of each large task and the milestone review foun
   - Defaults instead of questions when fix rounds run out.
   - One rerun and a found task for an unreliable check.
 
-Corpus: 35,133 words before, 37,248 after; `procedures/execute.md` 1,838 → 2,087 words, `procedures/review.md` 931 → 1,138, `procedures/accept-release.md` 520 → 665.
+Corpus: 35,133 words before, 37,410 after; `procedures/execute.md` 1,838 → 2,088 words, `procedures/review.md` 931 → 1,138, `procedures/accept-release.md` 520 → 665.
 
 Moving a project to this pin:
 - `bin/wf-upgrade` refreshes `.github/workflows/wf-ci.yml` (an enforcement change for the owner) and adds `.claude/agents/trial-walker.md`.

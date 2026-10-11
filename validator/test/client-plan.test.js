@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, gitSource, loadConfig } from '../lib/index.js';
 import { loadPlan } from '../lib/client-plan.js';
+import { gitHistory } from '../lib/client-history.js';
 import { evaluateClient } from '../lib/client.js';
 
 // MAINT-0014: the client page's whole plan, from a plan file, with finished parts from history and live branch states.
@@ -162,4 +163,47 @@ test('with detail "stages" a step still counts its parts and sees a moving part'
   r.milestone('M-0002', 'Authorised', 'Online ordering', ['T-0002', 'T-0003', 'T-0004']);
   r.task('T-0003', 'Active', 'M-0002', 'Pay by card');
   assert.equal(ordering().state, 'active', 'the items are hidden, but a task in progress still moves its step');
+});
+
+test('a finished step keeps its parts after their records are removed, with the dates they were done', t => {
+  const r = standard(t);
+  r.task('T-0001', 'Active', 'M-0001', 'Put the menu online');
+  r.milestone('M-0001', 'Active', 'Menu online', ['T-0001']);
+  r.commit('start', '2026-09-01T09:00:00Z');
+  r.task('T-0001', 'Done', 'M-0001', 'Put the menu online');
+  r.commit('T-0001 done', '2026-09-05T09:00:00Z');
+  r.milestone('M-0001', 'Accepted', 'Menu online', ['T-0001']);
+  r.commit('accept M-0001', '2026-09-06T09:00:00Z');
+  r.rm(`${RD}/tasks/T-0001.md`);
+  r.commit('remove T-0001 after acceptance', '2026-09-07T09:00:00Z');
+  const v = view(r, { source: gitSource(r.dir, 'main'), history: gitHistory(r.dir, 'main', RD) });
+  const menu = v.plan.steps[1];
+  assert.equal(menu.state, 'done');
+  assert.deepEqual(menu.items.map(i => [i.title, i.state, i.doneAt]), [['Put the menu online', 'done', '2026-09-05T09:00:00Z']]);
+  assert.deepEqual(v.recent, [{ title: 'Put the menu online', date: '2026-09-05T09:00:00Z' }, { title: 'Choose a cake', date: '2026-09-01T09:00:00Z' }], 'newest first; T-0002 was Done from the first commit');
+});
+
+test('Recently done lists the five newest finished parts, and is empty without history', t => {
+  const r = repo(t);
+  r.milestone('M-0001', 'Active', 'Many parts', ['T-0001', 'T-0002', 'T-0003', 'T-0004', 'T-0005', 'T-0006']);
+  r.plan({ phases: [{ title: 'A', steps: [{ title: 'S', milestones: ['M-0001'] }] }] });
+  for (let i = 1; i <= 6; i++) r.task(`T-000${i}`, 'Ready', 'M-0001', `Part ${i}`);
+  r.commit('plan');
+  for (let i = 1; i <= 6; i++) { r.task(`T-000${i}`, 'Done', 'M-0001', `Part ${i}`); r.commit(`T-000${i} done`, `2026-10-0${i}T08:00:00Z`); }
+  const v = view(r, { source: gitSource(r.dir, 'main'), history: gitHistory(r.dir, 'main', RD) });
+  assert.deepEqual(v.recent.map(p => p.title), ['Part 6', 'Part 5', 'Part 4', 'Part 3', 'Part 2']);
+  assert.deepEqual(view(r).recent, [], 'a directory source has no history');
+});
+
+test('a shallow clone has no history to read, and still renders', t => {
+  const r = standard(t);
+  r.commit('one', '2026-09-01T09:00:00Z');
+  r.task('T-0003', 'Done', 'M-0002', 'Pay by card');
+  r.commit('two', '2026-09-02T09:00:00Z');
+  const shallow = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-shallow-'));
+  t.after(() => fs.rmSync(shallow, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['clone', '-q', '--depth', '1', `file://${r.dir}`, shallow]).status, 0);
+  const v = view(r, { source: gitSource(shallow, 'HEAD'), history: gitHistory(shallow, 'HEAD', RD) });
+  assert.equal(v.plan.steps[2].parts.done, 2);
+  assert.ok(v.recent.every(p => p.date === '2026-09-02T09:00:00Z'), 'the only commit is the one the record was Done at');
 });

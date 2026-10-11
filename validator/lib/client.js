@@ -14,6 +14,7 @@
 // theme it is the default design below. Fonts and logo are embedded, so the page stays one self-contained file.
 import { list, loadAll, loadConfig } from './records.js';
 import { loadPlan, planView } from './client-plan.js';
+import { parseFrontMatter } from './frontmatter.js';
 
 const PLACEHOLDER = /coherent journey or demonstrable technical outcome/i;
 const TONE = { Draft: 'planned', Authorised: 'planned', Active: 'active', Blocked: 'review', Verified: 'review', Accepted: 'done', Released: 'done' };
@@ -148,7 +149,7 @@ function embed(source, file, kinds, budget) {
   return `data:${MIME[ext]};base64,${bytes.toString('base64')}`;
 }
 
-export function evaluateClient({ source, updated = null }) {
+export function evaluateClient({ source, updated = null, history = null, live = null }) {
   const config = loadConfig(source);
   const rd = config.records_dir ?? 'docs/workflow';
   const client = config.client ?? {};
@@ -168,7 +169,10 @@ export function evaluateClient({ source, updated = null }) {
       const tone = TONE[known];
       const planned = [...new Set(list(m.tasks))];
       // The plan's order first, then work found along the way, by ID.
-      const own = tasks.filter(t => t.milestone === m.id).sort((a, b) => {
+      // A finished milestone's removed task records come back from history, so a done step keeps what it delivered.
+      const kept = tasks.filter(t => t.milestone === m.id);
+      const recovered = tone === 'done' && history ? planned.filter(id => !kept.some(t => t.id === id)).map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id) : [];
+      const own = [...kept, ...recovered].sort((a, b) => {
         const [x, y] = [planned.indexOf(a.id), planned.indexOf(b.id)];
         return (x === -1 ? Infinity : x) - (y === -1 ? Infinity : y) || a.id.localeCompare(b.id);
       });
@@ -187,7 +191,10 @@ export function evaluateClient({ source, updated = null }) {
         parts: total ? { done, total } : null,
         on_hold: finished ? 0 : own.filter(t => t.status === 'Blocked').length,
         moving: !finished && own.some(t => t.status === 'Active'), // kept apart from items, which detail 'stages' leaves empty
-        items: finished || detail === 'stages' ? [] : own.map(t => ({ id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state: PART[t.status] ?? 'planned', added: planned.length > 0 && !planned.includes(t.id) })),
+        items: detail === 'stages' ? [] : own.map(t => {
+          const state = finished ? 'done' : PART[t.status] ?? 'planned';
+          return { id: t.id, title: text(t.client_title) ?? text(t.title) ?? say.untitledPart, state, added: planned.length > 0 && !planned.includes(t.id), doneAt: state === 'done' ? history?.doneDate(t.id) ?? null : null };
+        }),
       };
     });
   const current = stages.find(s => s.tone === 'review' && !s.paused) ?? stages.find(s => s.tone === 'active') ?? stages.find(s => s.paused) ?? null;
@@ -226,6 +233,9 @@ export function evaluateClient({ source, updated = null }) {
   const open = stages.filter(s => !s.finished && s.parts);
   const overall = open.length ? { done: open.reduce((n, s) => n + s.parts.done, 0), total: open.reduce((n, s) => n + s.parts.total, 0) } : null;
 
+  // The five parts finished most recently, newest first, when history gives their dates.
+  const recent = stages.flatMap(s => s.items).filter(i => i.doneAt).sort((a, b) => Date.parse(b.doneAt) - Date.parse(a.doneAt)).slice(0, 5).map(i => ({ title: i.title, date: i.doneAt }));
+
   // The whole plan (MAINT-0014), when the project keeps one: phases and steps from the plan file, states from the stages.
   const warnings = [];
   let plan = null;
@@ -249,7 +259,7 @@ export function evaluateClient({ source, updated = null }) {
     goal: text(profile.client_measure) ?? text(profile.measure),
     headline, headline_title: current?.title ?? (!current && delivered !== stages.length ? upNext?.title : null) ?? null, delivered, total: stages.length,
     current: current ? stages.indexOf(current) : null,
-    overall, now, next, then, waiting,
+    overall, now, next, then, waiting, recent,
     stages, updated, look, plan, warnings,
   };
 }

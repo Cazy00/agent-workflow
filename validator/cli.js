@@ -9,7 +9,8 @@ import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance, ownerTests, pendingChange, pendingIn, pendingNote, testedIds } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
-import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
+import { DELIVERY_MARKER, parseDeliveryEvidence } from './lib/delivery-evidence.js';
+import { evidenceSkeleton } from './lib/evidence-skeleton.js';
 import { parseAcceptanceEvidence } from './lib/acceptance-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
@@ -22,8 +23,8 @@ import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -34,6 +35,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
+  evidence --baseline REV --candidate SHA [--task T-0001] [--from PREVIOUS_EVIDENCE]: the delivery evidence, started with what can be derived; fill in what you ran and the review
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
     status --client [--candidate REV] [--live [--pull-requests FILE]]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
@@ -325,6 +327,17 @@ async function main() {
     return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
+  // MAINT-0016: the delivery evidence, started (lib/evidence-skeleton.js). It grants nothing; `wf ci` checks the result.
+  if (cmd === 'evidence') {
+    if (baseline.kind !== 'git' || candidate.kind !== 'git' || !(o.candidate || o.head)) throw new WfError('evidence needs --baseline and --candidate as Git revisions');
+    const task = taskId();
+    if (!task) throw new WfError('--task T-0001 or a matching branch is required');
+    const previous = o.from ? parseDeliveryEvidence(fs.readFileSync(o.from, 'utf8')) : null;
+    const { evidence, notes } = evidenceSkeleton({ baseline, candidate, task, previous });
+    for (const n of notes) console.error(`wf: ${n}`);
+    console.log(`${DELIVERY_MARKER}\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``);
+    return 0;
+  }
   let result;
   if (cmd === 'closeout') {
     if (!trust || trust.mode === 'enforced') throw new WfError(`closeout is for manual mode and needs --trust-key, --receipts and --repository; in ${trust?.label ?? 'enforced'} mode merging the pull request is the approval`);

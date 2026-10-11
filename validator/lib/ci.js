@@ -9,6 +9,7 @@ import { evaluateReadiness, OUTCOMES } from './readiness.js';
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
 import { carriedFrom } from './carry.js';
+import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
@@ -276,6 +277,14 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // Owner-merge: who merges this pull request. The baseline's checkpoint decides whether the agent may merge at all;
   // anything that changes what the owner approved (the plan, requirements, acceptance tests, the workflow), a review
   // finding accepted rather than fixed, or a task in a milestone still waiting for an earlier acceptance needs the owner.
+  // MAINT-0016: the pull request that accepts a milestone carries the acceptance evidence where the project asks for it
+  // (acceptance_evidence; lib/acceptance-evidence.js): the milestone's review, the trial walkthrough, and what was deferred.
+  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
+  if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
+    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, records: candidateRecords });
+    for (const e of errors) findings.push(`acceptance evidence: ${e}`);
+    if (errors.length) fail = true;
+  }
   let merge = null;
   const ownerReasons = [], deferred = [];
   if (trust?.label === 'owner-merge') {

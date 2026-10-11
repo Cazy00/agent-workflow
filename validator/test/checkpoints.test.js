@@ -774,3 +774,21 @@ test('MAINT-0016: the wf ci workflow runs when auto-merge is turned on or off, a
   assert.match(template, /WF_PR_AUTO_MERGE: \$\{\{ github\.event\.pull_request\.auto_merge && 'on' \|\| 'off' \}\}/);
   assert.doesNotMatch(template, /--auto-merge/, 'an older pinned validator would refuse an unknown option');
 });
+
+test('MAINT-0016: with acceptance_evidence, the pull request that accepts a milestone carries the acceptance evidence', t => {
+  const accept = q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted'));
+  const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, acceptance_evidence: true }), change: accept });
+  const missing = p.run('ci');
+  assert.equal(missing.status, 1);
+  assert.match(out(missing).findings.join(' | '), /acceptance evidence: the acceptance evidence for M-0001 is missing/);
+  const block = {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: p.baseline,
+    review: { reviewer: 'codex exec', model: 'gpt-6.1-sol', revision: p.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1' },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred: [], tests_changed: [],
+  };
+  const ok = p.run('ci', { raw: `Accept M-0001\n\n<!-- agent-workflow:acceptance-evidence@1 -->\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\`\n` });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.equal(out(ok).merge, 'owner', 'the acceptance stays the owner\'s merge');
+  const without = setup(t, { checkpoint: 'milestone', change: accept });
+  assert.equal(without.run('ci').status, 0, 'a project that has not asked for it is unchanged');
+});

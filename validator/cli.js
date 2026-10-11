@@ -10,6 +10,7 @@ import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance, ownerTests, pendingChange, pendingIn, pendingNote, testedIds } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
 import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
+import { parseAcceptanceEvidence } from './lib/acceptance-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
@@ -356,15 +357,19 @@ async function main() {
     const paths = changed();
     // The agent's delivery evidence, required for a production change in the pull-request modes: JSON, a marked comment,
     // or a pull request description holding the marked block (lib/delivery-evidence.js).
-    let deliveryEvidence = null;
+    let deliveryEvidence = null, acceptanceEvidence = null;
     if (o['delivery-evidence']) {
       const file = fs.realpathSync(o['delivery-evidence']);
       const relative = path.relative(fs.realpathSync(repo), file);
       if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
       if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
-      deliveryEvidence = parseDeliveryEvidence(fs.readFileSync(file, 'utf8'));
+      const text = fs.readFileSync(file, 'utf8');
+      deliveryEvidence = parseDeliveryEvidence(text);
+      acceptanceEvidence = parseAcceptanceEvidence(text);
+      // A file holding only the acceptance evidence's JSON reads as delivery evidence's raw form: move it over.
+      if (deliveryEvidence?.schema === 'agent-workflow/acceptance-evidence@1') { acceptanceEvidence = deliveryEvidence; deliveryEvidence = null; }
     }
-    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on' });
+    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, acceptanceEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on' });
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }

@@ -2,6 +2,16 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.4.2
+
+Closes the four minor findings of MAINT-0016's independent review (texts and the setup page; no gate changes):
+- **`templates/review.md`** has a line for the review's level, which the reviewer agent is told to report.
+- **`procedures/review.md` and `SCHEMA.md`** describe carry-over as the check does since the review's C1 fix: a path changed since the reviewed revision is a planning record, or one the pull request had not touched that now holds the trusted branch's content. SCHEMA had still described the earlier rule.
+- **`SCHEMA.md`** says that only the finding part of an `accepted_findings` entry (after `/`) is matched; the review part is for the owner.
+- **The setup page** labels `acceptance_evidence` by what it requires: the trial walk and the milestone review before acceptance.
+
+Moving a project to this pin: nothing to do beyond moving it.
+
 ## v2.4.1
 
 Names the client page workflow's jobs, so none can answer for a project's own required check. Found while moving mateen-systems to v2.4.0.

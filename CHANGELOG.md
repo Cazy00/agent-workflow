@@ -2,6 +2,20 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.4.1
+
+Names the client page workflow's jobs, so none can answer for a project's own required check. Found while moving mateen-systems to v2.4.0.
+- The jobs were `build` and `deploy`. GitHub matches a required status check by the job's name and counts a job skipped by its condition as passed.
+- So on every pull request, the client page's skipped `deploy` answered for the project's own required `deploy` check.
+- Under auto-merge (v2.4.0), that could merge a change before the project's real deploy check finished.
+
+Changes:
+- **`templates/github/wf-client-page.yml`**: its jobs report as `client page dispatch`, `client page build` and `client page deploy`. A test keeps every job named.
+
+Moving a project to this pin:
+- If the client page is installed, `bin/wf-upgrade` refreshes `.github/workflows/wf-client-page.yml` (an enforcement-path change for the owner).
+- A copy changed in the project takes the three `name:` lines by hand.
+
 ## v2.4.0
 
 Lets the agent stop only for decisions, sizes review to the change, and has a milestone's trial walked in a browser before the owner tries it (MAINT-0016). In mateen-systems' M-0003, the owner:

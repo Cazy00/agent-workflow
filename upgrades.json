@@ -57,5 +57,10 @@
       "Optional: config.review names a second model for deep and milestone reviews (review.second_model, e.g. codex gpt-6.1-sol at most high) and the paths that always need a deep review (review.deep_paths); bin/wf-setup finds whether Codex is installed and signed in. A project profile that spelled out its own review rules can point to config.review instead.",
       "Optional: set acceptance_evidence to true so the pull request that accepts a milestone carries its review, the trial walkthrough and what was deferred (templates/acceptance-evidence.json). New scaffolds set it."
     ]
+  },
+  "v2.4.1": {
+    "notes": [
+      "If the client page is installed: bin/wf-upgrade refreshes .github/workflows/wf-client-page.yml, whose jobs now report as `client page dispatch`, `client page build` and `client page deploy`, so its skipped jobs no longer answer for a project's own required `build` or `deploy` check; an enforcement-path change for the owner."
+    ]
   }
 }

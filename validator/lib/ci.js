@@ -1,13 +1,15 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
 import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths } from './paths.js';
+import { classifyPaths, matchesAny } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
-import { evidenceErrors } from './delivery-evidence.js';
+import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
+import { carriedFrom } from './carry.js';
+import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 
@@ -96,7 +98,7 @@ export function ownerApprovedTest({ trust, candidate, path }) {
 
 // `approved`: the trusted tip's records when the baseline is an intermediate revision (closeout), so the scenarios a gate
 // lets fail are also pending there (MAINT-0012).
-export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null }) {
+export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null, autoMerge = false, acceptanceEvidence = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -150,6 +152,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // checked, not its truth; the owner's merge or code-owner review still carries the approval.
   const prMode = trust?.mode === 'enforced';
   let attested = null;
+  let carried = {};
   const covered = prMode && selected.length > 0 && production.length > 0;
   if (covered) {
     const owners = [...new Set(selected.map(id => candidateRecords.tasks.get(id)?.data?.owner))];
@@ -158,7 +161,20 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       findings.push('delivery evidence for this candidate is missing: post it in the pull request description (procedures/execute.md *Checkpoints and task records*); the `wf ci` check reruns when the description is edited');
       fail = true;
     } else {
-      const errors = evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks });
+      // MAINT-0016: review and verification of an earlier revision carry over when the commits since added only the
+      // trusted branch's changes and records (lib/carry.js); integration stays the exact candidate's.
+      for (const [stage, from] of [['verification', deliveryEvidence.verification?.revision], ['review', deliveryEvidence.review?.context?.candidate]]) {
+        if (typeof from !== 'string' || from === candidate.name) continue;
+        const c = carriedFrom({ config, baseline, candidate, from });
+        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records`); }
+        else findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
+      }
+      // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md).
+      const deep = production.filter(p => matchesAny(config.review?.deep_paths, p));
+      const errors = [
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried }),
+        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null }),
+      ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;
     }
@@ -182,6 +198,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       if (outside.length) { findings.push(`outside the ready subset [${gate.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }
       if (!statusOk) { findings.push(`task status is ${gate.status}; production changes need Ready or Active; a task Ready only for a subset cannot be marked Done`); fail = true; }
     } else fail = true;
+    // MAINT-0016: a task's Done record travels as its pull request's last commit (procedures/execute.md); left Active, it
+    // needs a records pull request of its own later, one more round of checks.
+    if (attested && gate.status === 'Active') findings.push(`note: ${id} stays Active in this pull request; mark it Done as its last commit (procedures/execute.md) unless more of its work follows, or its Done record needs a pull request of its own`);
     const t = candidateRecords.tasks.get(id)?.data ?? {};
     const lifecycle = evaluateLifecycle({ candidate, task: t, requiredChecks: list(baselineRecords.profile?.data?.required_checks), trust, stage: 'integrate' });
     for (const error of lifecycle.errors) { findings.push(error); fail = true; }
@@ -198,7 +217,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // the project's acceptance tests are owner-approved. It must be pending by the baseline's records and the
     // candidate's alike, so this candidate cannot excuse its own test, and a scenario it completes must pass.
     const pending = ownerTests ? pendingIn([baselineRecords, candidateRecords, ...(approved ? [approved] : [])], selected) : new Map();
-    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending });
+    const acceptance = evaluateAcceptance({ baseline, candidate, taskRequirements, execution, enforced: prMode && !attested && trust.label, pending, carriedFrom: carried.verification ?? null });
     for (const error of acceptance.errors) { findings.push(error); fail = true; }
     for (const w of acceptance.pending ?? []) findings.push(`note: ${pendingNote(w)}`);
     for (const item of acceptance.unverified ?? []) if (!receiptless(item)) findings.push(`unverified: ${item}`);
@@ -258,10 +277,23 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // Owner-merge: who merges this pull request. The baseline's checkpoint decides whether the agent may merge at all;
   // anything that changes what the owner approved (the plan, requirements, acceptance tests, the workflow), a review
   // finding accepted rather than fixed, or a task in a milestone still waiting for an earlier acceptance needs the owner.
+  // MAINT-0016: the pull request that accepts a milestone carries the acceptance evidence where the project asks for it
+  // (acceptance_evidence; lib/acceptance-evidence.js): the milestone's review, the trial walkthrough, and what was deferred.
+  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
+  if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
+    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, records: [baselineRecords, candidateRecords] });
+    for (const e of errors) findings.push(`acceptance evidence: ${e}`);
+    if (errors.length) fail = true;
+  }
   let merge = null;
-  const ownerReasons = [];
+  const ownerReasons = [], deferred = [];
   if (trust?.label === 'owner-merge') {
     const checkpoint = checkpointOf(config);
+    // MAINT-0016: with defer_to_acceptance the owner approves these at the milestone's acceptance, where the acceptance
+    // evidence lists them (lib/acceptance-evidence.js), rather than one pull request at a time; off, as by default, they
+    // stay the owner's merge.
+    const defer = config.approval?.defer_to_acceptance === true && agentMerges(checkpoint);
+    const later = reason => (defer ? deferred : ownerReasons).push(reason);
     const of = category => classes.filter(c => c.category === category).map(c => c.path);
     if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
     if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
@@ -270,11 +302,22 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category)).map(c => c.path);
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
-    if (acceptanceTests.length) ownerReasons.push(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
-    if (waiting.length) ownerReasons.push(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
-    if (done.length) ownerReasons.push(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${done.join(', ')}`);
-    const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted').map(f => f.id);
-    if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.join(', ')}`);
+    if (acceptanceTests.length) later(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
+    if (waiting.length) later(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
+    if (done.length) later(`it completes acceptance scenarios without a test run, so their mapped tests must pass from now on: ${done.join(', ')}`);
+    const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted');
+    if (!defer) { if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.map(f => f.id).join(', ')}`); }
+    else {
+      const blocking = accepted.filter(isBlocking).map(f => f.id), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
+      if (blocking.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${blocking.join(', ')}`);
+      if (minor.length) {
+        deferred.push(`review findings accepted rather than fixed: ${minor.join(', ')}`);
+        // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
+        const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
+        const missing = minor.filter(id => !listed.some(e => e.split('/').pop() === id));
+        if (missing.length) { findings.push(`accepted findings ${missing.join(', ')} are not in the task record's accepted_findings (as REVIEW/FINDING, for example R-0030/N1), so the milestone's acceptance would not list them`); fail = true; }
+      }
+    }
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;
@@ -282,9 +325,16 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     }
     merge = ownerReasons.length ? 'owner' : 'agent';
   }
+  // MAINT-0016: auto-merge lands a pull request as soon as its required checks pass, so in owner-merge mode it must never be
+  // on for one the owner merges, or in a project that has not chosen it. `wf ci` is a required check: failing it here stops
+  // the merge while the other checks still run. It cannot stop an agent that merges by hand against the rule.
+  if (autoMerge && trust?.label === 'owner-merge') {
+    if (config.approval?.auto_merge !== true) { findings.push('auto-merge is on, but this project has not chosen it (approval.auto_merge): turn it off with gh pr merge --disable-auto'); fail = true; }
+    else if (merge === 'owner') { findings.push(`auto-merge is on, but the owner merges this pull request (${ownerReasons.join('; ')}): turn it off with gh pr merge --disable-auto`); fail = true; }
+  }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons } : {}), records: records.counts };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts };
 }

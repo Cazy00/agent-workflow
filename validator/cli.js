@@ -9,7 +9,9 @@ import { isAcceptanceTest } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance, ownerTests, pendingChange, pendingIn, pendingNote, testedIds } from './lib/acceptance.js';
 import { evaluateLifecycle, evaluateSession } from './lib/lifecycle.js';
-import { parseDeliveryEvidence } from './lib/delivery-evidence.js';
+import { DELIVERY_MARKER, parseDeliveryEvidence } from './lib/delivery-evidence.js';
+import { evidenceSkeleton } from './lib/evidence-skeleton.js';
+import { parseAcceptanceEvidence } from './lib/acceptance-evidence.js';
 import { prepareReview } from './lib/review-packet.js';
 import { checkDelivery } from './lib/delivery-check.js';
 import { evaluateStatus, renderStatus } from './lib/status.js';
@@ -21,8 +23,8 @@ import { evaluateNext, renderNext } from './lib/next.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -33,6 +35,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
+  evidence --baseline REV --candidate SHA [--task T-0001] [--from PREVIOUS_EVIDENCE]: the delivery evidence, started with what can be derived; fill in what you ran and the review
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
   status [--baseline REV] [--candidate REV] [--pull-requests FILE] [trust options]: derived owner view as Markdown (--json for data); grants nothing
     status --client [--candidate REV] [--live [--pull-requests FILE]]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
@@ -203,15 +206,24 @@ async function main() {
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
   if (!o.baseline && !['records', 'status', 'next'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
-  // `wf next` defaults its baseline to the local trusted branch, named by the working tree's config. Right after
-  // bin/wf-adopt the adoption is not committed there yet: read the working tree then, and say so.
-  let uncommitted = null;
+  // `wf next` defaults its baseline to the trusted branch named by the working tree's config. `git fetch` moves
+  // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
+  // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
+  let baselineNote = null;
   if (!o.baseline && cmd === 'next') {
     let branch = 'main', adopted = false;
     try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; adopted = true; } catch { /* reported below */ }
-    const tip = gitRunner(repo)('rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`);
-    if (tip.status === 0 && (!adopted || gitSource(repo, tip.stdout.trim()).read('docs/workflow/config.json') != null)) o.baseline = tip.stdout.trim();
-    else if (adopted) uncommitted = `the adoption is not on ${branch} yet, so this reads the working tree: commit the scaffold (docs/workflow/, scripts/wf, AGENTS.md, CLAUDE.md, .github/, .gitignore) to ${branch}`;
+    const run = gitRunner(repo);
+    const tipOf = ref => { const r = run('rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`); return r.status === 0 ? r.stdout.trim() : null; };
+    const contains = (older, newer) => run('merge-base', '--is-ancestor', older, newer).status === 0;
+    const local = tipOf(`refs/heads/${branch}`), remote = tipOf(`refs/remotes/origin/${branch}`);
+    let tip = local ?? remote;
+    if (local && remote && local !== remote) {
+      if (contains(local, remote)) { tip = remote; baselineNote = `the local ${branch} is behind origin/${branch}, so this reads origin/${branch} as last fetched; git fetch origin ${branch}:${branch} moves the local branch`; }
+      else if (!contains(remote, local)) baselineNote = `the local ${branch} and origin/${branch} have diverged; this reads the local ${branch}`;
+    }
+    if (tip && (!adopted || gitSource(repo, tip).read('docs/workflow/config.json') != null)) o.baseline = tip;
+    else if (adopted) baselineNote = `the adoption is not on ${branch} yet, so this reads the working tree: commit the scaffold (docs/workflow/, scripts/wf, AGENTS.md, CLAUDE.md, .github/, .gitignore) to ${branch}`;
   }
   if (o.candidate && o.head && o.candidate !== o.head) throw new WfError('--candidate and --head must agree');
   const baseline = o.baseline ? source(o.baseline) : dirSource(repo);
@@ -273,7 +285,7 @@ async function main() {
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
     const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
-    if (uncommitted) view.note = uncommitted;
+    if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
   }
@@ -315,6 +327,17 @@ async function main() {
     return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
+  // MAINT-0016: the delivery evidence, started (lib/evidence-skeleton.js). It grants nothing; `wf ci` checks the result.
+  if (cmd === 'evidence') {
+    if (baseline.kind !== 'git' || candidate.kind !== 'git' || !(o.candidate || o.head)) throw new WfError('evidence needs --baseline and --candidate as Git revisions');
+    const task = taskId();
+    if (!task) throw new WfError('--task T-0001 or a matching branch is required');
+    const previous = o.from ? parseDeliveryEvidence(fs.readFileSync(o.from, 'utf8')) : null;
+    const { evidence, notes } = evidenceSkeleton({ baseline, candidate, task, previous });
+    for (const n of notes) console.error(`wf: ${n}`);
+    console.log(`${DELIVERY_MARKER}\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``);
+    return 0;
+  }
   let result;
   if (cmd === 'closeout') {
     if (!trust || trust.mode === 'enforced') throw new WfError(`closeout is for manual mode and needs --trust-key, --receipts and --repository; in ${trust?.label ?? 'enforced'} mode merging the pull request is the approval`);
@@ -356,15 +379,19 @@ async function main() {
     const paths = changed();
     // The agent's delivery evidence, required for a production change in the pull-request modes: JSON, a marked comment,
     // or a pull request description holding the marked block (lib/delivery-evidence.js).
-    let deliveryEvidence = null;
+    let deliveryEvidence = null, acceptanceEvidence = null;
     if (o['delivery-evidence']) {
       const file = fs.realpathSync(o['delivery-evidence']);
       const relative = path.relative(fs.realpathSync(repo), file);
       if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new WfError('delivery evidence must be outside the candidate checkout');
       if (!fs.statSync(file).isFile() || fs.statSync(file).size > 128 * 1024) throw new WfError('delivery evidence must be a regular file under 128 KiB');
-      deliveryEvidence = parseDeliveryEvidence(fs.readFileSync(file, 'utf8'));
+      const text = fs.readFileSync(file, 'utf8');
+      deliveryEvidence = parseDeliveryEvidence(text);
+      acceptanceEvidence = parseAcceptanceEvidence(text);
+      // A file holding only the acceptance evidence's JSON reads as delivery evidence's raw form: move it over.
+      if (deliveryEvidence?.schema === 'agent-workflow/acceptance-evidence@1') { acceptanceEvidence = deliveryEvidence; deliveryEvidence = null; }
     }
-    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence });
+    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, acceptanceEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on' });
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }

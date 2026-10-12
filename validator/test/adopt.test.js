@@ -68,7 +68,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
     assert.match(ci, /name: wf ci/);
     // MAINT-0010: the gate reads the delivery evidence from the description, reruns when it is edited, and never
     // places the description's text in the script itself.
-    assert.match(ci, /types: \[opened, synchronize, reopened, edited\]/);
+    assert.match(ci, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
     assert.match(ci, /^\s+DESCRIPTION: \$\{\{ github\.event\.pull_request\.body \}\}$/m);
     assert.equal(ci.match(/github\.event\.pull_request\.body/g).length, 1, 'the description reaches the run only through the environment');
     assert.match(ci, /--delivery-evidence "\$RUNNER_TEMP\/pr-description\.md"/);
@@ -278,4 +278,26 @@ test('Spec Kit scaffold options refuse unsupported inputs before project writes'
   const dir=project(t),r=adopt(dir,...args);assert.equal(r.status,2,r.stdout+r.stderr);
   assert.equal(fs.existsSync(path.join(dir,'docs/workflow')),false);
  }
+});
+
+test('MAINT-0016: wf-adopt records auto-merge, approvals at acceptance and a second reviewer, installs the trial walker, and words AGENTS.md for auto-merge', t => {
+  if (!head()) return t.skip('not a Git checkout');
+  const dir = project(t);
+  const r = adopt(dir, '--auto-merge', '--defer-to-acceptance', '--second-reviewer', 'codex:gpt-6.1-sol:high');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const config = loadConfig(dirSource(dir));
+  assert.deepEqual([config.approval.auto_merge, config.approval.defer_to_acceptance, config.acceptance_evidence], [true, true, true]);
+  assert.deepEqual(config.review.second_model, { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' });
+  assert.ok(fs.existsSync(path.join(dir, '.claude/agents/trial-walker.md')));
+  const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /When `wf ci` reports `merge: agent`, turn on auto-merge/);
+  assert.match(agents, /never turn on auto-merge for it/);
+  const plain = project(t);
+  assert.equal(adopt(plain).status, 0);
+  assert.match(fs.readFileSync(path.join(plain, 'AGENTS.md'), 'utf8'), /Never turn on auto-merge, and never approve/, 'unchanged without the flag');
+  assert.ok(fs.existsSync(path.join(plain, '.claude/agents/trial-walker.md')), 'every scaffold gets the walker');
+  for (const bad of [['--checkpoint', 'change', '--auto-merge'], ['--approval', 'manual', '--defer-to-acceptance'], ['--second-reviewer', 'codex'], ['--second-reviewer', 'codex:gpt-6.1-sol:extreme']]) {
+    const x = adopt(project(t), ...bad);
+    assert.notEqual(x.status, 0, bad.join(' '));
+  }
 });

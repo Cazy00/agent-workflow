@@ -14,6 +14,7 @@ risks: []
 design:
 verification:
 review:
+accepted_findings: []
 scope: []
 governing: [PROFILE]
 prerequisites: []
@@ -51,3 +52,4 @@ Link existing run/check commands. When the choice matters, briefly explain the a
 Post checkpoints, evidence and handoffs on the task's pull request (or its issue before one exists), not here. Update this record only with stable facts future work needs, such as a changed blocker or resume condition.
 
 ## Review, acceptance, integration, release
+List each review finding accepted rather than fixed in `accepted_findings` as `R-0030/N1`; the milestone's acceptance lists them for the owner.

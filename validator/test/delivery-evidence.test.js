@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { evidenceErrors } from '../lib/delivery-evidence.js';
+import { evidenceErrors, isBlocking, reviewLevelErrors } from '../lib/delivery-evidence.js';
 
 // The agent's delivery evidence (lib/delivery-evidence.js), the only evidence check in the pull-request modes: every gap
 // is an error, never an `unverified` item (MAINT-0010; kept from the routine lane's tests by the MAINT-0011 review, S3).
@@ -64,4 +64,48 @@ test('the evidence template holds placeholders only, which never pass', () => {
   const template = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../../templates/delivery-evidence.json', import.meta.url)), 'utf8'));
   const errors = errorsFor(template).join('\n');
   for (const pattern of [/not for this candidate/, /did not pass/, /separate context/, /inherit/, /not resolved/, /report/]) assert.match(errors, pattern);
+});
+
+// MAINT-0016: under auto-merge GitHub requires the profile's checks before any merge, so the evidence may say so rather
+// than wait for them; the agent still lists a check it ran itself.
+const enforced = name => ({ name, result: 'enforced', reference: 'https://github.com/o/r/pull/7/checks' });
+test('under auto-merge a required check may be enforced, but verification still lists a check the agent ran', () => {
+  const e = evidence();
+  e.integration.checks = [enforced('wf ci'), enforced('test')];
+  e.verification.checks = [check('npm test'), enforced('wf ci'), enforced('test')];
+  assert.deepEqual(errorsFor(e, { enforcedChecks: true }), []);
+  assert.match(errorsFor(e).join(' | '), /check "wf ci" is "enforced", which only a project with approval\.auto_merge may use/);
+  e.verification.checks = e.verification.checks.slice(1);
+  assert.match(errorsFor(e, { enforcedChecks: true }).join(' | '), /verification lists no check the agent ran and saw pass/);
+  e.verification.checks.push(check('npm test'), enforced('lint'));
+  assert.match(errorsFor(e, { enforcedChecks: true }).join(' | '), /check "lint" did not pass/, 'only a required check can be enforced');
+});
+
+test('verification and review of an earlier revision count only when ci.js found that they carry over; integration never does', () => {
+  const e = evidence();
+  e.verification.revision = OTHER; e.review.context.candidate = OTHER;
+  assert.match(errorsFor(e).join(' | '), /verification evidence is not for this candidate revision/);
+  assert.match(errorsFor(e).join(' | '), /review was not of this candidate revision/);
+  assert.deepEqual(errorsFor(e, { carried: { verification: OTHER, review: OTHER } }), []);
+  e.integration.revision = OTHER;
+  assert.match(errorsFor(e, { carried: { verification: OTHER, review: OTHER } }).join(' | '), /integration evidence is not for this candidate revision/);
+});
+
+test('a review states its level, model and any fallback; a deep path needs a deep review by the second model or a reason', () => {
+  const r = evidence().review;
+  const second = { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' };
+  const deep = ['src/auth/a.js'];
+  assert.deepEqual(reviewLevelErrors({ review: r }), []);
+  assert.match(reviewLevelErrors({ review: { ...r, level: 'heavy' } }).join(), /level must be one of light, standard, deep/);
+  assert.match(reviewLevelErrors({ review: { ...r, model: ' ' } }).join(), /review model must be a non-empty text/);
+  assert.match(reviewLevelErrors({ review: { ...r, level: 'light' }, deep }).join(), /need a deep review \(review\.deep_paths\): src\/auth\/a\.js; this review's level is light/);
+  assert.match(reviewLevelErrors({ review: { ...r, level: 'deep' }, deep, secondModel: second }).join(), /a deep review is by gpt-6\.1-sol/);
+  assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep', model: 'gpt-6.1-sol' }, deep, secondModel: second }), []);
+  assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep', model: 'claude-opus-5-5', fallback: 'codex: usage limit reached' }, deep, secondModel: second }), []);
+  assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep' }, deep }), [], 'without a second model any deep review will do');
+});
+
+test('blocking, critical and high are blocking severities; should fix, note, medium and low are not', () => {
+  for (const s of ['blocking', 'Blocking', 'critical', 'high']) assert.equal(isBlocking({ severity: s }), true, s);
+  for (const s of ['should fix', 'note', 'medium', 'low', undefined]) assert.equal(isBlocking({ severity: s }), false, String(s));
 });

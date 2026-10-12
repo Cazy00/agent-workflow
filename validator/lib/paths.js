@@ -10,6 +10,8 @@ const patternOf = (g) => (typeof g === 'string' ? g : g.pattern);
 // category's gates, and a change to it also needs the owner's governing-change receipt listing it, so the agent that
 // writes the code cannot also rewrite the tests that judge it.
 export const isAcceptanceTest = (config, path) => (config.paths?.acceptance_tests ?? []).some(g => matchGlob(patternOf(g), path));
+// Whether a path matches any of the config's globs, in either of their forms (a string, or { pattern }).
+export const matchesAny = (globs, path) => (globs ?? []).some(g => matchGlob(patternOf(g), path));
 
 export function classifyPaths(config, changed) {
   const cfg = config.paths ?? {};

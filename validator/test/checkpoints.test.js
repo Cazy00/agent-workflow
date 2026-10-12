@@ -44,11 +44,12 @@ function setup(t, { label = 'owner-merge', checkpoint, configEdit = c => c, base
   change(p);
   git('add', '-A'); git('commit', '-qm', 'T-0001: candidate'); const candidate = git('rev-parse', 'HEAD');
   const evidenceFile = path.join(temp, 'evidence.json');
-  const run = (cmd, { evidence, raw, args = [] } = {}) => {
+  const run = (cmd, { evidence, raw, args = [], env = {} } = {}) => {
     const extra = [];
     if (evidence !== undefined || raw !== undefined) { fs.writeFileSync(evidenceFile, raw ?? JSON.stringify(evidence)); extra.push('--delivery-evidence', evidenceFile); }
-    return spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', ...extra, ...args], { encoding: 'utf8' });
+    return spawnSync(process.execPath, [cli, cmd, '--repo', repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', ...extra, ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
   };
+
   return { ...p, temp, baseline, candidate, run };
 }
 
@@ -362,6 +363,7 @@ test('the wf ci workflow summary names who merges, lists failing reasons and nev
   assert.match(owner.summary, /\*\*Merge:\*\* the owner\./);
   assert.equal(owner.out.trim(), '::notice title=The owner merges this::it changes acceptance tests: a ::warning::x y', 'a path cannot start a workflow command of its own');
   assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [] }).summary, /the agent may merge this once every required check has passed/);
+  assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [], deferred: ['it changes acceptance tests: a'] }).summary, /\*\*For the owner at the milestone’s acceptance:\*\*\n- it changes acceptance tests: a/);
   const failed = run({ verdict: 'fail', findings: ['production: src/a.js', 'production path src/a.js must belong to exactly one selected task (found 0)', 'readiness T-0001: Needs discovery or resolution', '  readiness is stale', 'unverified: x', 'note: y'] }).summary;
   assert.match(failed, /- production path src\/a\.js must belong/);
   assert.match(failed, /- readiness is stale/);
@@ -644,4 +646,184 @@ test('completing an automated scenario that has no mapped test needs the owner, 
   const e = q.run('ci', { evidence: runs(q, 'passed', 'failed') });
   assert.equal(e.status, 1, e.stdout);
   assert.match(out(e).findings.join('\n'), /it completes acceptance scenarios without a test run \(AC-001-3\)/);
+});
+
+// MAINT-0016: what lets a pull request finish without waiting or re-reviewing.
+const runAt = (p, baseline, candidate, ev, env = {}) => {
+  const file = path.join(p.temp, 'evidence-at.json'); fs.writeFileSync(file, JSON.stringify(ev));
+  return spawnSync(process.execPath, [cli, 'ci', '--repo', p.repo, '--baseline', baseline, '--candidate', candidate, '--task', 'T-0001', '--json', '--delivery-evidence', file], { encoding: 'utf8', env: { ...process.env, ...env } });
+};
+// The trusted branch moves after the review (another change merges), and the task's branch merges it in.
+function mainMoves(p) {
+  p.git('branch', 'task', p.candidate);
+  p.git('reset', '-q', '--hard', p.baseline);
+  p.write('src/b.js', 'export const b = 2;\n'); p.git('add', '-A'); p.git('commit', '-qm', 'another change merges'); const main = p.git('rev-parse', 'HEAD');
+  p.git('switch', '-q', 'task'); p.git('merge', '-q', '--no-edit', main);
+  return { main, head: p.git('rev-parse', 'HEAD') };
+}
+const reviewedAt = (p, rev) => ({ context: { provider: 'claude-code subagent', context_id: 'ctx-1', inherited_context: false, candidate: rev, launch_evidence: 'https://github.com/fixture/project/pull/1#issuecomment-1' } });
+
+test('MAINT-0016: review and verification of the reviewed commit carry over a merge of the trusted branch; integration does not', t => {
+  const p = setup(t, { checkpoint: 'milestone' });
+  const { main, head } = mainMoves(p);
+  const e = evidence(head, { verification: { revision: p.candidate, execution: { revision: p.candidate, tests: [] } }, review: reviewedAt(p, p.candidate) });
+  const r = runAt(p, main, head, e);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(out(r).findings.some(f => /^note: the review of [0-9a-f]{12} carries over/.test(f)), out(r).findings.join(' | '));
+  assert.equal(out(r).merge, 'agent');
+  const stale = runAt(p, main, head, { ...e, integration: { ...e.integration, revision: p.candidate } });
+  assert.equal(stale.status, 1);
+  assert.match(out(stale).findings.join(' | '), /integration evidence is not for this candidate revision/);
+});
+
+test('MAINT-0016: a commit of the task\'s own code after the review needs a new review', t => {
+  const p = setup(t, { checkpoint: 'milestone' });
+  p.write('src/a.js', 'export const result = 2;\n'); p.git('add', '-A'); p.git('commit', '-qm', 'T-0001: after review'); const head = p.git('rev-parse', 'HEAD');
+  const r = runAt(p, p.baseline, head, evidence(head, { review: reviewedAt(p, p.candidate) }));
+  assert.equal(r.status, 1);
+  assert.match(out(r).findings.join(' | '), /the review of [0-9a-f]{12} does not carry over \(changed since [0-9a-f]{12}: src\/a\.js\)/);
+});
+
+test('MAINT-0016: with auto_merge, required checks may be enforced by GitHub rather than waited for', t => {
+  const auto = c => ({ ...c, approval: { ...c.approval, auto_merge: true } });
+  const enforcedCheck = { name: 'unit', result: 'enforced', reference: 'https://github.com/fixture/project/pull/1/checks' };
+  const p = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const e = evidence(p.candidate, { verification: { checks: [check('lint'), enforcedCheck] }, integration: { revision: p.candidate, environment: 'GitHub Actions, required before merge', checks: [enforcedCheck] } });
+  const r = p.run('ci', { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'agent');
+  const off = setup(t, { checkpoint: 'milestone' });
+  const r2 = off.run('ci', { evidence: evidence(off.candidate, { integration: { revision: off.candidate, environment: 'x', checks: [enforcedCheck] } }) });
+  assert.equal(r2.status, 1);
+  assert.match(out(r2).findings.join(' | '), /"enforced", which only a project with approval\.auto_merge may use/);
+});
+
+test('MAINT-0016: a change to a deep path needs a deep review by the second model, or a stated fallback', t => {
+  const review = { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' }, deep_paths: ['src/**'] };
+  const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, review }) });
+  const at = over => p.run('ci', { evidence: evidence(p.candidate, { review: over }) });
+  assert.match(out(at({})).findings.join(' | '), /need a deep review \(review\.deep_paths\): src\/a\.js; this review's level is standard/);
+  assert.match(out(at({ level: 'deep' })).findings.join(' | '), /a deep review is by gpt-6\.1-sol/);
+  assert.equal(at({ level: 'deep', model: 'gpt-6.1-sol' }).status, 0);
+  assert.equal(at({ level: 'deep', model: 'claude-opus-5-5', fallback: 'codex is not signed in on this machine' }).status, 0);
+});
+
+test('MAINT-0016: a finished pull request that leaves its task Active is told to carry the Done record', t => {
+  const p = setup(t, { checkpoint: 'milestone', change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('status: Ready', 'status: Active')); } });
+  assert.ok(out(p.run('ci', { evidence: evidence(p.candidate) })).findings.some(f => /^note: T-0001 stays Active in this pull request; mark it Done as its last commit/.test(f)));
+  const ready = setup(t, { checkpoint: 'milestone' });
+  assert.ok(!out(ready.run('ci', { evidence: evidence(ready.candidate) })).findings.some(f => /stays Active/.test(f)));
+});
+
+const deferring = c => ({ ...c, approval: { ...c.approval, defer_to_acceptance: true } });
+const minorFinding = [{ id: 'N1', severity: 'should fix', status: 'accepted', resolution: 'carried to T-0002' }];
+
+test('MAINT-0016: with defer_to_acceptance a minor accepted finding waits for the acceptance, listed in the task record; a blocking one is still the owner\'s merge', t => {
+  const listed = setup(t, { checkpoint: 'milestone', configEdit: deferring, change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/N1]')); } });
+  const ok = listed.run('ci', { evidence: evidence(listed.candidate, { review: { findings: minorFinding } }) });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.equal(out(ok).merge, 'agent');
+  assert.deepEqual(out(ok).deferred, ['review findings accepted rather than fixed: N1']);
+
+  const unlisted = setup(t, { checkpoint: 'milestone', configEdit: deferring });
+  const missing = unlisted.run('ci', { evidence: evidence(unlisted.candidate, { review: { findings: minorFinding } }) });
+  assert.equal(missing.status, 1);
+  assert.match(out(missing).findings.join(' | '), /accepted findings N1 are not in the task record's accepted_findings \(as REVIEW\/FINDING, for example R-0030\/N1\)/);
+
+  const blocking = setup(t, { checkpoint: 'milestone', configEdit: deferring });
+  const b = blocking.run('ci', { evidence: evidence(blocking.candidate, { review: { findings: [{ id: 'F1', severity: 'blocking', status: 'accepted', resolution: 'for the owner to decide' }] } }) });
+  assert.equal(b.status, 0, b.stdout + b.stderr);
+  assert.equal(out(b).merge, 'owner');
+  assert.match(out(b).owner_reasons.join(' | '), /blocking review findings accepted rather than fixed: F1/);
+});
+
+test('MAINT-0016: with defer_to_acceptance, changed acceptance tests wait for the acceptance; the plan stays the owner\'s merge', t => {
+  const acceptance = setup(t, {
+    checkpoint: 'plan', configEdit: c => deferring({ ...c, paths: { ...c.paths, acceptance_tests: ['tests/acceptance-map.json', 'src/acceptance/**'] } }),
+    change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'); },
+  });
+  const a = acceptance.run('ci', { evidence: evidence(acceptance.candidate) });
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  assert.equal(out(a).merge, 'agent');
+  assert.deepEqual(out(a).deferred, ['it changes acceptance tests: src/acceptance/a.test.js']);
+  const governing = setup(t, { checkpoint: 'plan', configEdit: deferring, change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`); } });
+  const g = governing.run('ci', { evidence: evidence(governing.candidate) });
+  assert.equal(out(g).merge, 'owner');
+  assert.match(out(g).owner_reasons.join(' | '), /plan or requirements: docs\/specs\/feature\.md/);
+});
+
+test('MAINT-0016: auto-merge on a pull request the owner merges, or in a project that has not chosen it, fails wf ci', t => {
+  const env = { WF_PR_AUTO_MERGE: 'on' };
+  const auto = c => ({ ...c, approval: { ...c.approval, auto_merge: true } });
+  const agent = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const own = agent.run('ci', { evidence: evidence(agent.candidate), env });
+  assert.equal(own.status, 0, own.stdout + own.stderr);
+  assert.equal(out(own).merge, 'agent');
+  const owner = setup(t, { checkpoint: 'milestone', configEdit: auto });
+  const r = owner.run('ci', { evidence: evidence(owner.candidate, { review: { findings: [{ id: 'F2', severity: 'medium', status: 'accepted', resolution: 'kept' }] } }), env });
+  assert.equal(r.status, 1);
+  assert.match(out(r).findings.join(' | '), /auto-merge is on, but the owner merges this pull request \(review findings accepted rather than fixed: F2\): turn it off with gh pr merge --disable-auto/);
+  const unchosen = setup(t, { checkpoint: 'milestone' });
+  assert.match(out(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env })).findings.join(' | '), /auto-merge is on, but this project has not chosen it/);
+  assert.equal(unchosen.run('ci', { evidence: evidence(unchosen.candidate), env: { WF_PR_AUTO_MERGE: 'off' } }).status, 0, 'off, or unset as an older workflow file leaves it, changes nothing');
+});
+
+test('MAINT-0016: the wf ci workflow runs when auto-merge is turned on or off, and passes it to the gate as an environment value', () => {
+  const template = fs.readFileSync(fileURLToPath(new URL('../../templates/github/wf-ci.yml', import.meta.url)), 'utf8');
+  assert.match(template, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
+  assert.match(template, /WF_PR_AUTO_MERGE: \$\{\{ github\.event\.pull_request\.auto_merge && 'on' \|\| 'off' \}\}/);
+  assert.doesNotMatch(template, /--auto-merge/, 'an older pinned validator would refuse an unknown option');
+});
+
+test('MAINT-0016: with acceptance_evidence, the pull request that accepts a milestone carries the acceptance evidence', t => {
+  const accept = q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted'));
+  const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, acceptance_evidence: true }), change: accept });
+  const missing = p.run('ci');
+  assert.equal(missing.status, 1);
+  assert.match(out(missing).findings.join(' | '), /acceptance evidence: the acceptance evidence for M-0001 is missing/);
+  const block = {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: p.baseline,
+    review: { reviewer: 'codex exec', model: 'gpt-6.1-sol', revision: p.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1' },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred: [], tests_changed: [],
+  };
+  const ok = p.run('ci', { raw: `Accept M-0001\n\n<!-- agent-workflow:acceptance-evidence@1 -->\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\`\n` });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.equal(out(ok).merge, 'owner', 'the acceptance stays the owner\'s merge');
+  const without = setup(t, { checkpoint: 'milestone', change: accept });
+  assert.equal(without.run('ci').status, 0, 'a project that has not asked for it is unchanged');
+});
+
+test('MAINT-0016: under auto_merge, wf next says to turn on auto-merge for a finished task\'s pull request', t => {
+  for (const [auto, pattern] of [[true, /turn on auto-merge \(gh pr merge --auto\)/], [false, /merge it yourself only when that reports merge: agent/]]) {
+    const p = setup(t, { checkpoint: 'milestone', configEdit: c => ({ ...c, approval: { ...c.approval, auto_merge: auto } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('status: Ready', 'status: Done')); } });
+    const view = evaluateNext({ baseline: gitSource(p.repo, p.baseline), candidate: gitSource(p.repo, p.candidate) });
+    assert.match(JSON.stringify(view), pattern, String(auto));
+  }
+});
+
+test('MAINT-0016 review C1: deleting reviewed work after the review needs a new review', t => {
+  const p = setup(t, { checkpoint: 'milestone', change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/guard.js', 'export const guard = true;\n'); } });
+  p.git('rm', '-q', 'src/guard.js'); p.git('commit', '-qm', 'T-0001: drop the guard'); const head = p.git('rev-parse', 'HEAD');
+  const r = runAt(p, p.baseline, head, evidence(head, { verification: { revision: p.candidate, execution: { revision: p.candidate, tests: [] } }, review: reviewedAt(p, p.candidate) }));
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(out(r).findings.join(' | '), /the review of [0-9a-f]{12} does not carry over \(changed since [0-9a-f]{12}: src\/guard\.js\)/);
+});
+
+test('MAINT-0016 review I1: removing the milestone\'s task records in the acceptance pull request does not hide their accepted findings', t => {
+  const p = setup(t, {
+    checkpoint: 'milestone', configEdit: c => ({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true } }),
+    baselineEdit: q => q.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/N1]')),
+    change: q => { q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')); fs.rmSync(path.join(q.repo, taskPath)); },
+  });
+  const block = deferred => ({
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: p.baseline,
+    review: { reviewer: 'codex exec', model: 'gpt-6.1-sol', revision: p.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1' },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred, tests_changed: [],
+  });
+  const raw = deferred => `Accept M-0001\n\n<!-- agent-workflow:acceptance-evidence@1 -->\n\`\`\`json\n${JSON.stringify(block(deferred))}\n\`\`\`\n`;
+  const hidden = p.run('ci', { raw: raw([]) });
+  assert.equal(hidden.status, 1, hidden.stdout);
+  assert.match(out(hidden).findings.join(' | '), /deferred must list the findings the milestone's tasks accepted rather than fixed: R-0001\/N1/);
+  const listed = p.run('ci', { raw: raw(['R-0001/N1: kept for the owner, a test-helper note']) });
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
 });

@@ -9,7 +9,8 @@ import { compareVersions } from '../../adapters/upgrade.mjs';
 
 // bin/wf-upgrade (MAINT-0011): moving a project to a newer release removes what the releases in between no longer read.
 // CI checks out one commit without tags, so each test builds an older release in a scratch clone of this checkout: the
-// committed HEAD with older templates and the config keys v1.8.0 to v1.14.0 wrote.
+// committed HEAD with older templates and the config keys v1.8.0 to v1.14.0 wrote. The clone takes none of the checkout's
+// tags, so a local checkout's real releases never outrank the ones a test makes.
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const upgrade = path.join(root, 'bin/wf-upgrade');
 const adopt = path.join(root, 'bin/wf-adopt');
@@ -21,7 +22,7 @@ function releases(t, oldTag = 'v1.10.1', { middle = null } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-upgrade-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const wf = path.join(temp, 'workflow');
-  git(temp, 'clone', '-q', '--no-hardlinks', root, wf);
+  git(temp, 'clone', '-q', '--no-hardlinks', '--no-tags', root, wf);
   const head = git(wf, 'rev-parse', 'HEAD');
   const edit = (rel, fn) => fs.writeFileSync(path.join(wf, rel), fn(fs.readFileSync(path.join(wf, rel), 'utf8')));
   edit('templates/github/wf-ci.yml', x => `${x}# an older release\n`);

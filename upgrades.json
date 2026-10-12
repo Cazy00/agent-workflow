@@ -62,5 +62,8 @@
     "notes": [
       "If the client page is installed: bin/wf-upgrade refreshes .github/workflows/wf-client-page.yml, whose jobs now report as `client page dispatch`, `client page build` and `client page deploy`, so its skipped jobs no longer answer for a project's own required `build` or `deploy` check; an enforcement-path change for the owner."
     ]
+  },
+  "v2.4.2": {
+    "notes": []
   }
 }

@@ -39,3 +39,13 @@ test('the auto-merge guard\'s limit, what deferral cross-checks and the unseen r
   assert.match(policy, /The agent that writes the code then cannot also rewrite the tests that judge it\. In owner-merge mode the owner may instead approve them at the milestone's acceptance/);
   assert.match(read('procedures/execute.md'), /Under `approval\.auto_merge`, never wait for checks to merge/);
 });
+
+// GitHub matches a required status check by its job's name, and a job skipped by its condition counts as passed. The client
+// page's jobs were `build` and `deploy`, so on every pull request its skipped `deploy` answered for a project's own required
+// `deploy` check (mateen-systems, 12 October 2026), which could let auto-merge land a change before the real one finished.
+test('the client page workflow names every job, so none can answer for a project\'s required check of the same name', () => {
+  const yml = read('templates/github/wf-client-page.yml');
+  const jobs = yml.slice(yml.indexOf('\njobs:\n')).split(/\n  (?=[a-z][\w-]*:\n)/).slice(1);
+  assert.deepEqual(jobs.map(j => j.match(/^([\w-]+):/)[1]), ['dispatch', 'build', 'deploy']);
+  for (const j of jobs) assert.match(j, /\n    name: client page [a-z]+\n/, j.split('\n')[0]);
+});

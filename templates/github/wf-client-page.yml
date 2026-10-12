@@ -33,6 +33,7 @@ jobs:
     # the merge's push to the trusted branch rebuilds. A fork's pull request and Dependabot get a read-only token.
     if: github.actor != 'dependabot[bot]' && (github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork || github.event_name != 'pull_request' && github.ref != 'refs/heads/__TRUSTED_BRANCH__')
     runs-on: ubuntu-latest
+    name: client page dispatch
     timeout-minutes: 2
     permissions:
       actions: write
@@ -44,6 +45,7 @@ jobs:
   build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__'
     runs-on: ubuntu-latest
+    name: client page build
     timeout-minutes: 5
     permissions:
       contents: read
@@ -74,6 +76,7 @@ jobs:
       pages: write
       id-token: write
     runs-on: ubuntu-latest
+    name: client page deploy
     timeout-minutes: 5
     environment:
       name: github-pages

@@ -40,6 +40,9 @@ create() {
     $LXC launch ubuntu:24.04 "$name" --profile default --profile "ci-$kind" \
       --config cloud-init.user-data="$(cat "$SHARE/ci-$kind.yaml")"
   fi
+  # On the instance, not only its profile: LXD's snap starts its daemon at boot only when an instance itself has it, so
+  # after a power cut a profile's setting alone left the containers stopped. Re-running create repairs an older one.
+  $LXC config set "$name" boot.autostart true
   echo "Waiting for $name's first-boot setup (a few minutes)…"
   $LXC exec "$name" -- cloud-init status --wait >/dev/null || true
   $LXC exec "$name" -- cloud-init status --long | sed -n '1,3p'

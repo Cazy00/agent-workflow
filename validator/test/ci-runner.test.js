@@ -126,3 +126,29 @@ esac
   assert.match(register, /role_label/, 'register uses the derived label');
   assert.match(register, /does not match/, 'and refuses a different one');
 });
+
+// v2.5.1 (the owner's home server, after a power cut): LXD's snap starts its daemon at boot only when an instance itself
+// has boot.autostart set, so a profile's setting left both containers stopped for two hours. `create` sets it on the
+// instance, also for one that already exists, so running it again repairs a container made by an older release.
+test('ci-runner create sets boot.autostart on the container itself, new or existing', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-runner-create-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const fake = path.join(tmp, 'lxc'), log = path.join(tmp, 'calls');
+  fs.writeFileSync(path.join(tmp, 'ci-build.yaml'), '#cloud-config\n');
+  fs.writeFileSync(fake, `#!/usr/bin/env bash\necho "$*" >> "${log}"\nif [ "$1" = info ] && [ -n "$NEW" ]; then exit 1; fi\nexit 0\n`, { mode: 0o755 });
+  const fn = read('ci-runner').match(/^create\(\) \{[\s\S]*?^\}$/m)[0];
+  const run = env => spawnSync('bash', ['-c', `set -euo pipefail\nLXC=${fake}\nSHARE=${tmp}\nusage() { exit 2; }\n${fn}\ncreate shop-ci build`], { encoding: 'utf8', env: { ...process.env, ...env } });
+  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n');
+  for (const [why, env] of [['a new container', { NEW: '1' }], ['an existing one', {}]]) {
+    fs.writeFileSync(log, '');
+    const r = run(env);
+    assert.equal(r.status, 0, `${why}: ${r.stderr}`);
+    assert.ok(calls().includes('config set shop-ci boot.autostart true'), `${why}: ${calls().join(' | ')}`);
+  }
+});
+
+test('install-host makes LXD\'s daemon start at boot', () => {
+  const h = read('install-host.sh');
+  assert.match(h, /systemctl start snap\.lxd\.daemon/);
+  assert.match(h, /systemctl enable [^\n]*ci-runner-lxd\.service/);
+});

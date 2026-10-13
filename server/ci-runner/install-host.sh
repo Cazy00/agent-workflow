@@ -26,5 +26,22 @@ sudo ufw allow in on lxdbr0 to any port 53 comment 'LXD bridge: DNS for CI conta
 sudo ufw route insert 1 deny in on lxdbr0 to "$CI_LAN" comment 'CI containers: not the LAN'
 sudo ufw route allow in on lxdbr0 comment 'CI containers: out to the internet'
 sudo ufw route allow out on lxdbr0 comment 'CI containers: replies'
+# LXD's snap starts its daemon only on demand, and its own boot check can decide it isn't needed (seen after a power
+# cut): start it at every boot, so the containers' boot.autostart takes effect.
+sudo tee /etc/systemd/system/ci-runner-lxd.service >/dev/null <<'UNIT'
+[Unit]
+Description=Start LXD at boot, for the CI runner containers (agent-workflow server/ci-runner)
+After=snapd.service snap.lxd.activate.service
+Wants=snapd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start snap.lxd.daemon
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable ci-runner-lxd.service
 sudo /usr/local/sbin/ci-runner init
 echo "Host ready. For a project: see server/ci-runner/README.md."

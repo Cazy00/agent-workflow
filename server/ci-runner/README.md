@@ -40,7 +40,7 @@ Change them with `sudo lxc profile set ci-build limits.memory=5GiB`; running `in
 bash install-host.sh
 ```
 
-It stops if ufw isn't active, since the firewall rules would then protect nothing. It keeps the containers out of the LAN (`CI_LAN`, default 192.168.0.0/16).
+It stops if ufw isn't active, since the firewall rules would then protect nothing. It also makes LXD's daemon start at every boot. The snap otherwise starts it only on demand, and after a power cut it left the containers stopped. `create` sets `boot.autostart` on each container itself; running it again on an existing container repairs one made by an older release. It keeps the containers out of the LAN (`CI_LAN`, default 192.168.0.0/16).
 
 ## Once per project
 

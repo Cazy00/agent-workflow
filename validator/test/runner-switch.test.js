@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 // MAINT-0017 A1: every job the scaffold installs runs on GitHub's runner unless the repository variable WF_CI_RUNNER
 // names the project's gate runner (server/ci-runner). Deleting the variable is the way back, so no job names a
@@ -22,15 +23,45 @@ for (const file of ['wf-ci.yml', 'wf-status.yml', 'wf-client-page.yml']) {
 test('wf ci runs on the gate only for a pull request into the trusted branch, and only with the variable set', () => {
   const yml = fs.readFileSync(new URL('../../templates/github/wf-ci.yml', import.meta.url), 'utf8');
   const expr = yml.match(/^ {4}runs-on: \$\{\{ (.*) \}\}$/m)[1];
+  // GitHub compares strings ignoring case (its expression docs), so the model does too.
   const js = expr.replaceAll('__TRUSTED_BRANCH__', 'main').replace(/==/g, '===')
-    .replace('github.event.pull_request.base.ref', 'ctx.base').replace('vars.WF_CI_RUNNER', 'ctx.runner');
+    .replace('github.event.pull_request.base.ref', 'ctx.base.toLowerCase()').replace('vars.WF_CI_RUNNER', 'ctx.runner');
   const runsOn = ctx => new Function('ctx', `return (${js});`)(ctx);
   assert.equal(runsOn({ base: 'main', runner: 'shop-gate' }), 'shop-gate');
   assert.equal(runsOn({ base: 'claude/T-0001-pin', runner: 'shop-gate' }), 'ubuntu-latest', 'a pull request into another branch never reaches the gate');
   assert.equal(runsOn({ base: 'main', runner: '' }), 'ubuntu-latest', 'unset, GitHub\'s runner');
+  assert.equal(runsOn({ base: 'MAIN', runner: 'shop-gate' }), 'shop-gate', 'runs-on alone lets a branch named MAIN through: the first step must refuse it');
 });
 
 test('wf-adopt and wf-upgrade fill the trusted branch into wf-ci.yml', () => {
   assert.match(fs.readFileSync(new URL('../../bin/wf-adopt', import.meta.url), 'utf8'), /write\('\.github\/workflows\/wf-ci\.yml', pinned\.ci\.replaceAll\('__TRUSTED_BRANCH__', trusted\)\)/);
   assert.match(fs.readFileSync(new URL('../../adapters/upgrade.mjs', import.meta.url), 'utf8'), /\{ path: '\.github\/workflows\/wf-ci\.yml', template: 'templates\/github\/wf-ci\.yml', branch: true \}/);
 });
+
+// v2.5.1 second review C1-bis: every job that can land on the gate checks the branch name exactly (a shell comparison,
+// case-sensitive) in its first step, before anything is checked out or fetched. A token without the Workflows
+// permission can't remove the step.
+const firstStep = (yml, job) => {
+  const body = yml.slice(yml.indexOf(`\n  ${job}:\n`) + 1).split(/\n  (?=[\w-]+:\n)/)[0];
+  return body.split(/^ {6}- /m)[1];
+};
+const runStep = (step, env) => {
+  const script = step.match(/^ {8}run: '(.*)'$/m)[1].replaceAll('__TRUSTED_BRANCH__', 'main');
+  return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } }).status;
+};
+test('on the gate, wf ci\'s first step refuses a pull request into any branch but exactly the trusted one', () => {
+  const yml = fs.readFileSync(new URL('../../templates/github/wf-ci.yml', import.meta.url), 'utf8');
+  const step = firstStep(yml, 'ci');
+  assert.match(step, /^name: Refuse/);
+  assert.match(step, /^ {8}if: github\.event\.pull_request\.base\.ref == '__TRUSTED_BRANCH__' && vars\.WF_CI_RUNNER != ''$/m, 'it runs wherever runs-on sent the job to the gate');
+  assert.equal(runStep(step, { GITHUB_BASE_REF: 'main' }), 0);
+  for (const base of ['MAIN', 'Main', 'main2', '']) assert.notEqual(runStep(step, { GITHUB_BASE_REF: base }), 0, base);
+});
+for (const [file, job] of [['wf-status.yml', 'status'], ['wf-client-page.yml', 'build']]) {
+  test(`${file}: the ${job} job's first step refuses any ref but exactly the trusted branch`, () => {
+    const step = firstStep(fs.readFileSync(new URL(`../../templates/github/${file}`, import.meta.url), 'utf8'), job);
+    assert.match(step, /^name: Refuse/);
+    assert.equal(runStep(step, { GITHUB_REF: 'refs/heads/main' }), 0);
+    for (const ref of ['refs/heads/MAIN', 'refs/heads/Main', 'refs/heads/main2']) assert.notEqual(runStep(step, { GITHUB_REF: ref }), 0, ref);
+  });
+}

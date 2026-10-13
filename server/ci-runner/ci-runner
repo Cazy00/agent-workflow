@@ -16,10 +16,11 @@ usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 # profile NAME KEY=VALUE...: create the profile if it is missing, then set each default key it lacks. A half-made
 # profile is repaired and a later release can add a key, but a value the host set (lxc profile set) is never changed.
 profile() {
-  local name="$1" kv; shift
+  local name="$1" kv value; shift
   $LXC profile show "$name" >/dev/null 2>&1 || $LXC profile create "$name"
   for kv in "$@"; do
-    [[ -n "$($LXC profile get "$name" "${kv%%=*}")" ]] || $LXC profile set "$name" "$kv"
+    value="$($LXC profile get "$name" "${kv%%=*}")" # a failed read stops init (set -e) rather than overwrite the host's value
+    [[ -n "$value" ]] || $LXC profile set "$name" "$kv"
   done
 }
 

@@ -66,7 +66,7 @@ echo "$*" >> "${log}"
 case "$1 $2" in
   "profile show") grep -q "^$3 " "${state}"; exit ;;
   "profile create") echo "$3 " >> "${state}" ;;
-  "profile get") sed -n "s/^$3 $4=//p" "${state}" ;;
+  "profile get") [ -n "$FAIL_GET" ] && exit 1; sed -n "s/^$3 $4=//p" "${state}" ;;
   "profile set") echo "$3 $4" >> "${state}" ;;
 esac
 exit 0
@@ -78,6 +78,12 @@ exit 0
   go('', ['profile create ci-build', 'profile set ci-build limits.memory=6GiB', 'profile set ci-build limits.cpu=4'], 'a missing profile gets every default');
   go('ci-build \nci-build limits.memory=5GiB\nci-build limits.cpu=2\n', [], 'the host\'s own values stay');
   go('ci-build \nci-build limits.memory=5GiB\n', ['profile set ci-build limits.cpu=4'], 'a half-made profile gets the key it lacks');
+  // v2.5.1 second review: a failed read must stop init, not overwrite the host's value.
+  fs.writeFileSync(state, 'ci-build \nci-build limits.memory=5GiB\n'); fs.writeFileSync(log, '');
+  fs.writeFileSync(path.join(tmp, 'fail-get'), '');
+  const failing = spawnSync('bash', ['-c', `set -euo pipefail\nLXC=${fake}\n${fn}\nprofile ci-build limits.memory=6GiB`], { encoding: 'utf8', env: { ...process.env, FAIL_GET: '1' } });
+  assert.notEqual(failing.status, 0, 'a failed read stops init');
+  assert.ok(!fs.readFileSync(log, 'utf8').includes('profile set'), 'and sets nothing');
 });
 
 // v2.5.1: what each runner trusts. The gate runs only workflow files and the trusted branch's scripts/wf, so a token

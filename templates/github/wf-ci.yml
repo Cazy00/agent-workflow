@@ -38,6 +38,12 @@ jobs:
     runs-on: ${{ github.event.pull_request.base.ref == '__TRUSTED_BRANCH__' && vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
+      - name: Refuse, on the gate, a pull request into any branch but exactly the trusted one
+        # GitHub compares strings ignoring case, so `runs-on` also sends a pull request into a branch named `MAIN` to the
+        # gate. Checked exactly here, before anything is checked out or fetched (MAINT-0017 v2.5.1 review); a token
+        # without the Workflows permission cannot remove this step. On GitHub's runner it is skipped.
+        if: github.event.pull_request.base.ref == '__TRUSTED_BRANCH__' && vars.WF_CI_RUNNER != ''
+        run: '[ "$GITHUB_BASE_REF" = "__TRUSTED_BRANCH__" ] || { echo "::error::wf ci on the gate is only for pull requests into __TRUSTED_BRANCH__."; exit 1; }'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}

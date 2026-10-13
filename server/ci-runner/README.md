@@ -9,17 +9,17 @@ A project's GitHub Actions jobs can run here instead of on GitHub's metered runn
 
 **What each runner trusts.**
 - **The build container** runs whatever any account that can push sends it: a pull request's tests, and the packages they install, run there as root inside the container.
-- **The gate** runs `wf ci` only for pull requests into the trusted branch; any other pull request's `wf ci` goes to GitHub's runner. It runs `wf-status` and the client page only on the trusted branch. On it run:
+- **The gate** runs `wf ci` only for pull requests into the trusted branch; any other pull request's `wf ci` goes to GitHub's runner. It runs `wf-status` and the client page only on the trusted branch. Each job's first step checks the branch name exactly, because GitHub compares names in expressions ignoring case: a branch called `MAIN` would otherwise pass. The client page's dispatch job also runs there for any pull request, but it only runs a fixed `gh workflow run`. On the gate run:
   - the workflow files;
-  - the validator pinned by the trusted branch's `docs/workflow/config.json`;
+  - the validator pinned by the trusted branch's `docs/workflow/config.json` (at the pull request's base commit);
   - that branch's `scripts/wf`.
 
   So code reaches the gate from an account that can change workflow files, or that can get a change onto the trusted branch. A token needs the Workflows permission to change workflow files; an SSH key or the web needs only write access. In enforced mode, code-owner review guards the trusted branch. In owner-merge and manual modes, only the workflow's rules stop an account with write access from merging. **There, the gate is as trustworthy as every account with write access.**
 - **The agents' credential** can change neither workflow files, Actions variables nor runners. Use one of:
   - a fine-grained token with Contents and Pull requests (and Issues, if needed) only;
-  - a classic token with only the `repo` scope, for an account with write but not admin access.
+  - a classic token with only the `repo` scope, for an account with write but not admin access. It can also start and re-run workflows; the exact branch checks contain that.
 
-  No Workflows permission or `workflow` scope, no Variables or Administration permission, no SSH or deploy key with write access, and no app holding the Workflows permission. Push workflow-file changes (`wf-adopt`'s scaffold, `wf-upgrade`'s refreshes) from a session the owner attends. Keep the repository setting "Run workflows from fork pull requests" off.
+  No Workflows permission or `workflow` scope, no Variables or Administration permission, no SSH or deploy key with write access, and no app holding the Workflows permission. Push workflow-file changes (`wf-adopt`'s scaffold, `wf-upgrade`'s refreshes) from a session the owner attends. Keep the repository setting "Run workflows from fork pull requests" off. Before setting `WF_CI_RUNNER`, delete or update any branch whose `wf-ci.yml` predates v2.5.1 (v2.5.0's sent every pull request to the gate), and turn on "Automatically delete head branches".
 - **Both containers are persistent,** and what a job leaves behind applies to later jobs. Until each job gets a fresh container (MAINT-0017 D1), `wf ci` on the gate is only as trustworthy as the accounts above. A job that holds deployment secrets stays on GitHub's runner. The exception is the client page's deploy job, which holds a short-lived token for that page alone.
 
 **Size them for the host.** `init` creates the profiles and sets only the keys a profile lacks:

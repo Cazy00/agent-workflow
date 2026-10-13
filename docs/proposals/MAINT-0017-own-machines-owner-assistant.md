@@ -49,7 +49,7 @@ Each change names the failure it prevents and the check that catches a recurrenc
 
 ### Part A: run on our own machines
 
-**A1. A runner switch in every installed workflow.** `wf-ci.yml`, `wf-status.yml` and `wf-client-page.yml` use `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}`. The setup procedure gives a project's own CI the same pattern with `vars.CI_RUNNER` (mateen-systems #74 is the first instance). Deleting a variable sends those jobs back to GitHub.
+**A1. A runner switch in every installed workflow.** `wf-ci.yml`, `wf-status.yml` and `wf-client-page.yml` use `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}`. The setup procedure gives a project's own CI the same pattern with `vars.CI_RUNNER` (mateen-systems #74 is the first instance). Deleting a variable sends those jobs back to GitHub. Since v2.5.1, `wf-ci.yml` takes the gate only for pull requests into the trusted branch, and each gate job's first step checks the branch name exactly (A2's last bullet).
 - Prevents: § 2.1. Check: template tests assert each installed job's `runs-on`. `wf-upgrade` refreshes the three files.
 
 **A2. Two runners per project: build and gate** (setup and operate procedures; scripts under `server/`).
@@ -63,6 +63,12 @@ Each change names the failure it prevents and the check that catches a recurrenc
   - The gate trusts accounts that can change workflow files or the trusted branch. In owner-merge and manual modes, only the rules stop any account with write access from merging, so it is as trustworthy as every such account.
   - The build runner trusts any account that can push.
   - The agents' credential carries no workflow, variable or runner rights, and no write keys.
+  - **A second review found two more paths, both closed:**
+    - GitHub compares strings in expressions ignoring case, so a branch named `MAIN` passed the `runs-on` guard. Every gate job's first step now checks the branch name exactly, before anything is checked out.
+    - A branch still carrying v2.5.0's `wf-ci.yml` sends every pull request into it to the gate. Before setting `WF_CI_RUNNER`, delete or update such branches, and turn on "Automatically delete head branches".
+  - The classic `repo` token can also start and re-run workflows; the exact checks contain that.
+  - A runner hook that refuses unexpected jobs moved to D1. It depends on runner behaviour not yet verified on a live runner.
+- Prevents: § 2.1. Check: no check can see where a job ran. The project's setup record lists its runners, as it lists protections today. Each gate job's branch check is tested by running it (`runner-switch.test.js`).
 
 **A3. The planning-only fast path in templates.** `wf paths --planning-only` exits 0 when every changed path is planning, read with the baseline's config. It's run on both events, from the base-pinned validator. A project's CI skips its expensive product steps on that answer; records, workflow and documentation checks still run (`delivery.md`, unchanged).
 - Prevents: § 2.2. On self-hosted runners it saves queue time, not money. Check: `paths.test.js` with a records-only and a production diff, on a pull request and on a push.

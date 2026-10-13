@@ -58,6 +58,10 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Refuse any ref but exactly the trusted branch
+        # GitHub compares strings ignoring case, so the job's `if:` also passes a run on a branch named `MAIN`. Checked
+        # exactly here, before anything is checked out (MAINT-0017 v2.5.1 review).
+        run: '[ "$GITHUB_REF" = "refs/heads/__TRUSTED_BRANCH__" ] || { echo "::error::This runs only on __TRUSTED_BRANCH__."; exit 1; }'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0

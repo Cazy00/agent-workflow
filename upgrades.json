@@ -78,7 +78,7 @@
   "v2.5.1": {
     "notes": [
       "On a host with the owner's CI runners: reinstall ci-runner from server/ci-runner (install-host.sh, or copy ci-runner to /usr/local/sbin). Its init no longer resets the profiles' limits a host has set with lxc profile set.",
-      "Refresh .github/workflows/wf-ci.yml (one comment changed: what the gate trusts); bin/wf-upgrade does it where the file is the old release's copy."
+      "Refresh .github/workflows/wf-ci.yml: wf ci now takes the gate runner only for pull requests into the trusted branch (bin/wf-upgrade does it, filling in the branch, where the file is the old release's copy). A copy changed in the project takes the runs-on line by hand: runs-on: ${{ github.event.pull_request.base.ref == '<trusted branch>' && vars.WF_CI_RUNNER || 'ubuntu-latest' }}. An enforcement change for the owner."
     ]
   }
 }

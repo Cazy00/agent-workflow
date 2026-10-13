@@ -13,7 +13,7 @@ const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 test('C1: the gate is described as reachable by any account that can push, and registers no default labels', () => {
   for (const f of ['templates/github/wf-ci.yml', 'server/ci-runner/README.md', 'procedures/operate.md', 'docs/proposals/MAINT-0017-own-machines-owner-assistant.md']) {
     assert.doesNotMatch(read(f), /product code and its packages never run|which the build\/gate split provides|product code never runs in the gate/i, f);
-    assert.match(read(f), /any account that can push/i, f);
+    assert.match(read(f), /any account (that can push|with write access)/i, f);
   }
   assert.match(read('server/ci-runner/runner-setup'), /--no-default-labels/);
 });

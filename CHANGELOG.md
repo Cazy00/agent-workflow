@@ -4,10 +4,14 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 
 ## v2.5.1
 
-What the owner's CI runners trust, worked out with the owner's home-server session after v2.5.0:
-- **The gate runs only workflow files and the trusted branch's `scripts/wf`.** Code reaches it only from an account that can change workflow files (a token needs the Workflows permission) or merge to the trusted branch. The build runner runs whatever any push sends it. Unattended agents' tokens go without the Workflows permission, and workflow-file changes are pushed from a session the owner attends. Stated in `server/ci-runner/README.md`, `operate.md` *CI runners* and `wf-ci.yml`.
-- **`ci-runner init` creates the profiles only when they're missing.** Re-running it no longer undoes a host's own limits (`lxc profile set`).
-- **The README says how to size the containers for the host's memory, and how to keep LXD's updates from restarting them mid-job.**
+What the owner's CI runners trust. The independent review of this release refuted its first draft, which said the gate trusted only accounts that can change workflow files:
+- **The gate takes `wf ci` only for pull requests into the trusted branch** (`wf-ci.yml`'s `runs-on`; `wf-adopt` and `wf-upgrade` fill in the branch). The validator comes from the base branch's pin. Before this release, a pull request into any other branch could have the gate run a validator of that branch's choosing, with no workflow change and no merge.
+- **What each runner trusts**, stated in `server/ci-runner/README.md`, `operate.md` *CI runners* and `wf-ci.yml`:
+  - the build runner trusts any account that can push;
+  - the gate trusts any account that can change workflow files or the trusted branch. In owner-merge and manual modes, only the workflow's rules stop any account with write access from merging, so there the gate is as trustworthy as every such account.
+- **The agents' credential** is stated positively in the README: Contents and Pull requests only (or a classic `repo` token for a non-admin account); no workflow, variable or runner rights; no write keys; and the fork pull request setting kept off.
+- **`ci-runner init` sets only the keys a profile lacks.** A host's own limits survive a re-run, and a half-made profile is repaired. `usage` no longer prints a line of code.
+- **The README covers sizing and LXD updates:** sizing per project (6 + 1 GiB each) and protecting remote access from the out-of-memory killer. LXD updates reload the daemon without stopping running containers; a refresh window or a hold is still offered.
 
 Moving a project to this pin: `upgrades.json`.
 

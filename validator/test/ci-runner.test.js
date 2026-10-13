@@ -55,30 +55,44 @@ test('install-host opens nothing towards the LAN or the internet', () => {
   assert.ok(h.indexOf('route insert 1 deny in on lxdbr0') > 0 && h.indexOf('route insert 1 deny in on lxdbr0') < h.indexOf('route allow in on lxdbr0'), 'the LAN deny comes first');
 });
 
-// v2.5.1: a host sets its own limits (`lxc profile set`), and `init` must not undo them when it runs again.
-test('ci-runner init creates a profile with its defaults only when missing, and leaves an existing one alone', t => {
+// v2.5.1: init creates a missing profile and sets each default key the profile lacks (a half-made profile is repaired, and
+// a later release can add a key), but never changes a key the host set with `lxc profile set`.
+test('ci-runner init sets only the keys a profile lacks, and leaves the host\'s own values alone', t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-runner-init-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  const fake = path.join(tmp, 'lxc'), log = path.join(tmp, 'calls'), exists = path.join(tmp, 'exists');
-  fs.writeFileSync(fake, `#!/usr/bin/env bash\necho "$*" >> "${log}"\nif [ "$1 $2" = "profile show" ]; then grep -qx "$3" "${exists}"; exit; fi\nexit 0\n`, { mode: 0o755 });
+  const fake = path.join(tmp, 'lxc'), log = path.join(tmp, 'calls'), state = path.join(tmp, 'state');
+  fs.writeFileSync(fake, `#!/usr/bin/env bash
+echo "$*" >> "${log}"
+case "$1 $2" in
+  "profile show") grep -q "^$3 " "${state}"; exit ;;
+  "profile create") echo "$3 " >> "${state}" ;;
+  "profile get") sed -n "s/^$3 $4=//p" "${state}" ;;
+  "profile set") echo "$3 $4" >> "${state}" ;;
+esac
+exit 0
+`, { mode: 0o755 });
   const fn = read('ci-runner').match(/^profile\(\) \{[\s\S]*?^\}$/m)[0];
   const run = () => spawnSync('bash', ['-c', `set -euo pipefail\nLXC=${fake}\n${fn}\nprofile ci-build limits.memory=6GiB limits.cpu=4`], { encoding: 'utf8' });
-  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n');
-  fs.writeFileSync(exists, ''); fs.writeFileSync(log, '');
-  assert.equal(run().status, 0);
-  assert.deepEqual(calls(), ['profile show ci-build', 'profile create ci-build', 'profile set ci-build limits.memory=6GiB', 'profile set ci-build limits.cpu=4']);
-  fs.writeFileSync(exists, 'ci-build\n'); fs.writeFileSync(log, '');
-  assert.equal(run().status, 0);
-  assert.deepEqual(calls(), ['profile show ci-build'], 'an existing profile is left as the host set it');
+  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n').filter(c => !c.startsWith('profile get') && c !== 'profile show ci-build');
+  const go = (initial, expected, why) => { fs.writeFileSync(state, initial); fs.writeFileSync(log, ''); const r = run(); assert.equal(r.status, 0, r.stderr); assert.deepEqual(calls(), expected, why); };
+  go('', ['profile create ci-build', 'profile set ci-build limits.memory=6GiB', 'profile set ci-build limits.cpu=4'], 'a missing profile gets every default');
+  go('ci-build \nci-build limits.memory=5GiB\nci-build limits.cpu=2\n', [], 'the host\'s own values stay');
+  go('ci-build \nci-build limits.memory=5GiB\n', ['profile set ci-build limits.cpu=4'], 'a half-made profile gets the key it lacks');
 });
 
 // v2.5.1: what each runner trusts. The gate runs only workflow files and the trusted branch's scripts/wf, so a token
 // without the Workflows permission can't put code on it; the build runner runs whatever any push sends it.
-test('the docs say what each runner trusts, how to size them, and to keep LXD updates out of working hours', () => {
+test('the docs say what each runner trusts, how to size them, and what LXD updates do', () => {
   const readme = read('README.md');
-  assert.match(readme, /Workflows permission/);
+  assert.match(readme, /only for pull requests into the trusted branch/);
+  assert.match(readme, /validator pinned by the trusted branch/);
+  assert.match(readme, /every account with write access/);
+  assert.match(readme, /Contents and Pull requests/);
+  assert.match(readme, /Run workflows from fork pull requests/);
   assert.match(readme, /lxc profile set ci-build limits\.memory=/);
   assert.match(readme, /refresh\.timer|refresh --hold lxd/);
+  assert.doesNotMatch(readme, /LXD updates restart the containers/);
   const root = new URL('../../', import.meta.url);
-  for (const f of ['procedures/operate.md', 'templates/github/wf-ci.yml']) assert.match(fs.readFileSync(new URL(f, root), 'utf8'), /Workflows permission/, f);
+  assert.match(fs.readFileSync(new URL('procedures/operate.md', root), 'utf8'), /every account with write access/);
+  assert.match(fs.readFileSync(new URL('templates/github/wf-ci.yml', root), 'utf8'), /pull requests? into the trusted branch|pull request is into __TRUSTED_BRANCH__/);
 });

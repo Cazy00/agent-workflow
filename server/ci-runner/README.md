@@ -9,17 +9,26 @@ A project's GitHub Actions jobs can run here instead of on GitHub's metered runn
 
 **What each runner trusts.**
 - **The build container** runs whatever any account that can push sends it: a pull request's tests, and the packages they install, run there as root inside the container.
-- **The gate** runs only two things: the repository's workflow files, and `scripts/wf` from the trusted branch (for `wf-status` and the client page). A pull request runs its own copy of the workflow files, and any branch can add a workflow that names a runner's label. So code reaches the gate only from an account that can change workflow files, or one that can merge to the trusted branch. A token needs the **Workflows permission** to change workflow files; an SSH key or the web needs only write access.
-- **Give unattended agents a fine-grained token without the Workflows permission,** and push workflow-file changes (`wf-adopt`'s scaffold, `wf-upgrade`'s refreshes) from a session the owner attends.
-- **Both containers are persistent,** and what a job leaves behind applies to later jobs. Until each job gets a fresh container (MAINT-0017 D1), `wf ci` on the gate is only as trustworthy as the accounts above, and a job that holds deployment secrets stays on GitHub's runner.
+- **The gate** runs `wf ci` only for pull requests into the trusted branch; any other pull request's `wf ci` goes to GitHub's runner. It runs `wf-status` and the client page only on the trusted branch. On it run:
+  - the workflow files;
+  - the validator pinned by the trusted branch's `docs/workflow/config.json`;
+  - that branch's `scripts/wf`.
 
-**Size them for the host.** `init` creates the profiles only when they're missing:
+  So code reaches the gate from an account that can change workflow files, or that can get a change onto the trusted branch. A token needs the Workflows permission to change workflow files; an SSH key or the web needs only write access. In enforced mode, code-owner review guards the trusted branch. In owner-merge and manual modes, only the workflow's rules stop an account with write access from merging. **There, the gate is as trustworthy as every account with write access.**
+- **The agents' credential** can change neither workflow files, Actions variables nor runners. Use one of:
+  - a fine-grained token with Contents and Pull requests (and Issues, if needed) only;
+  - a classic token with only the `repo` scope, for an account with write but not admin access.
+
+  No Workflows permission or `workflow` scope, no Variables or Administration permission, no SSH or deploy key with write access, and no app holding the Workflows permission. Push workflow-file changes (`wf-adopt`'s scaffold, `wf-upgrade`'s refreshes) from a session the owner attends. Keep the repository setting "Run workflows from fork pull requests" off.
+- **Both containers are persistent,** and what a job leaves behind applies to later jobs. Until each job gets a fresh container (MAINT-0017 D1), `wf ci` on the gate is only as trustworthy as the accounts above. A job that holds deployment secrets stays on GitHub's runner. The exception is the client page's deploy job, which holds a short-lived token for that page alone.
+
+**Size them for the host.** `init` creates the profiles and sets only the keys a profile lacks:
 - build: 4 CPUs and 6 GiB;
 - gate: 1 CPU and 1 GiB.
 
-Change them with `sudo lxc profile set ci-build limits.memory=5GiB`; running `init` again leaves them as you set them. The limits are ceilings, not reservations. Keep their sum, plus whatever else runs on the host, within its memory, or a shared peak wakes the host's out-of-memory killer, which can pick the SSH server. Protect remote access from it (`OOMScoreAdjust=` on those services).
+Change them with `sudo lxc profile set ci-build limits.memory=5GiB`; running `init` again leaves your values. The limits are per container, and they are ceilings, not reservations: each project adds 6 + 1 GiB. Keep the total, plus whatever else runs on the host, within its memory, or a shared peak wakes the host's out-of-memory killer, which can pick the SSH server. Protect remote access from it (`OOMScoreAdjust=` on those services).
 
-**LXD updates restart the containers,** and a job running at that moment fails. Either give snapd a refresh window outside working hours, `sudo snap set system refresh.timer=04:00-05:00` (it applies to every snap), or hold LXD with `sudo snap refresh --hold lxd` and update it by hand.
+**LXD's updates** reload its daemon, and running containers normally carry on; restarting LXD itself (`snap restart lxd`) stops them. To keep updates out of working hours anyway, give snapd a refresh window, `sudo snap set system refresh.timer=04:00-05:00` (it applies to every snap), or hold LXD with `sudo snap refresh --hold lxd` and update it by hand.
 
 ## Once per host (Ubuntu with snapd, and ufw active)
 

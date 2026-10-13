@@ -58,11 +58,11 @@ Each change names the failure it prevents and the check that catches a recurrenc
 - **Policy:** `wf ci` on a persistent self-hosted runner is weaker than on GitHub's fresh machines. The containers are persistent, and any account that can push can run code on either one: a pull request runs its own copy of the workflow files, and any branch can add a workflow that names a runner's label. What such a job leaves behind applies to later jobs. Until D1 gives each job a fresh container, `wf ci` on the gate is only as trustworthy as the accounts that can push, worker accounts included, and a job holding deployment secrets stays on GitHub's runner. The owner may also send `wf ci` back to GitHub once the minutes reset, by deleting `WF_CI_RUNNER`. This is the owner's decision.
 - **Corrected after the independent review (C1, 13 October).** The approved text said the gate keeps product code out, so product code couldn't tamper with the check. That was wrong for anyone who means to. The owner re-confirmed A2 on the corrected text on 13 October ("Approved").
 - **Private repositories only** (review I2). On a public repository, a pull request from a fork could run code on the owner's machine. `ci-runner register` refuses a repository GitHub shows publicly.
-- **Refined in v2.5.1, with the owner's home-server session.**
-  - The gate runs only workflow files and the trusted branch's `scripts/wf`. So code reaches it only from an account that can change workflow files (a token needs the Workflows permission) or merge to the trusted branch.
-  - The build runner runs whatever any push sends it.
-  - Unattended agents' tokens go without the Workflows permission, and workflow-file changes are pushed from a session the owner attends.
-- Prevents: § 2.1. Check: no check can see where a job ran. The project's setup record lists its runners, as it lists protections today.
+- **v2.5.1, after its own independent review.** A first draft said the gate trusted only accounts that can change workflow files or merge to the trusted branch. The review refuted it: the validator comes from the base branch's pin, so a pull request into any other branch could have the gate run a validator of that branch's choosing.
+  - `wf ci` now takes the gate only for pull requests into the trusted branch.
+  - The gate trusts accounts that can change workflow files or the trusted branch. In owner-merge and manual modes, only the rules stop any account with write access from merging, so it is as trustworthy as every such account.
+  - The build runner trusts any account that can push.
+  - The agents' credential carries no workflow, variable or runner rights, and no write keys.
 
 **A3. The planning-only fast path in templates.** `wf paths --planning-only` exits 0 when every changed path is planning, read with the baseline's config. It's run on both events, from the base-pinned validator. A project's CI skips its expensive product steps on that answer; records, workflow and documentation checks still run (`delivery.md`, unchanged).
 - Prevents: § 2.2. On self-hosted runners it saves queue time, not money. Check: `paths.test.js` with a records-only and a production diff, on a pull request and on a push.

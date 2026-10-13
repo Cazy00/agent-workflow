@@ -369,7 +369,7 @@ ${shared ? '' : `# Task and feedback records name no owner, so they merge after 
 else skipped.push('.github/CODEOWNERS (--coordinator is not a GitHub username)');
 
 // The `wf ci` check: the pinned validator, from the base branch's pin, on every pull request.
-if (pinned.ci !== null) write('.github/workflows/wf-ci.yml', pinned.ci);
+if (pinned.ci !== null) write('.github/workflows/wf-ci.yml', pinned.ci.replaceAll('__TRUSTED_BRANCH__', trusted));
 else skipped.push('.github/workflows/wf-ci.yml (not in this workflow revision)');
 
 // The client page on GitHub Pages, only on request: it is public wherever Pages is.

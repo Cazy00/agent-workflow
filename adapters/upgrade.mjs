@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 // Files the scaffold installs from a template, and how it fills them in.
 const INSTALLED = [
-  { path: '.github/workflows/wf-ci.yml', template: 'templates/github/wf-ci.yml' },
+  { path: '.github/workflows/wf-ci.yml', template: 'templates/github/wf-ci.yml', branch: true },
   { path: '.github/workflows/wf-status.yml', template: 'templates/github/wf-status.yml', branch: true },
   { path: '.github/workflows/wf-client-page.yml', template: 'templates/github/wf-client-page.yml', branch: true },
   { path: '.claude/agents/independent-reviewer.md', template: 'templates/claude/agents/independent-reviewer.md' },

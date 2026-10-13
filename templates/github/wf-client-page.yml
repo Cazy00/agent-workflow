@@ -1,5 +1,6 @@
-# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt within
-# minutes of any push and deployed from the trusted branch only. Installed only on request (bin/wf-adopt
+# The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt on
+# trusted-branch pushes, pull request events and a schedule, and deployed from the trusted branch only. Installed only
+# on request (bin/wf-adopt
 # --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone
 # records word them, and no other record field (no IDs, people, branches or reasons); it grants no authority. A GitHub
 # Pages site is PUBLIC on the internet, even for a private repository (unless your organisation's plan offers private
@@ -8,31 +9,37 @@
 # file: scripts/wf status --client > status.html
 # Copy it only from a release whose wf has `status --client --live`. Turn Pages on once, with GitHub Actions as the
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
+# Its jobs run on GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017).
 name: wf-client-page
-# Within minutes (MAINT-0014): a push to any branch, or a pull request opening, closing unmerged or changing draft
-# state, asks for a rebuild; GitHub Pages deploys only from the trusted branch, so any other ref only dispatches this
-# workflow on it. The build reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
+# A push to the trusted branch rebuilds. A pull request opening, closing unmerged or changing draft state asks for a
+# rebuild there, since GitHub Pages deploys only from the trusted branch. Work moving on other branches shows at the
+# next build: every 15 minutes with the project's own gate runner, where a run costs nothing, otherwise daily.
+# (MAINT-0017; MAINT-0014 rebuilt on every push to every branch, which cost more GitHub minutes than wf ci.) The build
+# reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
 on:
   push:
-    branches: ['**']
+    branches: [__TRUSTED_BRANCH__]
   pull_request:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
+    - cron: '*/15 * * * *'
 permissions:
   contents: read
 # A running build on the trusted branch is never cancelled (under steady pushes it would never deploy): it finishes and
-# only the newest waiting run goes next. Runs on other refs, and every pull-request run, cancel in progress.
+# only the newest waiting run goes next. Runs on other refs, and every pull-request run, cancel in progress. A scheduled
+# run joins the build group only when it builds (the build job's own condition), so a tick that builds nothing never
+# replaces a waiting build (MAINT-0017 review I1).
 concurrency:
-  group: wf-client-page-${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__' && 'build' || github.ref }}
+  group: wf-client-page-${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || github.event.schedule == '17 3 * * *' || vars.WF_CI_RUNNER != '') && 'build' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/__TRUSTED_BRANCH__' }}
 jobs:
   dispatch:
     # A pull-request run only dispatches (Pages refuses a deploy from it, MAINT-0015); a merged one does nothing, since
     # the merge's push to the trusted branch rebuilds. A fork's pull request and Dependabot get a read-only token.
-    if: github.actor != 'dependabot[bot]' && (github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork || github.event_name != 'pull_request' && github.ref != 'refs/heads/__TRUSTED_BRANCH__')
-    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork
+    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     name: client page dispatch
     timeout-minutes: 2
     permissions:
@@ -43,8 +50,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run wf-client-page.yml --ref __TRUSTED_BRANCH__ --repo "$GITHUB_REPOSITORY"
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || github.event.schedule == '17 3 * * *' || vars.WF_CI_RUNNER != '')
+    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     name: client page build
     timeout-minutes: 5
     permissions:
@@ -62,6 +69,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json headRefName,isDraft,isCrossRepository > "$RUNNER_TEMP/pull-requests.json"
+      - name: Fetch the pinned workflow
+        # Into the cache scripts/wf reads. A private workflow repository needs a read-only token for it in the secret
+        # WF_READ_TOKEN (MAINT-0017); only this step uses it, and any account that can push can read it.
+        env:
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WF_READ_TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          pin="$(node -e '
+            const w = JSON.parse(require("fs").readFileSync("docs/workflow/config.json", "utf8")).workflow ?? {};
+            if (!/^[\w.-]+\/[\w.-]+$/.test(w.repo ?? "") || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(w.revision ?? "")) { console.error("wf: the config needs workflow.repo and a full workflow.revision"); process.exit(2); }
+            console.log(w.repo, w.revision)')"
+          read -r REPO REV <<< "$pin"
+          git init -q .cache/agent-workflow
+          git -C .cache/agent-workflow fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C .cache/agent-workflow checkout -q --detach FETCH_HEAD
       - name: Render the client page
         run: |
           set -euo pipefail
@@ -75,7 +102,7 @@ jobs:
     permissions:
       pages: write
       id-token: write
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     name: client page deploy
     timeout-minutes: 5
     environment:

@@ -26,7 +26,7 @@ test('the status workflow may write issues and nothing else, with pinned actions
 });
 
 test('the status workflow keeps expressions out of its scripts and the token away from the validator', () => {
-  for (const line of text.split('\n').filter(l => l.includes('${{'))) assert.match(line, /^ {10}(GH_TOKEN|GH_REPO): \$\{\{ github\.(token|repository) \}\}$/);
+  for (const line of text.split('\n').filter(l => l.includes('${{'))) assert.match(line, /^ {10}(GH_TOKEN|GH_REPO): \$\{\{ github\.(token|repository) \}\}$|^ {4}runs-on: \$\{\{ vars\.WF_CI_RUNNER \|\| 'ubuntu-latest' \}\}$|^ {10}WF_READ_TOKEN: \$\{\{ secrets\.WF_READ_TOKEN \}\}$/);
   const render = steps.filter(s => s.includes('scripts/wf status --baseline'));
   assert.equal(render.length, 1);
   assert.doesNotMatch(render[0], /GH_TOKEN|env:/);

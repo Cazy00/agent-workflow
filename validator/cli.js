@@ -373,7 +373,11 @@ async function main() {
     const entry = m => ({ acceptance: m.acceptance, file: m.file, name: m.name });
     result = { ok: true, delivered, pending: map.filter(mayFail).map(m => ({ ...entry(m), waiting: waiting.get(m.acceptance) })), required: map.filter(m => !mayFail(m)).map(entry) };
   }
-  else if (cmd === 'paths') { const classes = classifyPaths(config, changed()); result = { ok: !classes.some(c => c.category === 'unclassified'), classes }; }
+  else if (cmd === 'paths') {
+    const classes = classifyPaths(config, changed());
+    // MAINT-0017 A3: a project's CI may skip its product steps on planning_only (delivery.md); empty or unclassified is never.
+    result = { ok: !classes.some(c => c.category === 'unclassified'), planning_only: classes.length > 0 && classes.every(c => c.category === 'planning'), classes };
+  }
   else if (cmd === 'ci') {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');
     const paths = changed();

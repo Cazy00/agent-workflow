@@ -1,0 +1,17 @@
+# LXD's first-time setup on a CI host (MAINT-0017): a plain directory storage pool and a NAT bridge for
+# the CI containers, with no IPv6. Applied once with: sudo lxd init --preseed < lxd-preseed.yaml
+networks:
+- name: lxdbr0
+  type: bridge
+  config:
+    ipv4.address: auto
+    ipv4.nat: "true"
+    ipv6.address: none
+storage_pools:
+- name: default
+  driver: dir
+profiles:
+- name: default
+  devices:
+    eth0: {name: eth0, network: lxdbr0, type: nic}
+    root: {path: /, pool: default, type: disk}

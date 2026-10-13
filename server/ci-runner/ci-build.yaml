@@ -1,0 +1,39 @@
+#cloud-config
+# A build container for GitHub Actions (MAINT-0017): Docker, Git from the git-core PPA (agent-workflow's validator
+# wants 2.45.1 or later, as on GitHub's runner), and a `runner` user with sudo, since Playwright's
+# `install --with-deps` adds system packages. Docker is cleared after every job and at boot.
+package_update: true
+package_upgrade: true
+packages: [ca-certificates, curl, jq]
+users:
+  - default
+  - name: runner
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+write_files:
+  - path: /opt/ci-hooks/clean-docker.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # After every job (ACTIONS_RUNNER_HOOK_JOB_COMPLETED) and at boot: remove every container, volume and network,
+      # so the next job finds none left; images and the build cache stay (pruned weekly). One runner per container only.
+      docker ps -aq | xargs -r docker rm -f >/dev/null 2>&1
+      docker volume prune -af >/dev/null 2>&1
+      docker network prune -f >/dev/null 2>&1
+      echo "Docker cleared."
+      exit 0
+  - path: /etc/cron.d/ci-docker
+    permissions: "0644"
+    content: |
+      # A job cut off by a reboot leaves its containers: clear them at boot. Weekly, drop images unused for a week.
+      @reboot root sleep 30 && /opt/ci-hooks/clean-docker.sh
+      30 4 * * 0 root docker system prune -af --filter until=168h >/dev/null 2>&1; docker builder prune -af --filter until=168h >/dev/null 2>&1
+runcmd:
+  - add-apt-repository -y ppa:git-core/ppa
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - [sh, -c, 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list']
+  - apt-get update
+  - [sh, -c, 'DEBIAN_FRONTEND=noninteractive apt-get install -y git docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin']
+  - usermod -aG docker runner

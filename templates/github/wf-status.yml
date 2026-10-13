@@ -6,6 +6,7 @@
 # collaborator's own workflow could still edit the issue, so it is a convenience view: check anything
 # consequential against the records and pull requests. On a public repository the issue is public.
 # `--pull-requests` needs a workflow pin that has it: copy this file from the release you pin.
+# It runs on GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017).
 name: wf-status
 on:
   push:
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   status:
     if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,6 +39,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh pr list --state open --limit 500 --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "$RUNNER_TEMP/pull-requests.json"
+      - name: Fetch the pinned workflow
+        # Into the cache scripts/wf reads. A private workflow repository needs a read-only token for it in the secret
+        # WF_READ_TOKEN (MAINT-0017); only this step uses it, and any account that can push can read it.
+        env:
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WF_READ_TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          pin="$(node -e '
+            const w = JSON.parse(require("fs").readFileSync("docs/workflow/config.json", "utf8")).workflow ?? {};
+            if (!/^[\w.-]+\/[\w.-]+$/.test(w.repo ?? "") || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(w.revision ?? "")) { console.error("wf: the config needs workflow.repo and a full workflow.revision"); process.exit(2); }
+            console.log(w.repo, w.revision)')"
+          read -r REPO REV <<< "$pin"
+          git init -q .cache/agent-workflow
+          git -C .cache/agent-workflow fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C .cache/agent-workflow checkout -q --detach FETCH_HEAD
       - name: Render the status view
         run: scripts/wf status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA" --pull-requests "$RUNNER_TEMP/pull-requests.json" > "$RUNNER_TEMP/view.md"
       - name: Publish the status issue

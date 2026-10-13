@@ -65,5 +65,14 @@
   },
   "v2.4.2": {
     "notes": []
+  },
+  "v2.5.0": {
+    "notes": [
+      "Refresh .github/workflows/wf-ci.yml, wf-status.yml and, if installed, wf-client-page.yml (bin/wf-upgrade does it where a file is the old release's copy; a copy changed in the project takes the runs-on line and the fetch step by hand). An enforcement change for the owner.",
+      "Optional: run the project's CI on the owner's machine (server/ci-runner/README.md), then set the repository variables CI_RUNNER and WF_CI_RUNNER; the project's own CI uses runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }} for its product jobs.",
+      "Before the workflow repository becomes private: set the secret WF_READ_TOKEN, as an Actions secret and a Dependabot secret, to a fine-grained token with access to that repository only and Contents: Read-only, and record its expiry. A project CI job of its own that fetches the validator (an acceptance job) takes the same GIT_CONFIG block as wf-ci.yml's fetch step.",
+      "The client page now rebuilds on the trusted branch, on pull request events, daily, and every 15 minutes with a gate runner; it no longer rebuilds on every push to every branch.",
+      "Optional: wf paths reports planning_only, which a project's CI may use to skip its product steps on records-only changes (procedures/delivery.md)."
+    ]
   }
 }

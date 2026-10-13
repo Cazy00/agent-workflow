@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# runner-setup OWNER/REPO LABEL, as root inside a CI container, with the registration token on stdin: download the
+# current GitHub Actions runner, check it against the checksum its release publishes, register it for the
+# repository under LABEL as the `runner` user, and run it as a service. In a build container (one with
+# /opt/ci-hooks/clean-docker.sh) it clears Docker after every job. Pushed and run by the host's ci-runner.
+set -euo pipefail
+repo="$1"
+label="$2"
+read -r token
+dir=/home/runner/actions-runner
+if [ -f "$dir/.runner" ]; then
+  echo "$(hostname): already registered."
+else
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;;
+    aarch64) arch=arm64 ;;
+    *) echo "unsupported machine: $(uname -m)" >&2; exit 1 ;;
+  esac
+  release="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+  version="$(jq -r .tag_name <<<"$release")"
+  version="${version#v}"
+  sha="$(jq -r .body <<<"$release" | sed -n "s/.*<!-- BEGIN SHA linux-${arch} -->\([0-9a-f]\{64\}\)<!-- END SHA linux-${arch} -->.*/\1/p" | head -n1)"
+  [ -n "$sha" ] || { echo "The runner release publishes no linux-${arch} checksum; stopping." >&2; exit 1; }
+  curl -fsSL -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v${version}/actions-runner-linux-${arch}-${version}.tar.gz"
+  echo "${sha}  /tmp/runner.tar.gz" | sha256sum -c -
+  install -d -o runner -g runner "$dir"
+  sudo -u runner tar xzf /tmp/runner.tar.gz -C "$dir"
+  rm /tmp/runner.tar.gz
+  cd "$dir"
+  ./bin/installdependencies.sh >/dev/null
+  sudo -u runner -H ./config.sh --unattended --replace --url "https://github.com/${repo}" --token "$token" \
+    --name "$(hostname)" --labels "$label" --no-default-labels --work _work
+  if [ -x /opt/ci-hooks/clean-docker.sh ]; then
+    echo "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/ci-hooks/clean-docker.sh" >> .env
+  fi
+fi
+cd "$dir"
+[ -f .service ] || ./svc.sh install runner
+./svc.sh start

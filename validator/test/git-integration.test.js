@@ -73,3 +73,23 @@ test('an authorised task can record its actual baseline on a milestone branch', 
   const r=spawnSync(process.execPath,[cli,'ci','--repo',p.repo,'--baseline',p.baseline,'--candidate',next,'--task','T-0001','--trust-key',p.key,'--receipts',path.join(p.temp,'receipts.json'),'--repository','fixture/project','--json'],{encoding:'utf8'});
   assert.equal(r.status,0,r.stdout+r.stderr);
 });
+
+// MAINT-0017 A3: a project's CI may skip expensive product steps when every changed path is planning (delivery.md).
+// Exit 1 when a path is unclassified (ok: false); the JSON is printed either way.
+const pathsOf = (p, from, to) => { const r = spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', from, '--candidate', to, '--json'], { encoding: 'utf8' }); assert.ok([0, 1].includes(r.status), r.stderr); return JSON.parse(r.stdout); };
+test('MAINT-0017: wf paths says planning_only for a records-only change, and only then', t => {
+  const p = setup(t);
+  p.edit(taskPath, x => `${x}\n`); p.git('add', '.'); p.git('commit', '-qm', 'T-0001: record');
+  const records = p.git('rev-parse', 'HEAD');
+  assert.equal(pathsOf(p, p.candidate, records).planning_only, true, 'a task record alone');
+  assert.equal(pathsOf(p, p.baseline, p.candidate).planning_only, false, 'production code');
+  p.write('src/b.js', 'export const b = 2;\n'); p.edit(taskPath, x => `${x}\n`); p.git('add', '.'); p.git('commit', '-qm', 'T-0001: both');
+  assert.equal(pathsOf(p, records, p.git('rev-parse', 'HEAD')).planning_only, false, 'records and code together');
+});
+test('MAINT-0017: an empty or unclassified diff is never planning_only', t => {
+  const p = setup(t);
+  assert.equal(pathsOf(p, p.candidate, p.candidate).planning_only, false, 'empty diff');
+  p.write('mystery.bin', 'x'); p.git('add', '.'); p.git('commit', '-qm', 'unclassified');
+  const r = pathsOf(p, p.candidate, p.git('rev-parse', 'HEAD'));
+  assert.equal(r.ok, false); assert.equal(r.planning_only, false, 'unclassified');
+});

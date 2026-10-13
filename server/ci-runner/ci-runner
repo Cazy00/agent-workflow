@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# ci-runner: GitHub Actions runners for agent-workflow projects, each in its own LXD container (MAINT-0017).
+#   ci-runner init                     create or refresh the ci-build and ci-gate profiles
+#   ci-runner create NAME build|gate   a container: build = Docker and sudo for the runner (tests, deploys);
+#                                      gate = no Docker, no sudo (agent-workflow's wf ci only)
+#   ci-runner register OWNER/REPO NAME:LABEL...   ask once for the repository's registration token (hidden), then
+#                                      register a runner in each named container under its label, and start it
+#   ci-runner status                   the containers and their runner services
+set -euo pipefail
+LXC=/snap/bin/lxc
+SHARE=/usr/local/share/ci-runner
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+profile() { # profile NAME KEY=VALUE...
+  local name="$1"; shift
+  $LXC profile show "$name" >/dev/null 2>&1 || $LXC profile create "$name"
+  for kv in "$@"; do $LXC profile set "$name" "$kv"; done
+}
+
+init() {
+  profile ci-build security.nesting=true security.syscalls.intercept.mknod=true \
+    security.syscalls.intercept.setxattr=true limits.cpu=4 limits.memory=6GiB boot.autostart=true
+  profile ci-gate limits.cpu=1 limits.memory=1GiB boot.autostart=true
+  $LXC profile list
+}
+
+create() {
+  local name="$1" kind="$2"
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ && ( "$kind" == build || "$kind" == gate ) ]] || usage
+  if $LXC info "$name" >/dev/null 2>&1; then
+    echo "$name already exists."
+  else
+    $LXC launch ubuntu:24.04 "$name" --profile default --profile "ci-$kind" \
+      --config cloud-init.user-data="$(cat "$SHARE/ci-$kind.yaml")"
+  fi
+  echo "Waiting for $name's first-boot setup (a few minutes)…"
+  $LXC exec "$name" -- cloud-init status --wait >/dev/null || true
+  $LXC exec "$name" -- cloud-init status --long | sed -n '1,3p'
+  $LXC file push "$SHARE/runner-setup" "$name/usr/local/sbin/runner-setup" --mode 0755
+  $LXC exec "$name" -- git --version
+  if [[ "$kind" == build ]]; then
+    $LXC exec "$name" -- sudo -u runner -H docker info --format 'docker {{.ServerVersion}}, storage {{.Driver}}'
+  fi
+}
+
+register() {
+  local repo="$1" token pair; shift
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && $# -ge 1 ]] || usage
+  for pair in "$@"; do [[ "$pair" =~ ^[a-z][a-z0-9-]*:[A-Za-z0-9_.-]+$ ]] || usage; done
+  read -rsp "Registration token for $repo (hidden, from Settings → Actions → Runners → New self-hosted runner): " token
+  echo
+  [[ "$token" =~ ^[A-Za-z0-9]+$ ]] || { echo "That doesn't look like a registration token." >&2; exit 1; }
+  for pair in "$@"; do
+    echo "── ${pair%%:*}"
+    printf '%s\n' "$token" | $LXC exec "${pair%%:*}" -- /usr/local/sbin/runner-setup "$repo" "${pair#*:}"
+  done
+}
+
+status() {
+  $LXC list --columns ns4
+  local n
+  for n in $($LXC list --format csv --columns n); do
+    printf '%s: ' "$n"
+    $LXC exec "$n" -- systemctl list-units --type=service --no-legend --plain 'actions.runner.*' 2>/dev/null \
+      | awk '{print $1, $4}' | grep . || echo "no runner service"
+  done
+}
+
+case "${1:-}" in
+  init) [[ $# -eq 1 ]] || usage; init ;;
+  create) [[ $# -eq 3 ]] || usage; create "$2" "$3" ;;
+  register) [[ $# -ge 3 ]] || usage; shift; register "$@" ;;
+  status) status ;;
+  *) usage ;;
+esac

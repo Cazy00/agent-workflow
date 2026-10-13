@@ -1,0 +1,19 @@
+#cloud-config
+# A gate container for GitHub Actions (MAINT-0017): Git from the git-core PPA and a `runner` user with no sudo and
+# no Docker. It runs only the workflow's own jobs (wf ci, wf-status, the client page), apart from the build container
+# where pull-request code and its packages run; gh is for the status jobs.
+package_update: true
+package_upgrade: true
+packages: [ca-certificates, curl, jq]
+users:
+  - default
+  - name: runner
+    shell: /bin/bash
+runcmd:
+  - add-apt-repository -y ppa:git-core/ppa
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - [sh, -c, 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list']
+  - apt-get update
+  - [sh, -c, 'DEBIAN_FRONTEND=noninteractive apt-get install -y git gh']

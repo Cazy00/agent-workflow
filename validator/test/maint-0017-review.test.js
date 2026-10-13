@@ -13,7 +13,7 @@ const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 test('C1: the gate is described as reachable by any account that can push, and registers no default labels', () => {
   for (const f of ['templates/github/wf-ci.yml', 'server/ci-runner/README.md', 'procedures/operate.md', 'docs/proposals/MAINT-0017-own-machines-owner-assistant.md']) {
     assert.doesNotMatch(read(f), /product code and its packages never run|which the build\/gate split provides|product code never runs in the gate/i, f);
-    assert.match(read(f), /any account that can push/i, f);
+    assert.match(read(f), /any account (that can push|with write access)/i, f);
   }
   assert.match(read('server/ci-runner/runner-setup'), /--no-default-labels/);
 });
@@ -48,7 +48,7 @@ test('I5: install-host stops unless ufw is active, and puts the LAN deny first',
 });
 
 test('I6: the setup record has a line for the project\'s runners', () => {
-  assert.match(read('templates/setup.md'), /^\| CI runners: .*`CI_RUNNER`.*`WF_CI_RUNNER`.* \| \|$/m);
+  assert.match(read('templates/setup.md'), /^\| CI runners: .*`CI_BUILD`.*`WF_GATE`.* \| \|$/m);
 });
 
 test('I6: the status workflow\'s fetch step fetches the pinned revision into the cache, again with the cache present, and fails on a revision it cannot find', t => {

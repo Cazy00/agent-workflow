@@ -7,11 +7,13 @@
 **Architecture:**
 - **Templates:** `templates/github/*.yml` gain the switch `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}`, and an optional read-only token (`secrets.WF_READ_TOKEN`) seen only by the step that fetches the pinned workflow.
 - **Validator:** `wf paths` gains one field, `planning_only`.
-- **Server:** the LXD-based runner tooling, proven in the owner's home-server project 003, moves to `server/ci-runner/` as capability. Procedures gain a short CI-runners section.
+- **Server:** the LXD-based runner tooling, written and statically verified in the owner's home-server project 004 (numbered 003 when this plan was written), moves to `server/ci-runner/` as capability. Procedures gain a short CI-runners section.
 
 **Tech Stack:** Node ≥ 22 built-ins only (`node --test`), Bash, GitHub Actions YAML, cloud-init, LXD 5.21.
 
 **Spec:** `docs/proposals/MAINT-0017-own-machines-owner-assistant.md`, Part A (A1–A6). A4's publish target moved to D4; see the proposal.
+
+> **Note, after execution (13 October):** the owner's home-server project this plan calls 003 was renumbered 004 (`projects/004-ci-runners`), because 003 was already taken. Its paths below are as they were when the plan ran.
 
 ## Global Constraints
 

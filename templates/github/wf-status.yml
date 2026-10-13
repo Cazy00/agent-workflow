@@ -6,7 +6,7 @@
 # collaborator's own workflow could still edit the issue, so it is a convenience view: check anything
 # consequential against the records and pull requests. On a public repository the issue is public.
 # `--pull-requests` needs a workflow pin that has it: copy this file from the release you pin.
-# It runs on GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017).
+# It runs on GitHub's runner unless the repository variable WF_GATE is `on`: then on the gate runner, labelled `wf-gate` (MAINT-0017).
 name: wf-status
 on:
   push:
@@ -24,9 +24,13 @@ concurrency:
 jobs:
   status:
     if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
-    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      - name: Refuse any ref but exactly the trusted branch
+        # GitHub compares strings ignoring case, so the job's `if:` also passes a run on a branch named `MAIN`. Checked
+        # exactly here, before anything is checked out (MAINT-0017 v2.5.1 review).
+        run: '[ "$GITHUB_REF" = "refs/heads/__TRUSTED_BRANCH__" ] || { echo "::error::This runs only on __TRUSTED_BRANCH__."; exit 1; }'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # readiness previews check each task's recorded revisions against the history

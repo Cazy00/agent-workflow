@@ -66,6 +66,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) {
     const ci = fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8');
     assert.match(ci, /name: wf ci/);
+    assert.match(ci, /base\.ref == 'main' && vars\.WF_GATE == 'on' && 'wf-gate'/); assert.doesNotMatch(ci, /__TRUSTED_BRANCH__/); // v2.5.1 review C1
     // MAINT-0010: the gate reads the delivery evidence from the description, reruns when it is edited, and never
     // places the description's text in the script itself.
     assert.match(ci, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);

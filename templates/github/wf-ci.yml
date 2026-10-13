@@ -9,9 +9,9 @@
 # its own copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
 # (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
 # before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
-# account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which needs the agent's delivery evidence
-# for a production change: it reads it from the pull request description, so editing the description reruns this
-# check on the same head. In manual mode the owner's signed receipts are checked on the owner's machine
+# account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which
+# needs the agent's delivery evidence for a production change: it reads it from the pull request description, so
+# editing the description reruns this check on the same head. In manual mode the owner's signed receipts are checked on the owner's machine
 # (`wf closeout`), so here it checks the records only.
 # Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
 # to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it on
@@ -29,13 +29,22 @@ concurrency:
 jobs:
   ci:
     name: wf ci
-    # GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017,
-    # server/ci-runner): a container with no Docker and no sudo, apart from the project's tests and deploys. It is
-    # persistent, and any account that can push can run code on it (a pull request runs its own copy of this file),
-    # so there this check is only as trustworthy as those accounts until each job gets a fresh container (D1).
-    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
+    # GitHub's runner unless the pull request is into __TRUSTED_BRANCH__ and the repository variable WF_GATE is `on`:
+    # then the project's gate runner, labelled `wf-gate` (MAINT-0017, server/ci-runner), a container with no Docker and
+    # no sudo, apart from the project's tests and deploys. The label is fixed here, because any write collaborator can
+    # set a variable; the variable only switches the gate on or off. Only pull requests into the trusted branch, because the validator comes from the base
+    # branch's pin and any other branch could pin its own. The gate is persistent: there this check is only as
+    # trustworthy as the accounts that can change workflow files or the trusted branch, which in owner-merge and manual
+    # modes means any account with write access, until each job gets a fresh container (D1).
+    runs-on: ${{ github.event.pull_request.base.ref == '__TRUSTED_BRANCH__' && vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
+      - name: Refuse, on the gate, a pull request into any branch but exactly the trusted one
+        # GitHub compares strings ignoring case, so `runs-on` also sends a pull request into a branch named `MAIN` to the
+        # gate. Checked exactly here, before anything is checked out or fetched (MAINT-0017 v2.5.1 review); a token
+        # without the Workflows permission cannot remove this step. On GitHub's runner it is skipped.
+        if: github.event.pull_request.base.ref == '__TRUSTED_BRANCH__' && vars.WF_GATE == 'on'
+        run: '[ "$GITHUB_BASE_REF" = "__TRUSTED_BRANCH__" ] || { echo "::error::wf ci on the gate is only for pull requests into __TRUSTED_BRANCH__."; exit 1; }'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}

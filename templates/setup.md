@@ -18,7 +18,7 @@ Start, two-working-day timebox (or approved alternative), agent allowance (defau
 | Approval mode (owner-merge with its checkpoint, manual, enforced) and what it does not prove | |
 | Acceptance mapping and reporter | |
 | Required checks in the profile; each a required status check, branches up to date | |
-| CI runners: GitHub's, or the owner's (`CI_RUNNER`, `WF_CI_RUNNER`: which containers, on which host; `WF_READ_TOKEN` expiry) | |
+| CI runners: GitHub's, or the owner's (`CI_BUILD`, `WF_GATE` switched on; which containers, on which host; `WF_READ_TOKEN` expiry) | |
 | Shared project, if any: each person's worker and tools, `CODEOWNERS`, who approves what and when one is away | |
 | Setup check: `wf records` and `wf next` on the committed setup (the release's tests ran the fixtures) | |
 | Before enforced: protection read-back, or the real approval-path exercise | |

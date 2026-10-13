@@ -2,6 +2,25 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.5.1
+
+What the owner's CI runners trust. The independent review of this release refuted its first draft, which said the gate trusted only accounts that can change workflow files:
+- **The gate takes `wf ci` only for pull requests into the trusted branch** (`wf-ci.yml`'s `runs-on`; `wf-adopt` and `wf-upgrade` fill in the branch). The validator comes from the base branch's pin. Before this release, a pull request into any other branch could have the gate run a validator of that branch's choosing, with no workflow change and no merge.
+- **What each runner trusts**, stated in `server/ci-runner/README.md`, `operate.md` *CI runners* and `wf-ci.yml`:
+  - the build runner trusts any account that can push;
+  - the gate trusts any account that can change workflow files or the trusted branch. In owner-merge and manual modes, only the workflow's rules stop any account with write access from merging, so there the gate is as trustworthy as every such account.
+- **Runner labels are fixed in the workflow files, and the variables are only on/off switches** (found by the owner's home-server session). Any write collaborator can set an Actions variable. With v2.5.0's `WF_CI_RUNNER` naming the runner, an agent could have sent `wf ci` to the build container it controls. Now:
+  - the gate is `wf-gate` and the build runner is `wf-build`;
+  - `WF_GATE=on` and `CI_BUILD=on` only switch them on, and any other value sends the jobs to GitHub's runner;
+  - `ci-runner register` derives each runner's label from its container (`register OWNER/REPO NAME...`) and refuses a mismatched one.
+- **Every gate job's first step checks the branch name exactly** (second review). GitHub compares strings in expressions ignoring case, so a branch named `MAIN` passed the `runs-on` and `if:` guards. Before switching `WF_GATE` on, delete or update any branch carrying v2.5.0's `wf-ci.yml`, and turn on "Automatically delete head branches".
+- **The agents' credential** is stated positively in the README: Contents and Pull requests only (or a classic `repo` token for a non-admin account); no workflow, variable or runner rights; no write keys; and the fork pull request setting kept off.
+- **`ci-runner init` sets only the keys a profile lacks.** A host's own limits survive a re-run, a half-made profile is repaired, and a failed read stops it rather than overwriting a value. `usage` no longer prints a line of code.
+- **The containers come back after a power cut** (found on the owner's home server). `ci-runner create` sets `boot.autostart` on each container itself, not only on its profile, because LXD's snap starts its daemon at boot only when an instance itself has it. `install-host.sh` also starts LXD's daemon at every boot. Re-running `create` on an existing container repairs it.
+- **The README covers sizing and LXD updates:** sizing per project (6 + 1 GiB each) and protecting remote access from the out-of-memory killer. LXD updates reload the daemon without stopping running containers; a refresh window or a hold is still offered.
+
+Moving a project to this pin: `upgrades.json`.
+
 ## v2.5.0
 
 MAINT-0017 Part A: our own machines. On 13 October GitHub Actions stopped on the owner's account when its included minutes ran out, and no pull request could merge, because `wf ci` ran only on GitHub's runners.

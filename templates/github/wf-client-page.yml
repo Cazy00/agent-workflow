@@ -10,17 +10,20 @@
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
 # Its jobs run on GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017).
 name: wf-client-page
-# Within minutes (MAINT-0014): a push to any branch, or a pull request opening, closing unmerged or changing draft
-# state, asks for a rebuild; GitHub Pages deploys only from the trusted branch, so any other ref only dispatches this
-# workflow on it. The build reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
+# A push to the trusted branch rebuilds. A pull request opening, closing unmerged or changing draft state asks for a
+# rebuild there, since GitHub Pages deploys only from the trusted branch. Work moving on other branches shows at the
+# next build: every 15 minutes with the project's own gate runner, where a run costs nothing, otherwise daily.
+# (MAINT-0017; MAINT-0014 rebuilt on every push to every branch, which cost more GitHub minutes than wf ci.) The build
+# reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
 on:
   push:
-    branches: ['**']
+    branches: [__TRUSTED_BRANCH__]
   pull_request:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
+    - cron: '*/15 * * * *'
 permissions:
   contents: read
 # A running build on the trusted branch is never cancelled (under steady pushes it would never deploy): it finishes and
@@ -32,7 +35,7 @@ jobs:
   dispatch:
     # A pull-request run only dispatches (Pages refuses a deploy from it, MAINT-0015); a merged one does nothing, since
     # the merge's push to the trusted branch rebuilds. A fork's pull request and Dependabot get a read-only token.
-    if: github.actor != 'dependabot[bot]' && (github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork || github.event_name != 'pull_request' && github.ref != 'refs/heads/__TRUSTED_BRANCH__')
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork
     runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     name: client page dispatch
     timeout-minutes: 2
@@ -44,7 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run wf-client-page.yml --ref __TRUSTED_BRANCH__ --repo "$GITHUB_REPOSITORY"
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || github.event.schedule == '17 3 * * *' || vars.WF_CI_RUNNER != '')
     runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     name: client page build
     timeout-minutes: 5

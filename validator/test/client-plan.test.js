@@ -824,11 +824,15 @@ test('a plan error stops wf status --client; a directory source renders without 
   assert.match(run(r.dir, '--json').stderr, /--client is only for status/);
 });
 
-test('the client page workflow rebuilds on any push and deploys only from the trusted branch', () => {
+test('the client page workflow rebuilds on the trusted branch, on pull request events and on schedules', () => {
   const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
-  assert.match(yml, /push:\n\s+branches: \['\*\*'\]/);
+  assert.match(yml, /push:\n\s+branches: \[__TRUSTED_BRANCH__\]/);
+  assert.doesNotMatch(yml, /branches: \['\*\*'\]/, 'no dispatch on every push to every branch (MAINT-0017)');
   assert.match(yml, /pull_request:\n\s+types: \[opened, reopened, ready_for_review, converted_to_draft, closed\]/);
-  assert.match(yml, /schedule:/);
+  assert.match(yml, /schedule:\n\s+- cron: '17 3 \* \* \*'\n\s+- cron: '\*\/15 \* \* \* \*'/);
+  // The build condition names the daily schedule by its literal; the two must not drift apart.
+  const daily = yml.match(/- cron: '([^']+)'/)[1];
+  assert.ok(yml.includes(`github.event.schedule == '${daily}'`), 'the build condition matches the first cron entry');
   assert.match(yml, /gh workflow run wf-client-page\.yml --ref __TRUSTED_BRANCH__/);
   assert.doesNotMatch(yml, /cancel-in-progress: true/);
   assert.match(yml, /fetch-depth: 0/);
@@ -844,8 +848,9 @@ const expression = (yml, pattern) => {
   assert.ok(text, `expression ${pattern} in the template`);
   const js = text.replace(/\$\{\{\s*|\s*\}\}/g, '').replaceAll('__TRUSTED_BRANCH__', 'main')
     .replace(/!=/g, '!==').replace(/([^!=])==/g, '$1===')
-    .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`);
-  return ctx => new Function('ctx', `return (${js});`)(ctx);
+    .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`)
+    .replace(/\bvars\.(\w+)/g, 'ctx.vars.$1');
+  return ctx => new Function('ctx', `return (${js});`)({ vars: { WF_CI_RUNNER: '' }, ...ctx });
 };
 test('each GitHub event runs the right job of the client page workflow', () => {
   const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
@@ -860,9 +865,11 @@ test('each GitHub event runs the right job of the client page workflow', () => {
   const pr = (action, { merged = false, fork = false, ref = 'refs/pull/7/merge' } = {}) => ({ event_name: 'pull_request', ref, actor: 'alice', event: { action, pull_request: { merged, head: { repo: { fork } } } } });
   const cases = [
     ['push to the trusted branch', { event_name: 'push', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
-    ['push to a task branch', { event_name: 'push', ref: 'refs/heads/claude/T-0003', actor: 'alice', event: {} }, 'dispatch'],
+    ['push to a task branch', { event_name: 'push', ref: 'refs/heads/claude/T-0003', actor: 'alice', event: {} }, 'none'],
     ['dispatched run', { event_name: 'workflow_dispatch', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
-    ['daily schedule', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
+    ['daily schedule', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '17 3 * * *' } }, 'build'],
+    ['15-minute schedule on GitHub\'s runner', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '*/15 * * * *' } }, 'none'],
+    ['15-minute schedule on the gate runner', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '*/15 * * * *' }, vars: { WF_CI_RUNNER: 'shop-gate' } }, 'build'],
     ['pull request opened', pr('opened'), 'dispatch'],
     ['pull request marked ready', pr('ready_for_review'), 'dispatch'],
     ['pull request closed without merging', pr('closed'), 'dispatch'],

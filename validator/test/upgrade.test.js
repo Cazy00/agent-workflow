@@ -77,7 +77,8 @@ test('an upgrade reports first, then moves the pin, drops the keys nothing reads
   for (const k of ['delegation', 'delivery', 'execution', 'setup_budget_days']) assert.ok(!(k in config), k);
   assert.equal(config.approval.checkpoint, 'milestone', 'settings the project chose are kept');
   assert.match(read(project, 'docs/workflow/profile.md'), /^workflow_version: v2\.0\.0$/m);
-  assert.equal(read(project, '.github/workflows/wf-ci.yml'), git(wf, 'show', 'v2.0.0:templates/github/wf-ci.yml') + '\n');
+  // v2.5.1: wf-ci.yml names the trusted branch (the gate takes only pull requests into it), filled in as wf-status's is.
+  assert.equal(read(project, '.github/workflows/wf-ci.yml'), git(wf, 'show', 'v2.0.0:templates/github/wf-ci.yml').replaceAll('__TRUSTED_BRANCH__', 'main') + '\n');
   assert.doesNotMatch(read(project, '.github/workflows/wf-status.yml'), /an older release/);
   assert.match(read(project, '.claude/agents/independent-reviewer.md'), /Our own rule\./, 'a file the project changed is left alone');
 

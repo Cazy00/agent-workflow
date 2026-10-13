@@ -147,4 +147,4 @@ Run M-0005 on the new version, and record:
 
 ## 9. Corpus size
 
-To be recorded before and after each release, as `maintenance.md` asks, with `execute.md`'s net growth kept under 250 words.
+Shared corpus: 39,204 words before v2.5.0, 39,858 after (counted as `cat POLICY.md SCHEMA.md QUICKSTART.md procedures/*.md .agents/skills/workflow/SKILL.md $(git ls-files templates) | wc -w`). Most of the 654 are the two new fetch steps and the comments in the installed workflow files. Procedures grew by 200 words: `setup.md` 2,305 → 2,372, `operate.md` 888 → 969, `delivery.md` 200 → 252. `procedures/execute.md` is unchanged. v2.6.0 records its own, with `execute.md`'s net growth kept under 250 words.

@@ -2,6 +2,18 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.5.0
+
+MAINT-0017 Part A: our own machines. On 13 October GitHub Actions stopped on the owner's account when its included minutes ran out, and no pull request could merge, because `wf ci` ran only on GitHub's runners.
+- **A runner switch** (A1): every installed workflow job runs on `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}`. A project's own CI uses `CI_RUNNER` the same way.
+- **The owner's runners** (A2): `server/ci-runner/` sets up a build container (Docker, the project's tests and deploys) and a gate container (no Docker or sudo; only the workflow's own jobs) per project, with LXD.
+- **A private workflow repository** (A5): the installed workflows fetch the pin with the secret `WF_READ_TOKEN` when it is set. Only the fetch step sees it.
+- **The client page** (A4) rebuilds on the trusted branch, on pull request events, daily, and every 15 minutes with a gate runner. The dispatch on every push to every branch is gone.
+- **`wf paths` reports `planning_only`** (A3).
+- **Procedures:** `setup.md` step 6 and `operate.md` *CI runners*.
+
+Moving a project to this pin: `upgrades.json`.
+
 ## v2.4.2
 
 Closes the four minor findings of MAINT-0016's independent review (texts and the setup page; no gate changes):

@@ -1,6 +1,6 @@
 # MAINT-0017: Our own machines, an assistant who acts on the owner's word, and questions that don't stop the work
 
-**Status:** proposal for the owner's approval, 13 October 2026. Implementation plans follow per release (§ 8).
+**Status:** approved by the owner, 13 October 2026 ("approved", in the session that wrote it). Implementation plan for v2.5.0: `docs/proposals/MAINT-0017-plan.md`; v2.6.0 gets its own.
 
 **Classification** (`procedures/maintenance.md`): improvement proposal, after a workflow defect. Four parts change authority or a control, which is the owner's policy decision: running `wf ci` on the owner's own runner (A2), the owner's assistant (B1), making this repository private (C1), and removing arrangements the owner won't use (C2). The rest changes templates, procedures and the validator within existing authority.
 
@@ -63,8 +63,8 @@ Each change names the failure it prevents and the check that catches a recurrenc
 
 **A4. The client page: less often, and not on Pages.**
 - Build on the gate runner on a push to `main`, when a pull request opens or closes, and every 15 minutes. The dispatch job on every branch push goes.
-- Publish through `client.publish`: `pages` (today), or `cloudflare` (a static upload that works whatever the GitHub plan).
-- Prevents: § 2.2 and the Pages dependency. Check: template test for the events and the publish step.
+- ~~Publish through `client.publish`: `pages` or `cloudflare`.~~ Moved to D4 when planning v2.5.0. Pages works for as long as the paid plan does, and on the owner's runner a rebuild costs nothing. Where the page is published belongs with the GitHub plan decision.
+- Prevents: § 2.2. Check: the template test evaluates each event's `if:`, including both schedules with and without the gate runner.
 
 **A5. A private workflow repository.** The fetch in `wf-ci.yml`, the acceptance job and `scripts/wf` uses a read-only token when the secret `WF_READ_TOKEN` is set, or a mirror named in `workflow.mirror`. The pin and the base-branch rule are unchanged.
 - Prevents: § 2.3. Check: a template test, and a fixture that fetches a pinned revision from a local mirror.
@@ -110,7 +110,7 @@ Each change names the failure it prevents and the check that catches a recurrenc
 - **D1.** A fresh container for every job, as on GitHub's runners, for every project, with the owner's token kept root-only on the server.
 - **D2.** One owner inbox across projects (what waits on the owner, what each agent is doing, what's blocked), with phone alerts.
 - **D3.** A preview link for each pull request, behind the owner's sign-in.
-- **D4.** The GitHub plan. On the free plan, private repositories lose rulesets (required checks, required pull requests) and Pages. The choices: keep a paid plan; host Git and CI on the owner's server; or manual mode. Decide before the current plan ends.
+- **D4.** The GitHub plan. On the free plan, private repositories lose rulesets (required checks, required pull requests) and Pages. The choices: keep a paid plan; host Git and CI on the owner's server; or manual mode. Where the client page is published (Pages, or a static upload to Cloudflare) follows from the choice. Decide before the current plan ends.
 
 ## 4. What stays as it is
 

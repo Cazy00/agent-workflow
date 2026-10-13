@@ -2,16 +2,17 @@
 # make `wf ci` a required status check when the repository has rulesets (bin/wf-protect does). A change to this
 # file is a workflow change.
 #
-# It never runs the pull request's own launcher or pin. The validator comes from the workflow repository (which
-# must be public: it is fetched without a token) at the revision pinned in the *base* branch's
-# docs/workflow/config.json, fetched fresh outside the checkout, and judges the pull request's head against that
-# base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run its own
-# copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
+# It never runs the pull request's own launcher or pin. The validator comes from the workflow repository (without a
+# token when it is public; with the secret WF_READ_TOKEN when it is private, MAINT-0017) at the revision pinned in the
+# *base* branch's docs/workflow/config.json, fetched fresh outside the checkout, and judges the pull request's head
+# against that base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run
+# its own copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
 # (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
-# before merging. It runs with a read-only token and no secrets. In enforced and owner-merge modes it runs the
-# integration gate (`wf ci`), which needs the agent's delivery evidence for a production change: it reads it from the
-# pull request description, so editing the description reruns this check on the same head. In manual mode the
-# owner's signed receipts are checked on the owner's machine (`wf closeout`), so here it checks the records only.
+# before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step sees. In
+# enforced and owner-merge modes it runs the integration gate (`wf ci`), which needs the agent's delivery evidence
+# for a production change: it reads it from the pull request description, so editing the description reruns this
+# check on the same head. In manual mode the owner's signed receipts are checked on the owner's machine
+# (`wf closeout`), so here it checks the records only.
 # Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
 # to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it on
 # while its checks still run, so GitHub cannot merge it on the other checks alone. Turned on after every check has passed,
@@ -28,7 +29,9 @@ concurrency:
 jobs:
   ci:
     name: wf ci
-    runs-on: ubuntu-latest
+    # GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017,
+    # server/ci-runner): a container with no Docker and no sudo, where product code and its packages never run.
+    runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

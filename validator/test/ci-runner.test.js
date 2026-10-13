@@ -102,3 +102,27 @@ test('the docs say what each runner trusts, how to size them, and what LXD updat
   assert.match(fs.readFileSync(new URL('procedures/operate.md', root), 'utf8'), /every account with write access/);
   assert.match(fs.readFileSync(new URL('templates/github/wf-ci.yml', root), 'utf8'), /pull requests? into the trusted branch|pull request is into __TRUSTED_BRANCH__/);
 });
+
+// v2.5.1: labels are fixed by role (wf-build, wf-gate) and live in the workflow files, so `register` derives each
+// runner's label from its container's profile and refuses any other.
+test('ci-runner derives a runner\'s label from its container\'s profile, and refuses a container that is neither', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-runner-label-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const fake = path.join(tmp, 'lxc');
+  fs.writeFileSync(fake, `#!/usr/bin/env bash
+case "$1 $2 $3" in
+  "config show shop-ci") printf 'architecture: x86_64\\nprofiles:\\n- default\\n- ci-build\\n' ;;
+  "config show shop-gate") printf 'profiles:\\n- default\\n- ci-gate\\n' ;;
+  "config show other") printf 'profiles:\\n- default\\n' ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const fn = read('ci-runner').match(/^role_label\(\) \{[\s\S]*?^\}$/m)[0];
+  const label = name => spawnSync('bash', ['-c', `set -euo pipefail\nLXC=${fake}\n${fn}\nrole_label ${name}`], { encoding: 'utf8' });
+  assert.equal(label('shop-ci').stdout.trim(), 'wf-build');
+  assert.equal(label('shop-gate').stdout.trim(), 'wf-gate');
+  assert.notEqual(label('other').status, 0);
+  const register = read('ci-runner').match(/^register\(\) \{[\s\S]*?^\}$/m)[0];
+  assert.match(register, /role_label/, 'register uses the derived label');
+  assert.match(register, /does not match/, 'and refuses a different one');
+});

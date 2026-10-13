@@ -3,8 +3,8 @@
 #   ci-runner init                     create the ci-build and ci-gate profiles; set only the keys they lack
 #   ci-runner create NAME build|gate   a container: build = Docker and sudo for the runner (tests, deploys);
 #                                      gate = no Docker, no sudo (the workflow's own jobs only)
-#   ci-runner register OWNER/REPO NAME:LABEL...   ask once for the repository's registration token (hidden), then
-#                                      register a runner in each named container under its label, and start it
+#   ci-runner register OWNER/REPO NAME...   ask once for the repository's registration token (hidden), then register
+#                                      a runner in each container under its role's label (wf-build, wf-gate), and start it
 #   ci-runner status                   the containers and their runner services
 set -euo pipefail
 LXC=/snap/bin/lxc
@@ -50,10 +50,25 @@ create() {
   fi
 }
 
+# role_label NAME: the label NAME's runner registers under, from its profile. The workflow files name these labels, so a
+# variable (which any write collaborator can set) can only switch a runner on or off, never send a job to the other one.
+role_label() {
+  local config
+  config="$($LXC config show "$1")"
+  if grep -qx -- '- ci-gate' <<<"$config"; then echo wf-gate
+  elif grep -qx -- '- ci-build' <<<"$config"; then echo wf-build
+  else echo "ci-runner: $1 is neither a build nor a gate container" >&2; return 1
+  fi
+}
+
 register() {
-  local repo="$1" token pair; shift
+  local repo="$1" token pair name label; shift
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && $# -ge 1 ]] || usage
-  for pair in "$@"; do [[ "$pair" =~ ^[a-z][a-z0-9-]*:[A-Za-z0-9_.-]+$ ]] || usage; done
+  for pair in "$@"; do
+    [[ "$pair" =~ ^[a-z][a-z0-9-]*(:[A-Za-z0-9_.-]+)?$ ]] || usage
+    label="$(role_label "${pair%%:*}")"
+    [[ "$pair" != *:* || "${pair#*:}" == "$label" ]] || { echo "ci-runner: the label ${pair#*:} does not match ${pair%%:*}'s role ($label)." >&2; exit 1; }
+  done
   # Private repositories only: on a public one, a pull request from a fork could run code here. GitHub's API shows a
   # public repository to anyone and answers 404 for a private one asked without a token; anything else stops.
   local seen
@@ -63,8 +78,10 @@ register() {
   echo
   [[ "$token" =~ ^[A-Za-z0-9]+$ ]] || { echo "That doesn't look like a registration token." >&2; exit 1; }
   for pair in "$@"; do
-    echo "── ${pair%%:*}"
-    printf '%s\n' "$token" | $LXC exec "${pair%%:*}" -- /usr/local/sbin/runner-setup "$repo" "${pair#*:}"
+    name="${pair%%:*}"
+    label="$(role_label "$name")"
+    echo "── $name ($label)"
+    printf '%s\n' "$token" | $LXC exec "$name" -- /usr/local/sbin/runner-setup "$repo" "$label"
   done
 }
 

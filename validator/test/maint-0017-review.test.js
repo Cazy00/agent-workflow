@@ -48,7 +48,7 @@ test('I5: install-host stops unless ufw is active, and puts the LAN deny first',
 });
 
 test('I6: the setup record has a line for the project\'s runners', () => {
-  assert.match(read('templates/setup.md'), /^\| CI runners: .*`CI_RUNNER`.*`WF_CI_RUNNER`.* \| \|$/m);
+  assert.match(read('templates/setup.md'), /^\| CI runners: .*`CI_BUILD`.*`WF_GATE`.* \| \|$/m);
 });
 
 test('I6: the status workflow\'s fetch step fetches the pinned revision into the cache, again with the cache present, and fails on a revision it cannot find', t => {

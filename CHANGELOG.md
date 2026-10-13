@@ -9,7 +9,11 @@ What the owner's CI runners trust. The independent review of this release refute
 - **What each runner trusts**, stated in `server/ci-runner/README.md`, `operate.md` *CI runners* and `wf-ci.yml`:
   - the build runner trusts any account that can push;
   - the gate trusts any account that can change workflow files or the trusted branch. In owner-merge and manual modes, only the workflow's rules stop any account with write access from merging, so there the gate is as trustworthy as every such account.
-- **Every gate job's first step checks the branch name exactly** (second review). GitHub compares strings in expressions ignoring case, so a branch named `MAIN` passed the `runs-on` and `if:` guards. Before setting `WF_CI_RUNNER`, delete or update any branch carrying v2.5.0's `wf-ci.yml`, and turn on "Automatically delete head branches".
+- **Runner labels are fixed in the workflow files, and the variables are only on/off switches** (found by the owner's home-server session). Any write collaborator can set an Actions variable. With v2.5.0's `WF_CI_RUNNER` naming the runner, an agent could have sent `wf ci` to the build container it controls. Now:
+  - the gate is `wf-gate` and the build runner is `wf-build`;
+  - `WF_GATE=on` and `CI_BUILD=on` only switch them on, and any other value sends the jobs to GitHub's runner;
+  - `ci-runner register` derives each runner's label from its container (`register OWNER/REPO NAME...`) and refuses a mismatched one.
+- **Every gate job's first step checks the branch name exactly** (second review). GitHub compares strings in expressions ignoring case, so a branch named `MAIN` passed the `runs-on` and `if:` guards. Before switching `WF_GATE` on, delete or update any branch carrying v2.5.0's `wf-ci.yml`, and turn on "Automatically delete head branches".
 - **The agents' credential** is stated positively in the README: Contents and Pull requests only (or a classic `repo` token for a non-admin account); no workflow, variable or runner rights; no write keys; and the fork pull request setting kept off.
 - **`ci-runner init` sets only the keys a profile lacks.** A host's own limits survive a re-run, a half-made profile is repaired, and a failed read stops it rather than overwriting a value. `usage` no longer prints a line of code.
 - **The README covers sizing and LXD updates:** sizing per project (6 + 1 GiB each) and protecting remote access from the out-of-memory killer. LXD updates reload the daemon without stopping running containers; a refresh window or a hold is still offered.

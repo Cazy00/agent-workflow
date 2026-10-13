@@ -850,7 +850,7 @@ const expression = (yml, pattern) => {
     .replace(/!=/g, '!==').replace(/([^!=])==/g, '$1===')
     .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`)
     .replace(/\bvars\.(\w+)/g, 'ctx.vars.$1');
-  return ctx => new Function('ctx', `return (${js});`)({ vars: { WF_CI_RUNNER: '' }, ...ctx });
+  return ctx => new Function('ctx', `return (${js});`)({ vars: { WF_GATE: '' }, ...ctx });
 };
 test('each GitHub event runs the right job of the client page workflow', () => {
   const yml = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
@@ -869,7 +869,7 @@ test('each GitHub event runs the right job of the client page workflow', () => {
     ['dispatched run', { event_name: 'workflow_dispatch', ref: 'refs/heads/main', actor: 'alice', event: {} }, 'build'],
     ['daily schedule', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '17 3 * * *' } }, 'build'],
     ['15-minute schedule on GitHub\'s runner', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '*/15 * * * *' } }, 'none'],
-    ['15-minute schedule on the gate runner', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '*/15 * * * *' }, vars: { WF_CI_RUNNER: 'shop-gate' } }, 'build'],
+    ['15-minute schedule on the gate runner', { event_name: 'schedule', ref: 'refs/heads/main', actor: 'alice', event: { schedule: '*/15 * * * *' }, vars: { WF_GATE: 'on' } }, 'build'],
     ['pull request opened', pr('opened'), 'dispatch'],
     ['pull request marked ready', pr('ready_for_review'), 'dispatch'],
     ['pull request closed without merging', pr('closed'), 'dispatch'],
@@ -892,6 +892,6 @@ test('each GitHub event runs the right job of the client page workflow', () => {
   // waiting build; with the gate runner it builds, and joins.
   const tick = { event_name: 'schedule', ref: 'refs/heads/main', event: { schedule: '*/15 * * * *' } };
   assert.notEqual(group(tick), 'build', 'a tick on GitHub\'s runner stays out of the build group');
-  assert.equal(group({ ...tick, vars: { WF_CI_RUNNER: 'shop-gate' } }), 'build', 'a tick on the gate runner builds');
+  assert.equal(group({ ...tick, vars: { WF_GATE: 'on' } }), 'build', 'a tick on the gate runner builds');
   for (const ctx of [pr('closed', { merged: true }), pr('closed', { merged: true, ref: 'refs/heads/main' }), pr('opened'), { event_name: 'push', ref: 'refs/heads/claude/T-0003' }]) assert.notEqual(group(ctx), 'build', `${ctx.event_name} ${ctx.ref}`);
 });

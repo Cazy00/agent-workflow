@@ -56,13 +56,13 @@ Each change names the failure it prevents and the check that catches a recurrenc
 - **Build:** a container with Docker, where the project's tests and deploys run: pull-request code and its packages. Docker is cleared after every job.
 - **Gate:** a container with no Docker and no sudo. It runs only `wf ci`, `wf-status` and the client page, so the project's tests, and the packages they install, never run there by accident.
 - **Policy:** `wf ci` on a persistent self-hosted runner is weaker than on GitHub's fresh machines. The containers are persistent, and any account that can push can run code on either one: a pull request runs its own copy of the workflow files, and any branch can add a workflow that names a runner's label. What such a job leaves behind applies to later jobs. Until D1 gives each job a fresh container, `wf ci` on the gate is only as trustworthy as the accounts that can push, worker accounts included, and a job holding deployment secrets stays on GitHub's runner. The owner may also send `wf ci` back to GitHub once the minutes reset, by deleting `WF_CI_RUNNER`. This is the owner's decision.
-- **Corrected after the independent review (C1, 13 October).** The approved text said the gate keeps product code out, so product code couldn't tamper with the check. That was wrong for anyone who means to. The owner's A2 approval is to be re-confirmed on the corrected text before release.
+- **Corrected after the independent review (C1, 13 October).** The approved text said the gate keeps product code out, so product code couldn't tamper with the check. That was wrong for anyone who means to. The owner re-confirmed A2 on the corrected text on 13 October ("Approved").
 - **Private repositories only** (review I2). On a public repository, a pull request from a fork could run code on the owner's machine. `ci-runner register` refuses a repository GitHub shows publicly.
 - Prevents: § 2.1. Check: no check can see where a job ran. The project's setup record lists its runners, as it lists protections today.
 
 **A3. The planning-only fast path in templates.** `wf paths --planning-only` exits 0 when every changed path is planning, read with the baseline's config. It's run on both events, from the base-pinned validator. A project's CI skips its expensive product steps on that answer; records, workflow and documentation checks still run (`delivery.md`, unchanged).
 - Prevents: § 2.2. On self-hosted runners it saves queue time, not money. Check: `paths.test.js` with a records-only and a production diff, on a pull request and on a push.
-- **Built differently (review I6; awaiting the owner's word):** `wf paths` always reports a `planning_only` field instead of taking a flag that exits 0. The exit codes 0, 1 and 2 already mean satisfied, failed and error. An older pin's missing field means "run everything", which is the safe default. The check is in `git-integration.test.js`.
+- **Built differently (review I6; confirmed by the owner, 13 October):** `wf paths` always reports a `planning_only` field instead of taking a flag that exits 0. The exit codes 0, 1 and 2 already mean satisfied, failed and error. An older pin's missing field means "run everything", which is the safe default. The check is in `git-integration.test.js`.
 
 **A4. The client page: less often, and not on Pages.**
 - Build on the gate runner on a push to `main`, when a pull request opens or closes, and every 15 minutes. The dispatch job on every branch push goes.
@@ -71,7 +71,7 @@ Each change names the failure it prevents and the check that catches a recurrenc
 
 **A5. A private workflow repository.** The fetch in `wf-ci.yml`, the acceptance job and `scripts/wf` uses a read-only token when the secret `WF_READ_TOKEN` is set, or a mirror named in `workflow.mirror`. The pin and the base-branch rule are unchanged.
 - Prevents: § 2.3. Check: a template test, and a fixture that fetches a pinned revision from a local mirror.
-- **Built differently (review I6; awaiting the owner's word):**
+- **Built differently (review I6; confirmed by the owner, 13 October):**
   - No `workflow.mirror`. The token covers a private repository.
   - The fixture still exists: it runs the status workflow's real fetch step against a local repository standing in for GitHub (`maint-0017-review.test.js`).
   - The project launcher `scripts/wf` needs no change, because it uses the machine's own Git sign-in.

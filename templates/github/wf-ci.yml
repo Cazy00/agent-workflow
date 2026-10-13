@@ -45,8 +45,16 @@ jobs:
       - name: Fetch the validator pinned by the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          # A private workflow repository needs a read-only token for it in this secret (MAINT-0017); unset, the fetch
+          # is anonymous.
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -n "$WF_READ_TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
           git show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/config.json"
           pin="$(node -e '
             const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));

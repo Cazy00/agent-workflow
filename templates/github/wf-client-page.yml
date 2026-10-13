@@ -66,6 +66,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json headRefName,isDraft,isCrossRepository > "$RUNNER_TEMP/pull-requests.json"
+      - name: Fetch the pinned workflow
+        # Into the cache scripts/wf reads. A private workflow repository needs a read-only token for it in the secret
+        # WF_READ_TOKEN (MAINT-0017); this step alone sees it.
+        env:
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WF_READ_TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          pin="$(node -e '
+            const w = JSON.parse(require("fs").readFileSync("docs/workflow/config.json", "utf8")).workflow ?? {};
+            if (!/^[\w.-]+\/[\w.-]+$/.test(w.repo ?? "") || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(w.revision ?? "")) { console.error("wf: the config needs workflow.repo and a full workflow.revision"); process.exit(2); }
+            console.log(w.repo, w.revision)')"
+          read -r REPO REV <<< "$pin"
+          git init -q .cache/agent-workflow
+          git -C .cache/agent-workflow fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C .cache/agent-workflow checkout -q --detach FETCH_HEAD
       - name: Render the client page
         run: |
           set -euo pipefail

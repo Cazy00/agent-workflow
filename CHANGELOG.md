@@ -2,6 +2,15 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.5.1
+
+What the owner's CI runners trust, worked out with the owner's home-server session after v2.5.0:
+- **The gate runs only workflow files and the trusted branch's `scripts/wf`.** Code reaches it only from an account that can change workflow files (a token needs the Workflows permission) or merge to the trusted branch. The build runner runs whatever any push sends it. Unattended agents' tokens go without the Workflows permission, and workflow-file changes are pushed from a session the owner attends. Stated in `server/ci-runner/README.md`, `operate.md` *CI runners* and `wf-ci.yml`.
+- **`ci-runner init` creates the profiles only when they're missing.** Re-running it no longer undoes a host's own limits (`lxc profile set`).
+- **The README says how to size the containers for the host's memory, and how to keep LXD's updates from restarting them mid-job.**
+
+Moving a project to this pin: `upgrades.json`.
+
 ## v2.5.0
 
 MAINT-0017 Part A: our own machines. On 13 October GitHub Actions stopped on the owner's account when its included minutes ran out, and no pull request could merge, because `wf ci` ran only on GitHub's runners.

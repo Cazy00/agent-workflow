@@ -31,8 +31,9 @@ jobs:
     name: wf ci
     # GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017,
     # server/ci-runner): a container with no Docker and no sudo, apart from the project's tests and deploys. It is
-    # persistent, and any account that can push can run code on it (a pull request runs its own copy of this file),
-    # so there this check is only as trustworthy as those accounts until each job gets a fresh container (D1).
+    # persistent, and any account that can push workflow files can run code on it: a pull request runs its own copy of
+    # this file, and a token needs the Workflows permission to change it. So there, this check is only as trustworthy as
+    # those accounts until each job gets a fresh container (D1).
     runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:

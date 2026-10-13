@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -51,4 +53,32 @@ test('install-host opens nothing towards the LAN or the internet', () => {
   const h = read('install-host.sh');
   for (const rule of h.match(/^sudo ufw .*$/gm)) assert.match(rule, / on lxdbr0 /, rule);
   assert.ok(h.indexOf('route insert 1 deny in on lxdbr0') > 0 && h.indexOf('route insert 1 deny in on lxdbr0') < h.indexOf('route allow in on lxdbr0'), 'the LAN deny comes first');
+});
+
+// v2.5.1: a host sets its own limits (`lxc profile set`), and `init` must not undo them when it runs again.
+test('ci-runner init creates a profile with its defaults only when missing, and leaves an existing one alone', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-runner-init-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const fake = path.join(tmp, 'lxc'), log = path.join(tmp, 'calls'), exists = path.join(tmp, 'exists');
+  fs.writeFileSync(fake, `#!/usr/bin/env bash\necho "$*" >> "${log}"\nif [ "$1 $2" = "profile show" ]; then grep -qx "$3" "${exists}"; exit; fi\nexit 0\n`, { mode: 0o755 });
+  const fn = read('ci-runner').match(/^profile\(\) \{[\s\S]*?^\}$/m)[0];
+  const run = () => spawnSync('bash', ['-c', `set -euo pipefail\nLXC=${fake}\n${fn}\nprofile ci-build limits.memory=6GiB limits.cpu=4`], { encoding: 'utf8' });
+  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n');
+  fs.writeFileSync(exists, ''); fs.writeFileSync(log, '');
+  assert.equal(run().status, 0);
+  assert.deepEqual(calls(), ['profile show ci-build', 'profile create ci-build', 'profile set ci-build limits.memory=6GiB', 'profile set ci-build limits.cpu=4']);
+  fs.writeFileSync(exists, 'ci-build\n'); fs.writeFileSync(log, '');
+  assert.equal(run().status, 0);
+  assert.deepEqual(calls(), ['profile show ci-build'], 'an existing profile is left as the host set it');
+});
+
+// v2.5.1: what each runner trusts. The gate runs only workflow files and the trusted branch's scripts/wf, so a token
+// without the Workflows permission can't put code on it; the build runner runs whatever any push sends it.
+test('the docs say what each runner trusts, how to size them, and to keep LXD updates out of working hours', () => {
+  const readme = read('README.md');
+  assert.match(readme, /Workflows permission/);
+  assert.match(readme, /lxc profile set ci-build limits\.memory=/);
+  assert.match(readme, /refresh\.timer|refresh --hold lxd/);
+  const root = new URL('../../', import.meta.url);
+  for (const f of ['procedures/operate.md', 'templates/github/wf-ci.yml']) assert.match(fs.readFileSync(new URL(f, root), 'utf8'), /Workflows permission/, f);
 });

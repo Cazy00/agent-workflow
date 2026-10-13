@@ -74,5 +74,11 @@
       "The client page now rebuilds on the trusted branch, on pull request events, daily, and every 15 minutes with a gate runner; it no longer rebuilds on every push to every branch.",
       "Optional: wf paths reports planning_only, which a project's CI may use to skip its product steps on records-only changes (procedures/delivery.md)."
     ]
+  },
+  "v2.5.1": {
+    "notes": [
+      "On a host with the owner's CI runners: reinstall ci-runner from server/ci-runner (install-host.sh, or copy ci-runner to /usr/local/sbin). Its init no longer resets the profiles' limits a host has set with lxc profile set.",
+      "Refresh .github/workflows/wf-ci.yml (one comment changed: what the gate trusts); bin/wf-upgrade does it where the file is the old release's copy."
+    ]
   }
 }

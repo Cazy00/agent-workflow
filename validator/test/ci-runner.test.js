@@ -50,5 +50,5 @@ test('the registration token is read hidden, passed on stdin, and never printed'
 test('install-host opens nothing towards the LAN or the internet', () => {
   const h = read('install-host.sh');
   for (const rule of h.match(/^sudo ufw .*$/gm)) assert.match(rule, / on lxdbr0 /, rule);
-  assert.ok(h.indexOf('route deny in on lxdbr0') < h.indexOf('route allow in on lxdbr0'), 'the LAN deny comes first');
+  assert.ok(h.indexOf('route insert 1 deny in on lxdbr0') > 0 && h.indexOf('route insert 1 deny in on lxdbr0') < h.indexOf('route allow in on lxdbr0'), 'the LAN deny comes first');
 });

@@ -887,6 +887,11 @@ test('each GitHub event runs the right job of the client page workflow', () => {
   assert.equal(cancels(pr('closed', { merged: true, ref: 'refs/heads/main' })), true, 'a pull request event never joins the trusted build');
   assert.equal(cancels({ event_name: 'push', ref: 'refs/heads/claude/T-0003' }), true);
   // Only the trusted branch's own runs share the build group, so a pull-request run never replaces a waiting build.
-  for (const ctx of [{ event_name: 'push', ref: 'refs/heads/main' }, { event_name: 'workflow_dispatch', ref: 'refs/heads/main' }, { event_name: 'schedule', ref: 'refs/heads/main' }]) assert.equal(group(ctx), 'build', ctx.event_name);
+  for (const ctx of [{ event_name: 'push', ref: 'refs/heads/main' }, { event_name: 'workflow_dispatch', ref: 'refs/heads/main' }, { event_name: 'schedule', ref: 'refs/heads/main', event: { schedule: '17 3 * * *' } }]) assert.equal(group(ctx), 'build', ctx.event_name);
+  // MAINT-0017 review I1: a 15-minute tick that builds nothing never joins the build group, so it never cancels a
+  // waiting build; with the gate runner it builds, and joins.
+  const tick = { event_name: 'schedule', ref: 'refs/heads/main', event: { schedule: '*/15 * * * *' } };
+  assert.notEqual(group(tick), 'build', 'a tick on GitHub\'s runner stays out of the build group');
+  assert.equal(group({ ...tick, vars: { WF_CI_RUNNER: 'shop-gate' } }), 'build', 'a tick on the gate runner builds');
   for (const ctx of [pr('closed', { merged: true }), pr('closed', { merged: true, ref: 'refs/heads/main' }), pr('opened'), { event_name: 'push', ref: 'refs/heads/claude/T-0003' }]) assert.notEqual(group(ctx), 'build', `${ctx.event_name} ${ctx.ref}`);
 });

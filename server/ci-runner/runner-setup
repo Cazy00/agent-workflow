@@ -29,7 +29,7 @@ else
   cd "$dir"
   ./bin/installdependencies.sh >/dev/null
   sudo -u runner -H ./config.sh --unattended --replace --url "https://github.com/${repo}" --token "$token" \
-    --name "$(hostname)" --labels "$label" --work _work
+    --name "$(hostname)" --labels "$label" --no-default-labels --work _work
   if [ -x /opt/ci-hooks/clean-docker.sh ]; then
     echo "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/ci-hooks/clean-docker.sh" >> .env
   fi

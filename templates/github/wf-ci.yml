@@ -8,8 +8,8 @@
 # against that base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run
 # its own copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
 # (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
-# before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step sees. In
-# enforced and owner-merge modes it runs the integration gate (`wf ci`), which needs the agent's delivery evidence
+# before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
+# account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which needs the agent's delivery evidence
 # for a production change: it reads it from the pull request description, so editing the description reruns this
 # check on the same head. In manual mode the owner's signed receipts are checked on the owner's machine
 # (`wf closeout`), so here it checks the records only.
@@ -30,7 +30,9 @@ jobs:
   ci:
     name: wf ci
     # GitHub's runner unless the repository variable WF_CI_RUNNER names the project's gate runner (MAINT-0017,
-    # server/ci-runner): a container with no Docker and no sudo, where product code and its packages never run.
+    # server/ci-runner): a container with no Docker and no sudo, apart from the project's tests and deploys. It is
+    # persistent, and any account that can push can run code on it (a pull request runs its own copy of this file),
+    # so there this check is only as trustworthy as those accounts until each job gets a fresh container (D1).
     runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:

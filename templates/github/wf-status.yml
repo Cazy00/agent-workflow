@@ -41,7 +41,7 @@ jobs:
         run: gh pr list --state open --limit 500 --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "$RUNNER_TEMP/pull-requests.json"
       - name: Fetch the pinned workflow
         # Into the cache scripts/wf reads. A private workflow repository needs a read-only token for it in the secret
-        # WF_READ_TOKEN (MAINT-0017); this step alone sees it.
+        # WF_READ_TOKEN (MAINT-0017); only this step uses it, and any account that can push can read it.
         env:
           WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
         run: |

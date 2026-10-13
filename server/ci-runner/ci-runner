@@ -49,6 +49,11 @@ register() {
   local repo="$1" token pair; shift
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && $# -ge 1 ]] || usage
   for pair in "$@"; do [[ "$pair" =~ ^[a-z][a-z0-9-]*:[A-Za-z0-9_.-]+$ ]] || usage; done
+  # Private repositories only: on a public one, a pull request from a fork could run code here. GitHub's API shows a
+  # public repository to anyone and answers 404 for a private one asked without a token; anything else stops.
+  local seen
+  seen="$(curl -s -o /dev/null -w '%{http_code}' "https://api.github.com/repos/$repo")" || true
+  [[ "$seen" == 404 ]] || { echo "$repo is public, or its visibility couldn't be checked (HTTP $seen): these runners are for private repositories only." >&2; exit 1; }
   read -rsp "Registration token for $repo (hidden, from Settings → Actions → Runners → New self-hosted runner): " token
   echo
   [[ "$token" =~ ^[A-Za-z0-9]+$ ]] || { echo "That doesn't look like a registration token." >&2; exit 1; }

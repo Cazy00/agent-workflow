@@ -10,7 +10,7 @@ Before involving the owner in an operational rehearsal, inspect the existing aut
 
 ## CI runners
 
-A project whose variables `CI_RUNNER` and `WF_CI_RUNNER` name the owner's runners (`server/ci-runner/README.md`) depends on them: when one is down, jobs wait instead of failing, and merges stall. Deleting the variable moves its jobs back to GitHub; re-run the waiting jobs, or push again where a pull request changed its workflow files. The gate runner is persistent: `wf ci` there rests on product code never running on it, which the build/gate split provides and the owner accepted (MAINT-0017 A2).
+A project whose variables `CI_RUNNER` and `WF_CI_RUNNER` name the owner's runners (`server/ci-runner/README.md`, private repositories only) depends on them. When one is down, jobs queue and merges stall: cancel the waiting run, delete the variable, then push again or edit the pull request's description; a runner offline for 14 days must be registered again. The runners are persistent, and any account that can push can run code on them, the gate included: until each job gets a fresh container (MAINT-0017 D1), `wf ci` there is only as trustworthy as those accounts, and a job holding deployment secrets stays on GitHub's runner. Record when `WF_READ_TOKEN` expires: from that day every project's `wf ci` fails to fetch the workflow.
 
 ## Incidents and the hotfix lane
 

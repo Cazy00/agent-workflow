@@ -16,7 +16,7 @@ write_files:
     content: |
       #!/usr/bin/env bash
       # After every job (ACTIONS_RUNNER_HOOK_JOB_COMPLETED) and at boot: remove every container, volume and network,
-      # so the next job finds Docker as a fresh GitHub runner has it. Safe only with one runner in this container.
+      # so the next job finds none left; images and the build cache stay (pruned weekly). One runner per container only.
       docker ps -aq | xargs -r docker rm -f >/dev/null 2>&1
       docker volume prune -af >/dev/null 2>&1
       docker network prune -f >/dev/null 2>&1

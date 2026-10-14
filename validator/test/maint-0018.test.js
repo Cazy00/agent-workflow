@@ -82,6 +82,17 @@ test('MAINT-0018: a Draft task marked Done without its claim in the pull request
   assert.match(r.out.findings.join(' | '), /task status is Done \(T-0001\); production changes need Ready or Active, or Done in the pull request that claims the task/);
 });
 
+test('MAINT-0018: a Ready record in the trusted branch\'s history is not the pull request\'s claim (review S3)', t => {
+  // The task was Ready on the trusted branch, then set back to Draft there; the pull request marks it Done without claiming it.
+  const p = project(t);
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Draft')); const draft = p.commit('T-0001 back to Draft');
+  p.edit(taskPath, x => x.replace(`governing_baseline_revision: ${p.initial}`, `governing_baseline_revision: ${draft}`).replace('status: Draft', 'status: Done'));
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work, Done');
+  const r = p.run(['ci', '--baseline', draft, '--candidate', head, '--task', 'T-0001'], { evidence: evidence(head) });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.out.findings.join(' | '), /task status is Done \(T-0001\); production changes need Ready or Active, or Done in the pull request that claims the task/);
+});
+
 // Item 2. The acceptance of M-0004 had to merge before the owner's workflow upgrade (#79): merged first, the upgrade's
 // workflow files would have followed the accepted revision and voided its review and walk.
 function acceptanceRepo(t) {
@@ -107,7 +118,7 @@ function accEvidence(rev) {
     deferred: [], tests_changed: [],
   };
 }
-const accErrors = (r, head, base) => acceptanceEvidenceErrors({ evidence: accEvidence(r.accepted), milestone: 'M-0001', config: accConfig, candidate: r.at(head), baseline: r.at(base), records: { tasks: new Map() } });
+const accErrors = (r, head, base, config = accConfig) => acceptanceEvidenceErrors({ evidence: accEvidence(r.accepted), milestone: 'M-0001', config, candidate: r.at(head), baseline: r.at(base), records: { tasks: new Map() } });
 
 test('MAINT-0018: a workflow upgrade merged in from the trusted branch after the accepted revision keeps its review and walk', t => {
   const r = acceptanceRepo(t);
@@ -123,9 +134,21 @@ test('MAINT-0018: the project\'s own code merged in after the accepted revision,
   code.git('checkout', '-q', 'accept'); code.git('merge', '-q', '--no-edit', 'main');
   assert.match(accErrors(code, code.git('rev-parse', 'HEAD'), other).join(' | '), /the accepted candidate [0-9a-f]{12} is followed by changes to src\/b\.js/);
 
+  // Other workflow-protected paths (review S1): a project's own deploy workflow or bin/ is not what an upgrade writes.
+  const deploy = acceptanceRepo(t);
+  deploy.git('checkout', '-q', 'main'); deploy.write('.github/workflows/deploy.yml', 'deploy\n'); deploy.write('bin/www', 'server\n'); const ops = deploy.commit('the owner\'s deploy change');
+  deploy.git('checkout', '-q', 'accept'); deploy.git('merge', '-q', '--no-edit', 'main');
+  assert.match(accErrors(deploy, deploy.git('rev-parse', 'HEAD'), ops, { ...accConfig, paths: { ...accConfig.paths, enforcement: ['.github/**', 'docs/workflow/config.json', 'bin/**'] } }).join(' | '), /is followed by changes to \.github\/workflows\/deploy\.yml, bin\/www/);
+
   const own = acceptanceRepo(t);
   own.write('.github/workflows/wf-ci.yml', 'changed by this pull request\n'); const head = own.commit('a workflow edit of its own');
   assert.match(accErrors(own, head, own.git('rev-parse', 'main')).join(' | '), /is followed by changes to \.github\/workflows\/wf-ci\.yml/);
+});
+
+test('MAINT-0018: the files an upgrade may bring in under an acceptance are the ones bin/wf-upgrade writes', async () => {
+  const { UPGRADE_FILES } = await import('../lib/acceptance-evidence.js');
+  const { INSTALLED } = await import('../../adapters/upgrade.mjs');
+  assert.deepEqual([...UPGRADE_FILES].sort(), ['docs/workflow/config.json', ...INSTALLED.map(i => i.path)].sort());
 });
 
 // Item 3. mateen-systems names `**/*{invoice,numbering,issuer}*` deep, which also matched
@@ -135,6 +158,10 @@ test('MAINT-0018: a deep path glob reaches test files only when it names a test 
   assert.deepEqual(deepChanges(globs, ['apps/server/src/numbering.ts', 'apps/server/test/acceptance/numbering.ts', 'apps/web/src/invoice.test.tsx', 'apps/web/__tests__/issuer.ts', 'apps/server/migrations/0017.sql']), ['apps/server/src/numbering.ts', 'apps/server/migrations/0017.sql']);
   assert.deepEqual(deepChanges(['apps/server/test/acceptance/**', '**/*.spec.ts'], ['apps/server/test/acceptance/numbering.ts', 'apps/web/src/x.spec.ts', 'apps/web/src/x.ts']), ['apps/server/test/acceptance/numbering.ts', 'apps/web/src/x.spec.ts']);
   assert.deepEqual(deepChanges(undefined, ['src/a.js']), []);
+  // Review S5: only code files count as tests, in the usual layouts of several languages.
+  assert.deepEqual(deepChanges(['**/*payment*'], ['api/openapi/payment.spec.yaml', 'api/spec/payment.json']), ['api/openapi/payment.spec.yaml', 'api/spec/payment.json']);
+  assert.deepEqual(deepChanges(['**/*invoice*', '**/*Invoice*'], ['pkg/invoice_test.go', 'spec/models/invoice_spec.rb', 'src/test/java/InvoiceTest.java', 'tests/test_invoice.py', 'pkg/invoice.go']), ['pkg/invoice.go']);
+  assert.deepEqual(deepChanges(['**/*Test*'], ['src/test/java/InvoiceTest.java']), ['src/test/java/InvoiceTest.java']);
 });
 
 // Item 4 and item 13. The launcher is a template now (templates/scripts/wf): an explicit --repo, such as a clean review
@@ -165,7 +192,16 @@ test('MAINT-0018: the installed launcher passes an explicit --repo on, and tells
   const next = wf('next', '--json');
   assert.equal(next.status, 0, next.stdout + next.stderr);
   assert.equal(JSON.parse(next.stdout).workflow.newer, 'v99.0.0');
-  assert.match(wf('next').stdout, /^Workflow: Cazy00\/agent-workflow v2\.6\.0 \([0-9a-f]{12}\)[^\n]*\n {2}A newer release, v99\.0\.0, exists\. Moving to it is the owner's decision/m);
+  assert.match(wf('next').stdout, /^Workflow: Cazy00\/agent-workflow v2\.6\.0 \([0-9a-f]{40}\)[^\n]*\n {2}A newer release, v99\.0\.0, exists\. Moving to it is the owner's decision/m);
+  // Review N2: a pre-release tag is not a release.
+  assert.equal(spawnSync('git', ['-C', path.join(dir, '.cache/agent-workflow'), 'tag', 'v99.0.1-rc1']).status, 0);
+  assert.equal(JSON.parse(wf('next', '--json').stdout).workflow.newer, 'v99.0.0');
+  // Review S2: a read-only installation still runs.
+  fs.rmSync(path.join(dir, '.cache/agent-workflow/.git/wf-release-check'), { force: true });
+  fs.chmodSync(path.join(dir, '.cache/agent-workflow/.git'), 0o555);
+  t.after(() => fs.chmodSync(path.join(dir, '.cache/agent-workflow/.git'), 0o755));
+  const readOnly = wf('records');
+  assert.equal(readOnly.status, 0, readOnly.stdout + readOnly.stderr);
 });
 
 test('MAINT-0018: wf-upgrade refreshes the launcher an older release wrote, and moves the milestones in progress with the pin', t => {

@@ -9,10 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { LEGACY_LAUNCHERS, sha256 } from './launcher.mjs';
+import { IN_PROGRESS } from '../validator/lib/records.js';
 
 const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 // Files the scaffold installs from a template, and how it fills them in.
-const INSTALLED = [
+export const INSTALLED = [
   { path: '.github/workflows/wf-ci.yml', template: 'templates/github/wf-ci.yml', branch: true },
   { path: '.github/workflows/wf-status.yml', template: 'templates/github/wf-status.yml', branch: true },
   { path: '.github/workflows/wf-client-page.yml', template: 'templates/github/wf-client-page.yml', branch: true },
@@ -132,7 +133,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
     const text = fs.readFileSync(path.join(project, rel), 'utf8');
     const front = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
     const status = front?.match(/^status:[ \t]*(\S+)/m)?.[1];
-    if (!front || !['Authorised', 'Active', 'Blocked', 'Verified'].includes(status)) continue;
+    if (!front || !IN_PROGRESS.includes(status)) continue;
     const moved = /^workflow_version:.*$/m.test(front) ? front.replace(/^workflow_version:.*$/m, `workflow_version: ${version}`) : front.replace(/^status:.*$/m, line => `${line}\nworkflow_version: ${version}`);
     if (moved !== front) changes.push({ path: rel, action: 'update', content: moved + text.slice(front.length), why: `${file.slice(0, 6)} is ${status}: it moves to ${version} with the pin, which is the owner's decision; merging this change makes it` });
   }

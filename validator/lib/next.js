@@ -155,7 +155,7 @@ export function renderNext(n) {
   if (n.note) lines.push(`Note: ${n.note}`, '');
   const w = n.workflow;
   if (w) {
-    lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.version ?? 'unknown version'} (${String(w.revision ?? '').slice(0, 12)}); name it in the session outcome (\`workflow\`)`);
+    lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.version ?? 'unknown version'} (${w.revision ?? 'no revision'}); name it in the session outcome (\`workflow\`)`);
     if (w.newer) lines.push(`  A newer release, ${w.newer}, exists. Moving to it is the owner's decision (bin/wf-upgrade); a milestone in progress stays on its version unless the owner decides otherwise.`);
     lines.push('');
   }

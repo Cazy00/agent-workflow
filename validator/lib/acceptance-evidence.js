@@ -15,17 +15,21 @@ const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = v => typeof v === 'string' && v.trim() !== '';
 const https = v => { if (typeof v !== 'string' || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
 
+// MAINT-0018: the files bin/wf-upgrade writes (adapters/upgrade.mjs INSTALLED, and the pin), the only workflow files an
+// upgrade brings in. A test keeps the two lists equal.
+export const UPGRADE_FILES = ['docs/workflow/config.json', 'scripts/wf', '.github/workflows/wf-ci.yml', '.github/workflows/wf-status.yml', '.github/workflows/wf-client-page.yml', '.claude/agents/independent-reviewer.md', '.claude/agents/trial-walker.md'];
 // A revision the acceptance relies on: in this pull request's history, with only records changed since (planning and
 // governing paths, since the acceptance itself changes the milestone record), never an acceptance test. MAINT-0018: and
-// workflow files (enforcement paths) the trusted branch brought in, as a merge of it carries delivery evidence over
+// the workflow files of an upgrade the trusted branch brought in, as a merge of it carries delivery evidence over
 // (lib/carry.js): an upgrade the owner merged during the milestone changes nothing the review read or the walk used. The
-// project's own code from the trusted branch still needs a new review and walk.
+// project's own code or deploy workflows from the trusted branch (other enforcement paths included, review S1) still need
+// a new review and walk.
 function covers(config, candidate, rev, what, baseline = null) {
   if (!/^[0-9a-f]{40,64}$/.test(rev ?? '')) return [`${what} needs a full commit hash`];
   if (rev === candidate.name) return [];
   if (candidate.kind !== 'git' || !candidate.isAncestor(rev)) return [`${what} ${rev.slice(0, 12)} is not in this pull request's history`];
   const merged = baseline?.kind === 'git' ? mergedFrom({ baseline, candidate, from: rev }) : () => false;
-  const code = classifyPaths(config, candidate.changedPaths(rev)).filter(c => (!['planning', 'governing'].includes(c.category) || c.acceptance_test) && !(c.category === 'enforcement' && merged(c.path))).map(c => c.path);
+  const code = classifyPaths(config, candidate.changedPaths(rev)).filter(c => (!['planning', 'governing'].includes(c.category) || c.acceptance_test) && !(c.category === 'enforcement' && UPGRADE_FILES.includes(c.path) && merged(c.path))).map(c => c.path);
   return code.length ? [`${what} ${rev.slice(0, 12)} is followed by changes to ${code.slice(0, 5).join(', ')}${code.length > 5 ? ', …' : ''}; review and walk the code being accepted`] : [];
 }
 

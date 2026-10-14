@@ -284,7 +284,7 @@ async function main() {
       if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
-    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests });
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null });
     if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
@@ -327,6 +327,8 @@ async function main() {
     return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
+  // MAINT-0018: the workflow pins a session may have run under, the baseline's and the candidate's.
+  const sessionPins = () => [config.workflow, (() => { try { return loadConfig(candidate).workflow; } catch { return null; } })()];
   // MAINT-0016: the delivery evidence, started (lib/evidence-skeleton.js). It grants nothing; `wf ci` checks the result.
   if (cmd === 'evidence') {
     if (baseline.kind !== 'git' || candidate.kind !== 'git' || !(o.candidate || o.head)) throw new WfError('evidence needs --baseline and --candidate as Git revisions');
@@ -399,6 +401,12 @@ async function main() {
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }
+  else if (cmd === 'session' && !taskId()) {
+    // MAINT-0018: an outcome that is not verified-complete reads no task evidence, so a session that ends on an acceptance
+    // or planning pull request needs no task to name.
+    if (!o.record) throw new WfError('--record is required');
+    result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins() });
+  }
   else {
     const task = taskId();
     if (!task) throw new WfError('--task T-0001 or a matching branch is required');
@@ -424,7 +432,7 @@ async function main() {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
         if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository });
+        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins() });
       }
     }
   }

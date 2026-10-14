@@ -79,12 +79,14 @@ export function governingInputs(source, rd, seeds) {
 
 // The workflow pin (config `workflow`, profile `workflow_version`) is not a governing requirement: moving it is reviewed
 // as its own change and the moved validator runs on every check (IDEA-18). Nor are the config keys no release reads any
-// more, which bin/wf-upgrade removes with the pin (upgrades.json). Every other part of both files still counts.
+// more, which bin/wf-upgrade removes with the pin (upgrades.json). Every other part of both files still counts. MAINT-0018:
+// nor is a milestone's `workflow_version`, which moves with the pin; the rest of the milestone record still counts.
 const PINNED = new Set(['docs/workflow/config.json']);
 const UNREAD = ['delegation', 'delivery', 'execution', 'setup_budget_days'];
+const MILESTONE = /\/milestones\/M-\d{4}\.md$/;
 function withoutPin(source, rel) {
   const raw = source.read(rel);
-  if (raw === null || !PINNED.has(rel) && !rel.endsWith('/profile.md')) return raw;
+  if (raw === null || !PINNED.has(rel) && !rel.endsWith('/profile.md') && !MILESTONE.test(rel)) return raw;
   if (PINNED.has(rel)) {
     try { const c = JSON.parse(raw); for (const k of ['workflow', ...UNREAD]) delete c[k]; return JSON.stringify(c); } catch { return raw; }
   }
@@ -104,7 +106,7 @@ export function governingChanged({ baseline, revision, recordsDir, task, previou
   for (const id of ids) {
     if (JSON.stringify(before.definitions.get(id)) !== JSON.stringify(after.definitions.get(id))) return true;
   }
-  const pinned = [...paths].filter(p => PINNED.has(p) || p === `${recordsDir}/profile.md`);
+  const pinned = [...paths].filter(p => PINNED.has(p) || p === `${recordsDir}/profile.md` || (p.startsWith(`${recordsDir}/milestones/`) && MILESTONE.test(p)));
   for (const p of pinned) if (withoutPin(old, p) !== withoutPin(baseline, p)) return true;
   const rest = [...paths].filter(p => !pinned.includes(p));
   return rest.length ? baseline.changedSince(revision, rest) : false;

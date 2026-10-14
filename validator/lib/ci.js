@@ -1,7 +1,7 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { DIRS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
+import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths, matchesAny } from './paths.js';
+import { classifyPaths, deepChanges } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, OUTCOMES } from './readiness.js';
@@ -96,6 +96,16 @@ export function ownerApprovedTest({ trust, candidate, path }) {
   return false;
 }
 
+// MAINT-0018: a milestone's planned tasks wait as Draft on the trusted branch and are claimed on their own branch
+// (procedures/execute.md), so the trusted branch never holds them Ready or Active. Their Done record still travels as the
+// pull request's last commit when the pull request itself claims the task: a commit of its own, not on the trusted branch,
+// where the record is Ready or Active. Without it every task needed a Done pull request of its own (six in M-0004 of
+// mateen-systems), each one more round of checks and a wait before the next task.
+function claimedHere({ baseline, candidate, path }) {
+  if (candidate.kind !== 'git' || baseline.kind !== 'git') return false;
+  return candidate.versions(path).some(c => !baseline.isAncestor(c) && ['Ready', 'Active'].includes(parseFrontMatter(candidate.atRevision(c).read(path) ?? '').data?.status));
+}
+
 // `approved`: the trusted tip's records when the baseline is an intermediate revision (closeout), so the scenarios a gate
 // lets fail are also pending there (MAINT-0012).
 export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null, autoMerge = false, acceptanceEvidence = null }) {
@@ -169,8 +179,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
         if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records`); }
         else findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
       }
-      // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md).
-      const deep = production.filter(p => matchesAny(config.review?.deep_paths, p));
+      // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md);
+      // a test file only where the glob names tests itself (MAINT-0018, lib/paths.js).
+      const deep = deepChanges(config.review?.deep_paths, production);
       const errors = [
         ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried }),
         ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null }),
@@ -190,9 +201,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     for (const r of gate.reasons) findings.push(`  ${r}`);
     const baselineStatus = baselineRecords.tasks.get(id)?.data?.status;
     const statusOk = ['Ready', 'Active'].includes(gate.status);
-    const doneHere = gate.status === 'Done' && ['Ready', 'Active'].includes(baselineStatus);
+    const doneHere = gate.status === 'Done' && (['Ready', 'Active'].includes(baselineStatus) || (baselineStatus === 'Draft' && claimedHere({ baseline, candidate, path: `${rd}/${DIRS.task}/${id}.md` })));
     if (gate.outcome === OUTCOMES.ready) {
-      if (!statusOk && !doneHere) { findings.push(`task status is ${gate.status} (${id}); production changes need Ready or Active (or Done in this pull request)`); fail = true; }
+      if (!statusOk && !doneHere) { findings.push(`task status is ${gate.status} (${id}); production changes need Ready or Active, or Done in the pull request that claims the task (its record Ready or Active in an earlier commit of the pull request, or on the trusted branch)`); fail = true; }
     } else if (gate.outcome === OUTCOMES.subset) {
       const outside = paths.filter(p => !gate.subset.some(s => within(p, s)));
       if (outside.length) { findings.push(`outside the ready subset [${gate.subset.join(', ')}]: ${outside.join(', ')}`); fail = true; }
@@ -279,9 +290,17 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // finding accepted rather than fixed, or a task in a milestone still waiting for an earlier acceptance needs the owner.
   // MAINT-0016: the pull request that accepts a milestone carries the acceptance evidence where the project asks for it
   // (acceptance_evidence; lib/acceptance-evidence.js): the milestone's review, the trial walkthrough, and what was deferred.
+  // MAINT-0018: a milestone authorised here names the workflow release it will run under, the candidate's pin, so its work
+  // can be traced to that release; a mismatched one is refused by the records check (lib/records.js).
+  let pinNow = null;
+  try { pinNow = loadConfig(candidate).workflow?.version ?? null; } catch { /* reported by the records check */ }
+  if (pinNow) for (const { data: m } of candidateRecords.milestones.values()) {
+    const before = m?.id ? baselineRecords.milestones.get(m.id)?.data?.status : null;
+    if (m?.id && IN_PROGRESS.includes(m.status) && (before == null || before === 'Draft') && (m.workflow_version == null || m.workflow_version === '')) { findings.push(`${m.id} is authorised here without workflow_version: set workflow_version: ${pinNow} in its record, the workflow release it will run under (templates/milestone.md)`); fail = true; }
+  }
   const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
   if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
-    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, records: [baselineRecords, candidateRecords] });
+    const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, baseline, records: [baselineRecords, candidateRecords] });
     for (const e of errors) findings.push(`acceptance evidence: ${e}`);
     if (errors.length) fail = true;
   }
@@ -336,5 +355,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts };
+  // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).
+  const workflow = config.workflow?.version || config.workflow?.revision ? { version: config.workflow.version ?? null, revision: config.workflow.revision ?? null } : null;
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
 }

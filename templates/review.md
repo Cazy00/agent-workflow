@@ -8,6 +8,7 @@ Governing requirements, acceptance IDs and design:
 Implementer identity (tool and model):
 Reviewer identity (tool and model), separate context reference and actual harness launch options/metadata (no inherited conversation):
 Review level (light, standard or deep; `procedures/review.md`) and why:
+Workflow version (the pin in `docs/workflow/config.json` at the candidate):
 Candidate HEAD/tree and worktree unchanged after review:
 Evidence collected through:
 

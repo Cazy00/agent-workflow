@@ -8,15 +8,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { LEGACY_LAUNCHERS, sha256 } from './launcher.mjs';
+import { IN_PROGRESS } from '../validator/lib/records.js';
 
 const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 // Files the scaffold installs from a template, and how it fills them in.
-const INSTALLED = [
+export const INSTALLED = [
   { path: '.github/workflows/wf-ci.yml', template: 'templates/github/wf-ci.yml', branch: true },
   { path: '.github/workflows/wf-status.yml', template: 'templates/github/wf-status.yml', branch: true },
   { path: '.github/workflows/wf-client-page.yml', template: 'templates/github/wf-client-page.yml', branch: true },
   { path: '.claude/agents/independent-reviewer.md', template: 'templates/claude/agents/independent-reviewer.md' },
   { path: '.claude/agents/trial-walker.md', template: 'templates/claude/agents/trial-walker.md' },
+  // MAINT-0018: the launcher, a template since v2.6.0; `legacy` holds the copies releases before that wrote (lib: adapters/launcher.mjs).
+  { path: 'scripts/wf', template: 'templates/scripts/wf', mode: 0o755, legacy: LEGACY_LAUNCHERS },
 ];
 
 export const parseVersion = v => (String(v ?? '').match(/^v?(\d+)\.(\d+)\.(\d+)$/) ?? []).slice(1).map(Number);
@@ -120,6 +124,19 @@ export function planUpgrade({ project, workflowRepo, rev }) {
     const next = profile.replace(/^workflow_version:.*$/m, `workflow_version: ${toRelease.tag ?? 'UNRELEASED'}`);
     if (next !== profile) changes.push({ path: `${rd}/profile.md`, action: 'update', content: next, why: 'workflow_version follows the pin' });
   }
+  // MAINT-0018: a milestone in progress runs under the pin (its workflow_version); moving the pin moves it, which only the
+  // owner decides. The change says so, and the owner's merge of it is that decision (procedures/maintenance.md).
+  const milestones = path.join(project, rd, 'milestones');
+  const version = toRelease.tag ?? 'UNRELEASED';
+  if (fs.existsSync(milestones)) for (const file of fs.readdirSync(milestones).filter(f => /^M-\d{4}\.md$/.test(f)).sort()) {
+    const rel = `${rd}/milestones/${file}`;
+    const text = fs.readFileSync(path.join(project, rel), 'utf8');
+    const front = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
+    const status = front?.match(/^status:[ \t]*(\S+)/m)?.[1];
+    if (!front || !IN_PROGRESS.includes(status)) continue;
+    const moved = /^workflow_version:.*$/m.test(front) ? front.replace(/^workflow_version:.*$/m, `workflow_version: ${version}`) : front.replace(/^status:.*$/m, line => `${line}\nworkflow_version: ${version}`);
+    if (moved !== front) changes.push({ path: rel, action: 'update', content: moved + text.slice(front.length), why: `${file.slice(0, 6)} is ${status}: it moves to ${version} with the pin, which is the owner's decision; merging this change makes it` });
+  }
   for (const rel of removeFiles) {
     const full = inside(project, rel);
     if (!full) throw new Error(`upgrades.json names a path outside the project: ${rel}`);
@@ -133,13 +150,13 @@ export function planUpgrade({ project, workflowRepo, rev }) {
     if (newer === null) continue;
     const want = fill(newer, item);
     if (!fs.existsSync(full)) {
-      if (addFiles.has(item.path)) changes.push({ path: item.path, action: 'add', content: want, why: 'the scaffold installs it since a release after the pin; delete it to opt out' });
+      if (addFiles.has(item.path)) changes.push({ path: item.path, action: 'add', content: want, mode: item.mode, why: 'the scaffold installs it since a release after the pin; delete it to opt out' });
       continue;
     }
     const have = fs.readFileSync(full, 'utf8');
     if (have === want) continue;
     const older = show(workflowRepo, from, item.template);
-    if (older !== null && have === fill(older, item)) changes.push({ path: item.path, action: 'update', content: want, why: 'still the pinned release\'s copy, so it takes the new one' });
+    if ((older !== null && have === fill(older, item)) || item.legacy?.includes(sha256(have))) changes.push({ path: item.path, action: 'update', content: want, mode: item.mode, why: 'still the pinned release\'s copy, so it takes the new one' });
     else left.push({ path: item.path, why: `changed in this project; compare it with ${item.template} at ${to.slice(0, 12)} and merge by hand` });
   }
   return { project, from, to, from_version: fromRelease.version, to_version: toRelease.tag ?? `${toRelease.version} (unreleased)`, current: false, changes, notes, left, removed_config: removed, steps_from: raw === null ? null : listName };
@@ -153,7 +170,7 @@ export function applyUpgrade(plan) {
   for (const c of plan.changes) {
     const full = path.join(plan.project, c.path);
     if (c.action === 'remove') fs.rmSync(full, { recursive: true, force: true });
-    else { fs.mkdirSync(path.dirname(full), { recursive: true }); fs.writeFileSync(full, c.content); }
+    else { fs.mkdirSync(path.dirname(full), { recursive: true }); fs.writeFileSync(full, c.content); if (c.mode) fs.chmodSync(full, c.mode); }
   }
 }
 

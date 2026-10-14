@@ -8,14 +8,19 @@
 import { classifyPaths } from './paths.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
+// Whether a path changed since `from` came from the trusted branch: the pull request had not touched it by then, and it
+// now holds the trusted branch's content. MAINT-0018 reads the same for the acceptance evidence (lib/acceptance-evidence.js).
+export function mergedFrom({ baseline, candidate, from }) {
+  const reviewed = candidate.atRevision(from), base = baseline.mergeBase(from);
+  const before = base ? candidate.atRevision(base) : null;
+  return p => reviewed.blob(p) === (before ? before.blob(p) : null) && candidate.blob(p) === baseline.blob(p);
+}
 export function carriedFrom({ config, baseline, candidate, from }) {
   if (candidate.kind !== 'git' || baseline.kind !== 'git') return { ok: false, why: 'evidence carries over only between Git revisions' };
   if (from === candidate.name) return { ok: true, paths: [] };
   if (!SHA.test(from ?? '') || !candidate.isAncestor(from)) return { ok: false, why: `${String(from).slice(0, 12)} is not an earlier revision of this candidate` };
   const changed = candidate.changedPaths(from);
-  const reviewed = candidate.atRevision(from), base = baseline.mergeBase(from);
-  const before = base ? candidate.atRevision(base) : null;
-  const merged = p => reviewed.blob(p) === (before ? before.blob(p) : null) && candidate.blob(p) === baseline.blob(p);
+  const merged = mergedFrom({ baseline, candidate, from });
   const own = classifyPaths(config, changed).filter(c => (c.category !== 'planning' || c.acceptance_test) && !merged(c.path)).map(c => c.path);
   return own.length ? { ok: false, why: `changed since ${from.slice(0, 12)}: ${own.slice(0, 5).join(', ')}${own.length > 5 ? ', …' : ''}` } : { ok: true, paths: changed };
 }

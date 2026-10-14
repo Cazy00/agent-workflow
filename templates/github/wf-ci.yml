@@ -110,6 +110,7 @@ jobs:
               if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
               if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
               if (r.deferred?.length) lines.push("**For the owner at the milestone’s acceptance:**", ...r.deferred.map(x => `- ${x}`));
+              if (r.workflow) lines.push(`Judged by agent-workflow ${r.workflow.version ?? ""} (${String(r.workflow.revision ?? "").slice(0, 12)}), the base branch’s pin.`);
               fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             ' "$RUNNER_TEMP/ci.json" || true
             exit "$code"

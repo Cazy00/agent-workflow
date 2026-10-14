@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Local convenience launcher: runs the workflow validator at the revision pinned in docs/workflow/config.json.
+# Feedback only. Authoritative gates use the owner-installed launcher outside this checkout (procedures/setup.md step 6).
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CONFIG="$ROOT/docs/workflow/config.json"
+[ -f "$CONFIG" ] || { echo "wf: $CONFIG not found" >&2; exit 2; }
+read -r REPO REV < <(node -e '
+  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workflow;
+  if (!c.repo || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(c.revision)) { console.error("wf: workflow.repo and a full workflow.revision must be set"); process.exit(2); }
+  console.log(c.repo, c.revision)' "$CONFIG")
+CACHE="$ROOT/.cache/agent-workflow"
+[ -d "$CACHE/.git" ] || git clone --quiet "https://github.com/$REPO.git" "$CACHE"
+if [ "$(git -C "$CACHE" rev-parse HEAD)" != "$REV" ]; then
+  git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet --detach "$REV"
+fi
+[ "$(git -C "$CACHE" rev-parse HEAD)" = "$REV" ] || { echo "wf: installation is not at the pinned revision $REV" >&2; exit 2; }
+# The newest release the installation knows, which `wf next` mentions when it is newer than the pin (MAINT-0018). Its
+# tags are fetched at most once a day, never prompting; a failed fetch leaves them as they were and is not retried until
+# the next day. A read-only installation is only read, never fetched.
+STAMP="$CACHE/.git/wf-release-check"
+if [ -w "$CACHE/.git" ] && [ -z "$(find "$STAMP" -mmin -1440 2>/dev/null)" ]; then
+  GIT_TERMINAL_PROMPT=0 git -C "$CACHE" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 fetch --quiet --tags origin >/dev/null 2>&1 || true
+  touch "$STAMP" 2>/dev/null || true
+fi
+WF_LATEST_RELEASE="$(git -C "$CACHE" tag --list 'v[0-9]*' --sort=-v:refname 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+export WF_LATEST_RELEASE
+# The checkout's own repository by default; an explicit --repo (a clean review clone, for one) is passed on instead.
+for arg in "$@"; do
+  if [ "$arg" = --repo ]; then exec node "$CACHE/validator/cli.js" "$@"; fi
+done
+exec node "$CACHE/validator/cli.js" --repo "$ROOT" "$@"

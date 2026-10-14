@@ -139,7 +139,7 @@ const show = rel => {
 };
 // Read every pinned file before the first write, so a revision that lacks one leaves nothing behind.
 const optional = rel => { const r = git(workflowRepo, ['show', `${revision}:${rel}`], { allowFailure: true }); return r.status === 0 ? r.stdout : null; };
-const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), walker: optional('templates/claude/agents/trial-walker.md'), status: optional('templates/github/wf-status.yml'), ci: optional('templates/github/wf-ci.yml'), compact: optional('templates/claude/compact-instructions.md'), clientPage: optional('templates/github/wf-client-page.yml') };
+const pinned = { config: show('config.default.json'), profile: show('templates/profile.md'), setup: show('templates/setup.md'), reviewer: optional('templates/claude/agents/independent-reviewer.md'), walker: optional('templates/claude/agents/trial-walker.md'), status: optional('templates/github/wf-status.yml'), ci: optional('templates/github/wf-ci.yml'), compact: optional('templates/claude/compact-instructions.md'), clientPage: optional('templates/github/wf-client-page.yml'), launcher: optional('templates/scripts/wf') };
 if (o.clientPage && pinned.clientPage === null) fail(`the workflow revision ${revision} has no client page; pin a later release or omit --client-page`);
 if (shared && !/^owners:/m.test(pinned.profile)) fail(`the workflow revision ${revision} has no shared-project support (its profile template lacks owners); pin a later release or omit --owner`);
 
@@ -285,8 +285,9 @@ write('docs/workflow/inbox/README.md', `# Inbox
 Drop raw input for the agent here: notes, transcripts, screenshots, links, requirement fragments. Items carry no authority. The agent triages each one at discovery into the profile, a spec, a decision, a milestone or a task, records where it went, and moves it to \`done/\`. A note that resolves a reserved decision is the request, not the approval. See \`procedures/readiness.md\` in the workflow installation.
 `);
 
-// Local convenience launcher, adapters and the ignored installation cache.
-const WF = [
+// Local convenience launcher, adapters and the ignored installation cache. The launcher comes from the pinned release
+// (templates/scripts/wf, MAINT-0018); a release before v2.6.0 has none, and gets the launcher it was written with.
+const WF = pinned.launcher ?? [
   '#!/usr/bin/env bash',
   '# Local convenience launcher: runs the workflow validator at the revision pinned in docs/workflow/config.json.',
   '# Feedback only. Authoritative gates use the owner-installed launcher outside this checkout (procedures/setup.md step 6).',

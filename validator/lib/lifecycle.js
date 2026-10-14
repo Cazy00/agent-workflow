@@ -53,10 +53,34 @@ export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage 
 }
 // Run evidence lives on the task's GitHub pull request or issue; a link to it is durable evidence.
 const GITHUB_EVIDENCE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/\d+(#[\w-]+)?$/;
-export function evaluateSession({ record: r, candidate, lifecycle, repository }) {
+// What each outcome-specific field holds, so a missing one says how to fill it in (MAINT-0018, F-0001 of mateen-systems).
+const HINTS = {
+  limit: 'the limit that stopped the session, for example "thirty-minute maintenance limit" or "context limit"',
+  usage: 'time_seconds, tokens, spend and attempts, null where unknown',
+  checkpoint: 'the commit or record where work can resume',
+  prerequisite: 'the record or input the work waits for',
+  impact: 'what cannot proceed until then',
+  responsible: 'who resolves it: the owner, a person, or the agent',
+  failure: 'what failed',
+  retry_difference: 'why a retry would go differently',
+};
+const short = rev => String(rev ?? '').slice(0, 12);
+// MAINT-0018: a session names the workflow version it ran under, the pin at its baseline or at its candidate (a session
+// that moves the pin ran under the one it moved from), so its outcome, friction and cost can be traced to a release.
+function workflowErrors(r, pins) {
+  const known = pins.filter(p => p?.version && p?.revision);
+  if (!known.length) return [];
+  const w = r?.workflow;
+  const expected = [...new Set(known.map(p => JSON.stringify({ version: p.version, revision: p.revision })))].join(' or ');
+  if (!w || typeof w !== 'object' || !w.version || !w.revision) return [`session requires workflow, the version it ran under: ${expected} (the pin in docs/workflow/config.json)`];
+  if (!known.some(p => p.version === w.version && p.revision === w.revision)) return [`session workflow ${w.version} (${short(w.revision)}) is not the pin at the baseline or the candidate: ${expected}`];
+  return [];
+}
+export function evaluateSession({ record: r, candidate, lifecycle, repository, workflow = [] }) {
   const errors = [];
-  const require = (...fields) => { for (const f of fields) if (!r?.[f]) errors.push(`session requires ${f}`); };
+  const require = (...fields) => { for (const f of fields) if (!r?.[f]) errors.push(`session requires ${f}${HINTS[f] ? `: ${HINTS[f]}` : ''}`); };
   require('outcome', 'next_action', 'friction');
+  errors.push(...workflowErrors(r, [workflow].flat()));
   const checkEvidence = () => {
     if (!Array.isArray(r.evidence) || !r.evidence.length) errors.push('session requires durable evidence');
     for (const p of r.evidence ?? []) {
@@ -69,7 +93,8 @@ export function evaluateSession({ record: r, candidate, lifecycle, repository })
     case 'progress': require('summary'); checkEvidence(); break;
     case 'ready-for-review': require('candidate', 'summary'); checkEvidence(); if (r.candidate !== candidate.name) errors.push('session candidate does not match'); break;
     case 'verified-complete':
-      if (!lifecycle?.ok || lifecycle.revision !== candidate.name) errors.push('technical completion evidence has not passed validation');
+      if (!lifecycle) errors.push('verified-complete needs the task\'s lifecycle evidence: run wf session with --task');
+      else if (!lifecycle.ok || lifecycle.revision !== candidate.name) errors.push('technical completion evidence has not passed validation');
       if (lifecycle?.unverified?.length) checkEvidence(); // enforced mode: the pull request that carries the review must be linked
       break;
     case 'blocked': require('prerequisite', 'impact', 'responsible'); break;

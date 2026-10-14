@@ -7,6 +7,7 @@ client_title:
 client_outcome:
 client_measure:
 status: Draft
+workflow_version:
 signing: task
 coordinator:
 owner:
@@ -24,6 +25,7 @@ prerequisites: []
 # M-0000 — coherent journey or demonstrable technical outcome
 
 ## Outcome and exclusions
+`workflow_version:` above is the workflow release the milestone runs under, set to the pin (`docs/workflow/config.json`) when it is authorised; it moves only with the owner's decision, in the pull request that moves the pin (`bin/wf-upgrade` sets it).
 Optional `measure:` above: the one sentence that shows this milestone worked, checkable by a non-technical person. Optional `client_title`, `client_outcome` and `client_measure`: the same three in the client's words and language, for the client page (`wf status --client`); each one left empty shows the record's own.
 
 ## Acceptance scenarios and demonstration

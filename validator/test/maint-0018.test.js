@@ -162,6 +162,11 @@ test('MAINT-0018: a deep path glob reaches test files only when it names a test 
   assert.deepEqual(deepChanges(['**/*payment*'], ['api/openapi/payment.spec.yaml', 'api/spec/payment.json']), ['api/openapi/payment.spec.yaml', 'api/spec/payment.json']);
   assert.deepEqual(deepChanges(['**/*invoice*', '**/*Invoice*'], ['pkg/invoice_test.go', 'spec/models/invoice_spec.rb', 'src/test/java/InvoiceTest.java', 'tests/test_invoice.py', 'pkg/invoice.go']), ['pkg/invoice.go']);
   assert.deepEqual(deepChanges(['**/*Test*'], ['src/test/java/InvoiceTest.java']), ['src/test/java/InvoiceTest.java']);
+  // The fix review: a glob anchored on a folder reaches everything under it, and a production file that only looks like a
+  // test stays deep under a name glob too.
+  assert.deepEqual(deepChanges(['src/lab/**', 'src/payments/**'], ['src/lab/tests/order.ts', 'src/payments/test_mode.py']), ['src/lab/tests/order.ts', 'src/payments/test_mode.py']);
+  const lookalikes = ['src/billing/test_payment_mode.py', 'lib/billing/test_payment_cards.rb', 'src/billing/payment-ab-test.ts', 'src/payment/payment-spec.ts', 'src/main/java/com/acme/payment/spec/PaymentSpecification.java', 'src/main/kotlin/acme/PaymentSpec.kt'];
+  assert.deepEqual(deepChanges(['**/*{payment,Payment}*'], lookalikes), lookalikes);
 });
 
 // Item 4 and item 13. The launcher is a template now (templates/scripts/wf): an explicit --repo, such as a clean review

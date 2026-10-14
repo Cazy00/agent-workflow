@@ -17,9 +17,9 @@ fi
 [ "$(git -C "$CACHE" rev-parse HEAD)" = "$REV" ] || { echo "wf: installation is not at the pinned revision $REV" >&2; exit 2; }
 # The newest release the installation knows, which `wf next` mentions when it is newer than the pin (MAINT-0018). Its
 # tags are fetched at most once a day, never prompting; a failed fetch leaves them as they were and is not retried until
-# the next day, and a read-only installation is only read.
+# the next day. A read-only installation is only read, never fetched.
 STAMP="$CACHE/.git/wf-release-check"
-if [ -z "$(find "$STAMP" -mmin -1440 2>/dev/null)" ]; then
+if [ -w "$CACHE/.git" ] && [ -z "$(find "$STAMP" -mmin -1440 2>/dev/null)" ]; then
   GIT_TERMINAL_PROMPT=0 git -C "$CACHE" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 fetch --quiet --tags origin >/dev/null 2>&1 || true
   touch "$STAMP" 2>/dev/null || true
 fi

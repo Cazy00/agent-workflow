@@ -86,8 +86,8 @@
   "v2.6.0": {
     "notes": [
       "scripts/wf: bin/wf-upgrade replaces the launcher bin/wf-adopt wrote before v2.6.0 with templates/scripts/wf, which passes an explicit --repo on and tells wf next of a newer release (an enforcement change). A copy changed in the project takes the new one by hand.",
-      ".github/workflows/wf-ci.yml is refreshed: its summary names the workflow version that judged the change (an enforcement change).",
-      "Milestones in progress: bin/wf-upgrade sets their workflow_version to the new release, and merging the upgrade is the owner's decision to move them (procedures/maintenance.md). From now on the pull request that authorises a milestone sets workflow_version to the pin.",
+      ".github/workflows/wf-ci.yml and .claude/agents/independent-reviewer.md are refreshed where unchanged: the summary names the workflow version that judged the change, and the reviewer records it (enforcement changes).",
+      "Milestones in progress: bin/wf-upgrade sets their workflow_version to the new release, and merging the upgrade is the owner's decision to move them (procedures/maintenance.md); in manual mode the round's governing-change receipt lists those milestone records. From now on the pull request that authorises a milestone sets workflow_version to the pin.",
       "Session outcomes name the workflow version they ran under (workflow: {version, revision}); wf next prints it and templates/session.json has the field."
     ]
   }

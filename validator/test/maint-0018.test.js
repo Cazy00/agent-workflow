@@ -199,8 +199,8 @@ test('MAINT-0018: the installed launcher passes an explicit --repo on, and tells
   // Review S2: a read-only installation still runs.
   fs.rmSync(path.join(dir, '.cache/agent-workflow/.git/wf-release-check'), { force: true });
   fs.chmodSync(path.join(dir, '.cache/agent-workflow/.git'), 0o555);
-  t.after(() => fs.chmodSync(path.join(dir, '.cache/agent-workflow/.git'), 0o755));
-  const readOnly = wf('records');
+  let readOnly;
+  try { readOnly = wf('records'); } finally { fs.chmodSync(path.join(dir, '.cache/agent-workflow/.git'), 0o755); }
   assert.equal(readOnly.status, 0, readOnly.stdout + readOnly.stderr);
 });
 

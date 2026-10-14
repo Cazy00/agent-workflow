@@ -81,4 +81,4 @@ Release v2.6.0. For mateen-systems, in that repository: run `bin/wf-upgrade` (it
 
 ## 8. Corpus size
 
-The shared corpus (policy, schema, quickstart, procedures, templates, skill) is 40,505 words before this change and 41,324 (+819) after, about 300 of it the launcher, now a template (`templates/scripts/wf`) rather than text inside `bin/wf-adopt`. Procedures changed, against the session budget of three to four thousand words for one procedure and its records: `execute.md` 2,088 → 2,120 `review.md` 1,148 → 1,196 `accept-release.md` 665 → 719 `operate.md` 1,099 → 1,143 `readiness.md` 1,072 → 1,080; `SCHEMA.md` 7,017 → 7,263.
+The shared corpus (policy, schema, quickstart, procedures, templates, skill) is 40,505 words before this change and 41,324 (+819) after, about 300 of it the launcher, now a template (`templates/scripts/wf`) rather than text inside `bin/wf-adopt`. Procedures changed, against the session budget of three to four thousand words for one procedure and its records: `execute.md` 2,088 → 2,120, `review.md` 1,148 → 1,196, `accept-release.md` 665 → 719, `operate.md` 1,099 → 1,143, `readiness.md` 1,072 → 1,080; `SCHEMA.md` 7,017 → 7,263.

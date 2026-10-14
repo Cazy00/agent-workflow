@@ -36,7 +36,23 @@ function readList(rd, task, milestone) {
   return [...new Set(files)];
 }
 
-export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null }) {
+// MAINT-0018: the workflow version the project runs under, and a newer release when the launcher knows one
+// (scripts/wf passes the newest tag of its installation in WF_LATEST_RELEASE). Moving to it is the owner's decision.
+const versionParts = v => (String(v ?? '').match(/^v?(\d+)\.(\d+)\.(\d+)$/) ?? []).slice(1).map(Number);
+export function newerRelease(pinned, latest) {
+  const [a, b] = [versionParts(pinned), versionParts(latest)];
+  if (a.length !== 3 || b.length !== 3) return null;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return b[i] > a[i] ? latest : null;
+  return null;
+}
+export function workflowOf(config, latestRelease = null) {
+  const w = config.workflow ?? {};
+  if (!w.version && !w.revision) return null;
+  const newer = newerRelease(w.version, latestRelease);
+  return { repo: w.repo ?? null, version: w.version ?? null, revision: w.revision ?? null, ...(newer ? { newer } : {}) };
+}
+
+export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const label = config.approval?.label;
@@ -127,7 +143,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
-    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}),
+    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease),
     next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
@@ -136,6 +152,12 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
 export function renderNext(n) {
   const lines = [];
   const bullet = items => items.map(i => `  - ${i}`);
+  const w = n.workflow;
+  if (w) {
+    lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.version ?? 'unknown version'} (${String(w.revision ?? '').slice(0, 12)}); name it in the session outcome (\`workflow\`)`);
+    if (w.newer) lines.push(`  A newer release, ${w.newer}, exists. Moving to it is the owner's decision (bin/wf-upgrade); a milestone in progress stays on its version unless the owner decides otherwise.`);
+    lines.push('');
+  }
   if (n.note) lines.push(`Note: ${n.note}`, '');
   lines.push(`Next: ${n.next.do}`, `Why: ${n.next.why}`);
   if (n.next.read.length) lines.push('Read:', ...bullet(n.next.read));

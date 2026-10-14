@@ -6,6 +6,7 @@
 import { classifyPaths } from './paths.js';
 import { list } from './records.js';
 import { parseMarked } from './delivery-evidence.js';
+import { mergedFrom } from './carry.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
 export const parseAcceptanceEvidence = text => parseMarked(text, ACCEPTANCE_MARKER, 'acceptance evidence');
@@ -15,34 +16,38 @@ const text = v => typeof v === 'string' && v.trim() !== '';
 const https = v => { if (typeof v !== 'string' || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
 
 // A revision the acceptance relies on: in this pull request's history, with only records changed since (planning and
-// governing paths, since the acceptance itself changes the milestone record), never an acceptance test.
-function covers(config, candidate, rev, what) {
+// governing paths, since the acceptance itself changes the milestone record), never an acceptance test. MAINT-0018: and
+// workflow files (enforcement paths) the trusted branch brought in, as a merge of it carries delivery evidence over
+// (lib/carry.js): an upgrade the owner merged during the milestone changes nothing the review read or the walk used. The
+// project's own code from the trusted branch still needs a new review and walk.
+function covers(config, candidate, rev, what, baseline = null) {
   if (!/^[0-9a-f]{40,64}$/.test(rev ?? '')) return [`${what} needs a full commit hash`];
   if (rev === candidate.name) return [];
   if (candidate.kind !== 'git' || !candidate.isAncestor(rev)) return [`${what} ${rev.slice(0, 12)} is not in this pull request's history`];
-  const code = classifyPaths(config, candidate.changedPaths(rev)).filter(c => !['planning', 'governing'].includes(c.category) || c.acceptance_test).map(c => c.path);
+  const merged = baseline?.kind === 'git' ? mergedFrom({ baseline, candidate, from: rev }) : () => false;
+  const code = classifyPaths(config, candidate.changedPaths(rev)).filter(c => (!['planning', 'governing'].includes(c.category) || c.acceptance_test) && !(c.category === 'enforcement' && merged(c.path))).map(c => c.path);
   return code.length ? [`${what} ${rev.slice(0, 12)} is followed by changes to ${code.slice(0, 5).join(', ')}${code.length > 5 ? ', …' : ''}; review and walk the code being accepted`] : [];
 }
 
-export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records }) {
+export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null }) {
   if (!isObject(e)) return ['acceptance evidence is missing'];
   const errors = [];
   for (const k of Object.keys(e)) if (!KEYS.includes(k)) errors.push(`acceptance evidence has an unknown field ${k}`);
   if (e.schema !== 'agent-workflow/acceptance-evidence@1') errors.push('acceptance evidence schema must be agent-workflow/acceptance-evidence@1');
   if (e.milestone !== milestone) errors.push(`acceptance evidence must name the milestone this pull request accepts, ${milestone}`);
-  errors.push(...covers(config, candidate, e.candidate, 'the accepted candidate'));
+  errors.push(...covers(config, candidate, e.candidate, 'the accepted candidate', baseline));
   const r = e.review;
   if (!isObject(r)) errors.push('the milestone review is missing');
   else {
     for (const k of ['reviewer', 'model']) if (!text(r[k])) errors.push(`the milestone review needs its ${k}`);
     if (!https(r.report)) errors.push('the milestone review needs an https reference to its report');
-    errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision'));
+    errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline));
   }
   const w = e.walkthrough;
   if (!isObject(w)) errors.push('the trial walkthrough is missing');
   else if (Object.hasOwn(w, 'not_applicable')) { if (!text(w.not_applicable) || Object.keys(w).length > 1) errors.push('a walkthrough that does not apply says only why, in not_applicable'); }
   else {
-    errors.push(...covers(config, candidate, w.revision, 'the walkthrough\'s revision'));
+    errors.push(...covers(config, candidate, w.revision, 'the walkthrough\'s revision', baseline));
     for (const k of ['environment', 'walker']) if (!text(w[k])) errors.push(`the walkthrough needs its ${k}`);
     for (const k of ['languages', 'viewports']) if (!Array.isArray(w[k]) || !w[k].length || !w[k].every(text)) errors.push(`the walkthrough lists its ${k}`);
     if (!Array.isArray(w.steps) || !w.steps.length) errors.push('the walkthrough lists no steps');

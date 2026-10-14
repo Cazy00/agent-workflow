@@ -13,6 +13,13 @@ export const isAcceptanceTest = (config, path) => (config.paths?.acceptance_test
 // Whether a path matches any of the config's globs, in either of their forms (a string, or { pattern }).
 export const matchesAny = (globs, path) => (globs ?? []).some(g => matchGlob(patternOf(g), path));
 
+// MAINT-0018: the changed paths that need a deep review (review.deep_paths, procedures/review.md). A test file is reached
+// only by a glob that names a test location itself: `**/*numbering*` names the code that numbers invoices, not its tests,
+// which mateen-systems' M-0004 reviewed deep three times for a test-only task.
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[^/]+$/;
+const NAMES_TESTS = /(?:^|[/*{,])(?:tests?|__tests__)(?:[/}*,]|$)|\.(?:test|spec)\./;
+export const deepChanges = (globs, paths) => paths.filter(p => (globs ?? []).some(g => matchGlob(patternOf(g), p) && (!TEST_PATH.test(p) || NAMES_TESTS.test(patternOf(g)))));
+
 export function classifyPaths(config, changed) {
   const cfg = config.paths ?? {};
   const frontendPaths = planningEnforcement(config);

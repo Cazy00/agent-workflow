@@ -196,13 +196,29 @@ export function ownerErrors(all) {
   return errors;
 }
 
+// MAINT-0018: a milestone in progress names the workflow release it runs under (`workflow_version`), and an active milestone
+// stays on its version unless the owner decides otherwise (procedures/maintenance.md). So where it names one, it is the
+// pin of the same revision: a pin moved without the milestone, or the milestone without the pin, is refused.
+export const IN_PROGRESS = ['Authorised', 'Active', 'Blocked', 'Verified'];
+function versionErrors(all, pin) {
+  if (!pin) return [];
+  const errors = [];
+  for (const r of all.milestones.values()) {
+    const m = r.data;
+    if (!m || !IN_PROGRESS.includes(m.status) || m.workflow_version == null || m.workflow_version === '') continue;
+    if (String(m.workflow_version) !== pin) errors.push(`${r.path}: runs under workflow ${m.workflow_version}, but docs/workflow/config.json pins ${pin}; a milestone in progress stays on its version unless the owner decides otherwise: move the pin back, or set workflow_version: ${pin} here in the pull request that moves it, which the owner merges (bin/wf-upgrade does both)`);
+  }
+  return errors;
+}
+
 // The acceptance-test globs come from `config` when given (a gate passes the baseline's), otherwise from the
 // source's own config.
 export function validateRecords(source, recordsDir, config = null) {
   const all = loadAll(source, recordsDir);
-  let tests = config?.paths?.acceptance_tests;
-  if (!config) { try { tests = loadConfig(source).paths?.acceptance_tests; } catch { /* a missing or invalid config is reported where it is loaded */ } }
-  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source, { acceptanceTests: tests ?? [] }));
+  let tests = config?.paths?.acceptance_tests, own = null;
+  try { own = loadConfig(source); } catch { /* a missing or invalid config is reported where it is loaded */ }
+  if (!config) tests = own?.paths?.acceptance_tests;
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source, { acceptanceTests: tests ?? [] }), ...versionErrors(all, own?.workflow?.version ?? null));
   if (!all.profile) all.errors.unshift(`${recordsDir}/profile.md: missing`);
   return {
     ok: all.errors.length === 0,

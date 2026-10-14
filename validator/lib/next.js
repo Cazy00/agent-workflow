@@ -52,6 +52,23 @@ export function workflowOf(config, latestRelease = null) {
   return { repo: w.repo ?? null, version: w.version ?? null, revision: w.revision ?? null, ...(newer ? { newer } : {}) };
 }
 
+// MAINT-0018: the next free ID of each record kind: past every record now present and every one the history ever added, so
+// a record removed after its milestone's acceptance keeps its number (ci.js refuses a reused one).
+const KINDS = { task: ['tasks', 'T'], milestone: ['milestones', 'M'], decision: ['decisions', 'D'], feedback: ['feedback/inbox', 'F'] };
+export function nextIds(sources, rd) {
+  const ids = {};
+  for (const [kind, [dir, letter]] of Object.entries(KINDS)) {
+    let max = 0;
+    for (const source of sources) {
+      let paths = [];
+      try { paths = source.addedPaths ? source.addedPaths(`${rd}/${dir}`) : []; } catch { paths = []; }
+      for (const p of paths) { const n = Number(p.match(new RegExp(`(?:^|/)${letter}-(\\d{4})\\.md$`))?.[1] ?? 0); if (n > max) max = n; }
+    }
+    ids[kind] = `${letter}-${String(max + 1).padStart(4, '0')}`;
+  }
+  return ids;
+}
+
 export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -114,7 +131,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
+    // MAINT-0018: a task about to start is preceded by the access check (B5) and handed over with its lead's brief (B1).
+    const before = kind === 'start' ? ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${t.id} --baseline ${base}  (the task lead's brief)`] : [];
+    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...before, `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
   };
   const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.
@@ -143,7 +162,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
-    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease),
+    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease), next_ids: nextIds([baseline, candidate], rd),
     next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
@@ -166,6 +185,7 @@ export function renderNext(n) {
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
+  if (n.next_ids) lines.push('', `Next free IDs: ${Object.values(n.next_ids).join(', ')} (reviews are numbered on the pull requests)`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;
 }

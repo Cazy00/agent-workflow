@@ -4,7 +4,8 @@
 // pull request had not touched by then and that now holds the trusted branch's content: what a merge of that branch
 // brings in. Matching the trusted branch alone is not enough (the independent review of MAINT-0016, C1): deleting or
 // reverting reviewed work, or settling a conflict by taking the trusted branch's side, also leaves the head equal to it.
-// The task's own code, an acceptance test, or a merge that combined both sides' edits needs new evidence.
+// The task's own code, an acceptance test, or a merge that combined both sides' edits needs new evidence. A governing file
+// put back to the trusted branch's content does not (MAINT-0018 B3): the reviewed code is unchanged.
 import { classifyPaths } from './paths.js';
 
 const SHA = /^[0-9a-f]{40,64}$/;
@@ -21,6 +22,9 @@ export function carriedFrom({ config, baseline, candidate, from }) {
   if (!SHA.test(from ?? '') || !candidate.isAncestor(from)) return { ok: false, why: `${String(from).slice(0, 12)} is not an earlier revision of this candidate` };
   const changed = candidate.changedPaths(from);
   const merged = mergedFrom({ baseline, candidate, from });
-  const own = classifyPaths(config, changed).filter(c => (c.category !== 'planning' || c.acceptance_test) && !merged(c.path)).map(c => c.path);
+  // MAINT-0018 B3: a governing file the pull request has put back to the trusted branch's content (a clarification moved
+  // to the milestone's acceptance pull request) leaves the reviewed code as it was, so it does not need a new review.
+  const restored = c => c.category === 'governing' && !c.acceptance_test && candidate.blob(c.path) === baseline.blob(c.path);
+  const own = classifyPaths(config, changed).filter(c => (c.category !== 'planning' || c.acceptance_test) && !merged(c.path) && !restored(c)).map(c => c.path);
   return own.length ? { ok: false, why: `changed since ${from.slice(0, 12)}: ${own.slice(0, 5).join(', ')}${own.length > 5 ? ', …' : ''}` } : { ok: true, paths: changed };
 }

@@ -132,7 +132,8 @@ test('enforced mode: a verified-complete session must link the evidence it could
   const bare = p.run('session', { args: ['--record', record] });
   assert.equal(bare.status, 1, bare.stdout + bare.stderr);
   assert.match(bare.stdout, /durable evidence/);
-  fs.writeFileSync(record, JSON.stringify({ outcome: 'verified-complete', next_action: 'owner acceptance', friction: 'none', evidence: ['https://github.com/fixture/project/pull/1'] }));
+  // MAINT-0018: the session names the workflow version it ran under, the fixture's pin.
+  fs.writeFileSync(record, JSON.stringify({ outcome: 'verified-complete', workflow: { version: '1.0.0', revision: 'fixture' }, next_action: 'owner acceptance', friction: 'none', evidence: ['https://github.com/fixture/project/pull/1'] }));
   const linked = p.run('session', { args: ['--record', record] });
   assert.equal(linked.status, 0, linked.stdout + linked.stderr);
   assert.ok(JSON.parse(linked.stdout).unverified.some(u => u.startsWith('review:')));

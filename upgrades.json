@@ -82,5 +82,13 @@
       "Before switching WF_GATE on: delete or update any branch whose .github/workflows/wf-ci.yml predates v2.5.1, since v2.5.0's sends every pull request into that branch to the gate. Turn on Settings, General, Automatically delete head branches.",
       "If the project used v2.5.0's runner variables: the owner adds the label wf-build to the build runner and wf-gate to the gate runner (Settings, Actions, Runners; an admin's step), or registers them again with ci-runner register OWNER/REPO NAME...; then set CI_BUILD=on and WF_GATE=on, change the project's own CI to runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}, and delete CI_RUNNER and WF_CI_RUNNER. Any write collaborator can set a variable, so labels now live in the workflow files."
     ]
+  },
+  "v2.6.0": {
+    "notes": [
+      "scripts/wf: bin/wf-upgrade replaces the launcher bin/wf-adopt wrote before v2.6.0 with templates/scripts/wf, which passes an explicit --repo on and tells wf next of a newer release (an enforcement change). A copy changed in the project takes the new one by hand.",
+      ".github/workflows/wf-ci.yml is refreshed: its summary names the workflow version that judged the change (an enforcement change).",
+      "Milestones in progress: bin/wf-upgrade sets their workflow_version to the new release, and merging the upgrade is the owner's decision to move them (procedures/maintenance.md). From now on the pull request that authorises a milestone sets workflow_version to the pin.",
+      "Session outcomes name the workflow version they ran under (workflow: {version, revision}); wf next prints it and templates/session.json has the field."
+    ]
   }
 }

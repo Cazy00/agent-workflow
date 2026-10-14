@@ -152,13 +152,13 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
 export function renderNext(n) {
   const lines = [];
   const bullet = items => items.map(i => `  - ${i}`);
+  if (n.note) lines.push(`Note: ${n.note}`, '');
   const w = n.workflow;
   if (w) {
     lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.version ?? 'unknown version'} (${String(w.revision ?? '').slice(0, 12)}); name it in the session outcome (\`workflow\`)`);
     if (w.newer) lines.push(`  A newer release, ${w.newer}, exists. Moving to it is the owner's decision (bin/wf-upgrade); a milestone in progress stays on its version unless the owner decides otherwise.`);
     lines.push('');
   }
-  if (n.note) lines.push(`Note: ${n.note}`, '');
   lines.push(`Next: ${n.next.do}`, `Why: ${n.next.why}`);
   if (n.next.read.length) lines.push('Read:', ...bullet(n.next.read));
   if (n.next.run.length) lines.push('Run:', ...bullet(n.next.run));

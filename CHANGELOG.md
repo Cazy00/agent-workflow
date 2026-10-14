@@ -2,6 +2,23 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.6.0
+
+MAINT-0018 Part A: what M-0004 of mateen-systems (12–14 October) still cost, and which workflow version each piece of work ran under.
+- **A task's Done record travels with its work.** `wf ci` accepted Done as a pull request's last commit only while the trusted branch held the task Ready or Active, but planned tasks wait there as Draft and are claimed on their own branch. So every task needed a Done pull request of its own (six in M-0004), each another round of checks and a wait before the next task. Now Done is accepted when the pull request itself claims the task: an earlier commit of its own sets it Ready or Active. A Draft marked Done without that claim still fails.
+- **A workflow upgrade no longer voids a milestone's acceptance.** The acceptance evidence's review and walk now carry over workflow files (enforcement paths) that a merge of the trusted branch brought in, as delivery evidence already did (`lib/carry.js`). M-0004's acceptance had to merge before the owner's upgrade, or need a new review and walk. The project's own code from the trusted branch, or a workflow file the acceptance pull request changes itself, still needs them.
+- **Test files are not deep by accident.** A `review.deep_paths` glob reaches a test file (under `test/`, `tests/`, `__tests__/`, or `*.test.*`, `*.spec.*`) only when it names such a location. mateen's `**/*{invoice,numbering,issuer}*` had made a test-only task take three deep second-model reviews.
+- **The launcher is a template** (`templates/scripts/wf`), so `bin/wf-upgrade` refreshes it. It passes an explicit `--repo` on instead of doubling it, so `wf review-packet` can be pointed at a clean clone (mateen's F-0002, met in six tasks), and it passes `wf next` the newest release its installation knows, fetching tags at most daily.
+- **Session outcomes:** the template has `limit` (mateen's F-0001), a missing outcome field says what it holds, and `wf session` needs `--task` only for verified-complete.
+- **Workflow version stamps:**
+  - `wf next` names the pinned version first, and a newer release when there is one;
+  - a session outcome names the version it ran under (`workflow`), checked by `wf session`;
+  - `wf ci`'s result and its workflow summary name the version that judged the change;
+  - the review template and reviewer agent record it;
+  - a milestone records the release it runs under (`workflow_version`): set when it is authorised, which `wf ci` requires; `wf records` refuses one in progress whose version is not the pin; `bin/wf-upgrade` moves milestones in progress with the pin, so the owner's merge of the upgrade is the decision; and that line alone stales no task.
+
+Moving a project to this pin: `upgrades.json`.
+
 ## v2.5.1
 
 What the owner's CI runners trust. The independent review of this release refuted its first draft, which said the gate trusted only accounts that can change workflow files:

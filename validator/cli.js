@@ -249,13 +249,16 @@ async function main() {
   }
   if (cmd === 'doctor') {
     const result = evaluateDoctor({ config });
+    // Which config the preflight came from: the trusted branch's, or the working tree's right after adoption (fix review).
+    result.config_from = baseline.kind === 'git' ? `the trusted branch at ${baseline.name.slice(0, 12)}` : 'the working tree (the trusted branch has no adopted config yet)';
+    if (baselineNote) result.note = baselineNote;
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
   if (cmd === 'wait') {
     if (!/^\d+$/.test(o.pr ?? '')) throw new WfError('wait needs --pr NUMBER');
     if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('wait needs repository in docs/workflow/config.json');
-    const interval = process.env.WF_WAIT_INTERVAL === undefined ? 30 : Number(process.env.WF_WAIT_INTERVAL);
+    const interval = (process.env.WF_WAIT_INTERVAL ?? '') === '' ? 30 : Number(process.env.WF_WAIT_INTERVAL);
     if (!Number.isFinite(interval) || interval < 0) throw new WfError('WF_WAIT_INTERVAL must be a number of seconds');
     const timeoutMinutes = o.timeout === undefined ? 30 : Number(o.timeout);
     if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new WfError('--timeout must be a number of minutes');
@@ -285,7 +288,7 @@ async function main() {
     let next = front.replace(/^status:[^\r\n]*/m, 'status: Done');
     next = /^implemented:/m.test(next) ? next.replace(/^implemented:[^\r\n]*/m, `implemented: ${o.implemented}`) : next.replace(/^status: Done/m, `status: Done${eol}implemented: ${o.implemented}`);
     fs.writeFileSync(file, next + text.slice(front.length));
-    console.log(JSON.stringify({ ok: true, path: rel, next: `git add ${rel} && git commit -m "${o.task}: Done"  (the pull request's last commit)` }, null, 2));
+    console.log(JSON.stringify({ ok: true, path: rel, next: `git add ${rel} && git commit -m "${o.task}: Done"  (the last commit of the task's branch)` }, null, 2));
     return 0;
   }
   let trust = null, baseTrust = null;

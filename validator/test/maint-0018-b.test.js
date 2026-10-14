@@ -125,8 +125,10 @@ else process.exit(1);`);
   const edited = JSON.parse(fs.readFileSync(configPath, 'utf8')); edited.preflight = [{ name: 'an edit in the working tree', run: 'true' }]; fs.writeFileSync(configPath, JSON.stringify(edited));
   assert.equal(p.run(['doctor'], { env }).out.checks.some(c => c.name === 'an edit in the working tree'), false);
   p.git('checkout', '-q', '--', 'docs/workflow/config.json');
-  const leak = project(t, { configEdit: c => ({ ...c, preflight: [{ name: 'no signing key', run: 'test -z "$OWNER_SIGNING_KEY$WF_READ_TOKEN$GPG_PASSPHRASE"' }] }) });
-  assert.equal(leak.run(['doctor'], { env: { ...env, OWNER_SIGNING_KEY: 'secret', WF_READ_TOKEN: 'secret', GPG_PASSPHRASE: 'secret' } }).out.checks.find(c => c.name === 'no signing key').ok, true);
+  const leak = project(t, { configEdit: c => ({ ...c, preflight: [{ name: 'no signing key', run: 'test -z "$OWNER_SIGNING_KEY$WF_READ_TOKEN$GPG_PASSPHRASE"' }, { name: 'the ssh agent', run: 'test -n "$SSH_AUTH_SOCK"' }] }) });
+  const leaked = leak.run(['doctor'], { env: { ...env, OWNER_SIGNING_KEY: 'secret', WF_READ_TOKEN: 'secret', GPG_PASSPHRASE: 'secret', SSH_AUTH_SOCK: '/tmp/agent.sock' } }).out.checks;
+  assert.equal(leaked.find(c => c.name === 'no signing key').ok, true);
+  assert.equal(leaked.find(c => c.name === 'the ssh agent').ok, true, 'a preflight ssh to staging uses the agent (fix review)');
   const bad = project(t, { configEdit: c => ({ ...c, preflight: [{ name: 'x' }] }) });
   assert.match(bad.run(['doctor'], { env }).stderr, /preflight entries need a name and a run command/);
 });
@@ -172,6 +174,23 @@ else process.exit(1);`);
   const failed = p.run(['wait', '--pr', '7', '--merged', '--timeout', '1'], { env: env([done('wf ci', 'success'), done('unit', 'failure')]) });
   assert.equal(failed.status, 1);
   assert.equal(failed.out.result, 'failed');
+  // The fix review: wf ci is required too; a cancelled run (wf ci cancels itself when the description is edited) does
+  // not end a --merged wait; a pass needs two polls that agree.
+  const noGate = p.run(['wait', '--pr', '7', '--timeout', '0.02'], { env: env([done('unit', 'success')]) });
+  assert.deepEqual(noGate.out.waiting_for, ['wf ci']);
+  assert.equal(p.run(['wait', '--pr', '7', '--merged', '--timeout', '0.02'], { env: env([done('wf ci', 'cancelled'), done('unit', 'success')]) }).out.result, 'timeout');
+  const seq = path.join(p.temp, 'seq');
+  fakeExecutable(path.join(bin, 'gh'), `const fs = require('fs'); const f = ${JSON.stringify(seq)};
+const a = process.argv.slice(2).join(' ');
+if (a.includes('/pulls/7')) { console.log(JSON.stringify({ state: 'open', merged: false, head: { sha: 'f'.repeat(40) } })); process.exit(0); }
+const n = (fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0) + 1; fs.writeFileSync(f, String(n));
+const unit = { name: 'unit', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' };
+const gate = n === 1 ? { name: 'wf ci', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' }
+  : n === 2 ? { name: 'wf ci', status: 'queued', conclusion: null, started_at: '2026-10-14T00:05:00Z' }
+  : { name: 'wf ci', status: 'completed', conclusion: 'failure', started_at: '2026-10-14T00:05:00Z' };
+console.log(JSON.stringify({ check_runs: [unit, gate] }));`);
+  const rerun = p.run(['wait', '--pr', '7'], { env: env([]) });
+  assert.equal(rerun.out.result, 'failed', 'the old passing run of wf ci answered only once before the new run appeared');
   assert.match(p.run(['wait', '--pr', '7'], { env: { ...env([]), WF_WAIT_INTERVAL: 'soon' } }).stderr, /WF_WAIT_INTERVAL must be a number of seconds/);
   assert.match(p.run(['wait', '--pr', '7', '--timeout', 'abc'], { env: env([]) }).stderr, /--timeout must be a number of minutes/);
 });

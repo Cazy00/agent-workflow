@@ -132,7 +132,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
   // to start, is being made Ready, or continues on its own branch (a Draft on the trusted branch, claimed there).
-  const handOver = id => ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${id} --baseline ${base}${manual ? trustOptions : ''}  (the task lead's brief)`];
+  const handOver = id => ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
     add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });

@@ -23,10 +23,12 @@ const FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup
 // Done when every required check has a run (a later workflow's or a `needs:` job's may not exist yet), every run has
 // finished, and two polls in a row saw the same runs: an edited description reruns `wf ci` on the same head, and until the
 // new run exists the old one would answer (review S6 of MAINT-0018 Part B). A failed run ends a --merged wait too.
+// In a --merged wait, a cancelled run is not a failure (`wf ci` cancels its own older run when the description is edited
+// or auto-merge is turned on), only the required checks count, and a failure must also be seen twice (the fix review).
 const signature = checks => JSON.stringify(checks.map(c => [c.name, c.status, c.conclusion]).sort());
 export function waitForPullRequest({ repository, number, merged = false, interval = 30, timeoutMinutes = 30, maxErrors = 10, required = [] }) {
   const deadline = Date.now() + timeoutMinutes * 60000;
-  let errors = 0, last = null, seen = null;
+  let errors = 0, last = null, seen = null, seenFailed = null;
   while (Date.now() < deadline) {
     try {
       const pr = api(`repos/${repository}/pulls/${number}`);
@@ -37,7 +39,12 @@ export function waitForPullRequest({ repository, number, merged = false, interva
       const waitingFor = required.filter(n => !checks.some(c => c.name === n));
       last = { head: pr.head.sha, checks, ...(waitingFor.length ? { waiting_for: waitingFor } : {}) };
       const failed = checks.filter(c => c.status === 'completed' && FAILED.includes(c.conclusion));
-      if (merged && failed.length) return { ok: false, result: 'failed', head: pr.head.sha, checks, failed: failed.map(c => c.name), detail: 'a check failed, so it will not merge as it is' };
+      if (merged) {
+        const blocking = failed.filter(c => c.conclusion !== 'cancelled' && (!required.length || required.includes(c.name)));
+        const now = blocking.length ? `${pr.head.sha}:${signature(blocking)}` : null;
+        if (now && seenFailed === now) return { ok: false, result: 'failed', head: pr.head.sha, checks, failed: blocking.map(c => c.name), detail: 'a required check failed, so it will not merge as it is' };
+        seenFailed = now;
+      }
       if (!merged && checks.length && !waitingFor.length && checks.every(c => c.status === 'completed')) {
         const now = `${pr.head.sha}:${signature(checks)}`;
         if (seen === now) return { ok: !failed.length, result: failed.length ? 'failed' : 'passed', head: pr.head.sha, checks, ...(failed.length ? { failed: failed.map(c => c.name) } : {}) };
@@ -47,7 +54,7 @@ export function waitForPullRequest({ repository, number, merged = false, interva
       if (e.fatal) return { ok: false, result: 'error', detail: e.message };
       if (++errors >= maxErrors) return { ok: false, result: 'error', detail: `${errors} errors in a row; the last: ${e.message}`, ...(last ?? {}) };
     }
-    sleep(interval);
+    sleep(Math.min(interval, Math.max(0, (deadline - Date.now()) / 1000)));
   }
   return { ok: false, result: 'timeout', detail: `not finished after ${timeoutMinutes} min`, ...(last ?? {}) };
 }

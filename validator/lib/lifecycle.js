@@ -71,7 +71,7 @@ function workflowErrors(r, pins) {
   const known = pins.filter(p => p?.version && p?.revision);
   if (!known.length) return [];
   const w = r?.workflow;
-  const expected = known.map(p => JSON.stringify({ version: p.version, revision: p.revision })).join(' or ');
+  const expected = [...new Set(known.map(p => JSON.stringify({ version: p.version, revision: p.revision })))].join(' or ');
   if (!w || typeof w !== 'object' || !w.version || !w.revision) return [`session requires workflow, the version it ran under: ${expected} (the pin in docs/workflow/config.json)`];
   if (!known.some(p => p.version === w.version && p.revision === w.revision)) return [`session workflow ${w.version} (${short(w.revision)}) is not the pin at the baseline or the candidate: ${expected}`];
   return [];

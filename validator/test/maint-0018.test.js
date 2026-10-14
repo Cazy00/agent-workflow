@@ -136,3 +136,138 @@ test('MAINT-0018: a deep path glob reaches test files only when it names a test 
   assert.deepEqual(deepChanges(['apps/server/test/acceptance/**', '**/*.spec.ts'], ['apps/server/test/acceptance/numbering.ts', 'apps/web/src/x.spec.ts', 'apps/web/src/x.ts']), ['apps/server/test/acceptance/numbering.ts', 'apps/web/src/x.spec.ts']);
   assert.deepEqual(deepChanges(undefined, ['src/a.js']), []);
 });
+
+// Item 4 and item 13. The launcher is a template now (templates/scripts/wf): an explicit --repo, such as a clean review
+// clone, is passed on instead of being doubled (F-0002 of mateen-systems), and it tells `wf next` the newest release.
+const root = fileURLToPath(new URL('../..', import.meta.url));
+const head = () => { const r = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : null; };
+const hasLauncher = () => spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/scripts/wf']).status === 0;
+function adopted(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-maint-0018-adopt-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['-C', dir, 'init', '-q']).status, 0);
+  const a = spawnSync(process.execPath, [path.join(root, 'bin/wf-adopt'), '--project', dir, '--workflow-repo', root, '--rev', 'HEAD', '--repository', 'fixture/project', '--coordinator', 'owner'], { encoding: 'utf8' });
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  return dir;
+}
+test('MAINT-0018: the installed launcher passes an explicit --repo on, and tells wf next of a newer release', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const dir = adopted(t), other = adopted(t);
+  assert.equal(fs.readFileSync(path.join(dir, 'scripts/wf'), 'utf8'), fs.readFileSync(path.join(root, 'templates/scripts/wf'), 'utf8'));
+  const wf = (...args) => spawnSync('bash', [path.join(dir, 'scripts/wf'), ...args], { cwd: dir, encoding: 'utf8' });
+  const r = wf('records', '--repo', other);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout).ok, true);
+  // The pin names a release; the installation knows a newer one.
+  const configPath = path.join(dir, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); config.workflow.version = 'v2.6.0'; fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  assert.equal(spawnSync('git', ['-C', path.join(dir, '.cache/agent-workflow'), 'tag', 'v99.0.0']).status, 0);
+  const next = wf('next', '--json');
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.equal(JSON.parse(next.stdout).workflow.newer, 'v99.0.0');
+  assert.match(wf('next').stdout, /^Workflow: Cazy00\/agent-workflow v2\.6\.0 \([0-9a-f]{12}\)[^\n]*\n {2}A newer release, v99\.0\.0, exists\. Moving to it is the owner's decision/m);
+});
+
+test('MAINT-0018: wf-upgrade refreshes the launcher an older release wrote, and moves the milestones in progress with the pin', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-maint-0018-up-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const git = (dir, ...args) => { const r = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const wfRepo = path.join(temp, 'workflow');
+  git(temp, 'clone', '-q', '--no-hardlinks', '--no-tags', root, wfRepo);
+  const current = git(wfRepo, 'rev-parse', 'HEAD');
+  git(wfRepo, 'rm', '-q', 'templates/scripts/wf'); // releases before v2.6.0 wrote the launcher from bin/wf-adopt's own text
+  fs.writeFileSync(path.join(wfRepo, 'package.json'), fs.readFileSync(path.join(wfRepo, 'package.json'), 'utf8').replace(/"version": "[^"]+"/, '"version": "2.5.1"'));
+  git(wfRepo, 'commit', '-qam', 'an older release'); git(wfRepo, 'tag', 'v2.5.1');
+  git(wfRepo, 'checkout', '-q', current, '--', '.'); git(wfRepo, 'commit', '-qm', 'this release'); git(wfRepo, 'tag', 'v2.6.0');
+  const project = path.join(temp, 'project'); fs.mkdirSync(project); git(project, 'init', '-q');
+  const a = spawnSync(process.execPath, [path.join(root, 'bin/wf-adopt'), '--project', project, '--workflow-repo', wfRepo, '--rev', 'v2.5.1', '--repository', 'acme/shop', '--coordinator', 'owner'], { encoding: 'utf8' });
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  const legacy = fs.readFileSync(path.join(project, 'scripts/wf'), 'utf8');
+  assert.match(legacy, /exec node "\$CACHE\/validator\/cli\.js" --repo "\$ROOT" "\$@"\n$/);
+  const milestone = (id, status) => fs.readFileSync(path.join(fixture, 'docs/workflow/milestones/M-0001.md'), 'utf8').replaceAll('M-0001', id).replace('status: Authorised', `status: ${status}`);
+  fs.writeFileSync(path.join(project, 'docs/workflow/milestones/M-0001.md'), milestone('M-0001', 'Active'));
+  fs.writeFileSync(path.join(project, 'docs/workflow/milestones/M-0002.md'), milestone('M-0002', 'Draft'));
+  git(project, 'add', '-A'); git(project, 'commit', '-qm', 'adopted, a milestone in progress');
+  const up = spawnSync(process.execPath, [path.join(root, 'bin/wf-upgrade'), '--project', project, '--workflow-repo', wfRepo, '--rev', 'v2.6.0', '--apply'], { encoding: 'utf8' });
+  assert.match(up.stdout, /update scripts\/wf: still the pinned release's copy/);
+  assert.match(up.stdout, /update docs\/workflow\/milestones\/M-0001\.md: M-0001 is Active: it moves to v2\.6\.0 with the pin, which is the owner's decision; merging this change makes it/);
+  assert.doesNotMatch(up.stdout, /M-0002\.md/);
+  assert.equal(fs.readFileSync(path.join(project, 'scripts/wf'), 'utf8'), fs.readFileSync(path.join(root, 'templates/scripts/wf'), 'utf8'));
+  assert.ok(fs.statSync(path.join(project, 'scripts/wf')).mode & 0o111, 'still executable');
+  assert.match(fs.readFileSync(path.join(project, 'docs/workflow/milestones/M-0001.md'), 'utf8'), /^status: Active\nworkflow_version: v2\.6\.0$/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(project, 'docs/workflow/milestones/M-0002.md'), 'utf8'), /workflow_version/);
+});
+
+// Item 5 and item 13. A session names the workflow version it ran under; a missing outcome field says how to fill it in;
+// a session that ends on a pull request without a task needs none.
+test('MAINT-0018: wf session needs the workflow version the session ran under, and no task unless it is verified-complete', t => {
+  const p = project(t);
+  const head = p.git('rev-parse', 'HEAD');
+  const session = (record, extra = []) => { const file = path.join(p.temp, 'session.json'); fs.writeFileSync(file, JSON.stringify(record)); return p.run(['session', '--baseline', p.baseline, '--candidate', head, '--record', file, ...extra]); };
+  const progress = { outcome: 'progress', summary: 'Drafted M-0005', evidence: ['https://github.com/fixture/project/pull/9'], next_action: 'The owner answers M-0005\'s questions', friction: 'none' };
+  const missing = session(progress);
+  assert.equal(missing.status, 1, missing.stdout + missing.stderr);
+  assert.ok(missing.out.errors.includes(`session requires workflow, the version it ran under: {"version":"v2.6.0","revision":"${'a'.repeat(40)}"} (the pin in docs/workflow/config.json)`), missing.stdout);
+  const stamped = session({ ...progress, workflow: { version: 'v2.6.0', revision: 'a'.repeat(40) } });
+  assert.equal(stamped.status, 0, stamped.stdout + stamped.stderr);
+  assert.match(session({ ...progress, workflow: { version: 'v2.5.1', revision: 'b'.repeat(40) } }).out.errors.join(' | '), /session workflow v2\.5\.1 \(bbbbbbbbbbbb\) is not the pin at the baseline or the candidate/);
+  const limit = session({ outcome: 'stopped-by-limit', workflow: { version: 'v2.6.0', revision: 'a'.repeat(40) }, next_action: 'Resume', friction: 'none', usage: { time_seconds: 1 }, checkpoint: head, evidence: ['https://github.com/fixture/project/pull/9'] });
+  assert.ok(limit.out.errors.includes('session requires limit: the limit that stopped the session, for example "thirty-minute maintenance limit" or "context limit"'), limit.stdout);
+  assert.match(session({ outcome: 'verified-complete', workflow: { version: 'v2.6.0', revision: 'a'.repeat(40) }, next_action: 'x', friction: 'none' }).out.errors.join(' | '), /verified-complete needs the task's lifecycle evidence: run wf session with --task/);
+  const template = JSON.parse(fs.readFileSync(path.join(root, 'templates/session.json'), 'utf8'));
+  assert.deepEqual([Object.hasOwn(template, 'limit'), Object.keys(template.workflow).sort()], [true, ['revision', 'version']]);
+});
+
+test('MAINT-0018: wf next names the workflow version, and a newer release only when it is newer', t => {
+  const p = project(t);
+  const next = latest => p.run(['next'], { env: { WF_LATEST_RELEASE: latest } }).out.workflow;
+  assert.deepEqual(next('v2.7.0'), { repo: 'fixture/agent-workflow', version: 'v2.6.0', revision: 'a'.repeat(40), newer: 'v2.7.0' });
+  assert.equal(next('v2.6.0').newer, undefined);
+  assert.equal(next('v2.5.9').newer, undefined);
+  assert.equal(next('').newer, undefined);
+});
+
+test('MAINT-0018: wf ci names the workflow version that judged the change, and the workflow\'s summary repeats it', t => {
+  const p = project(t);
+  p.write('docs/workflow/tasks/T-0001.md', fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replace('objective: Do the work of T-0001', 'objective: Do the work of T-0001, carefully'));
+  const head = p.commit('a records change');
+  const r = p.run(['ci', '--baseline', p.baseline, '--candidate', head]);
+  assert.deepEqual(r.out.workflow, { version: 'v2.6.0', revision: 'a'.repeat(40) }, r.stdout + r.stderr);
+  const template = fs.readFileSync(path.join(root, 'templates/github/wf-ci.yml'), 'utf8');
+  const script = template.slice(template.indexOf('# Who merges')).match(/node -e '\n([\s\S]*?)\n\s*' "\$RUNNER_TEMP\/ci\.json"/)[1];
+  const file = path.join(p.temp, 'ci.json'), summary = path.join(p.temp, 'summary.md');
+  fs.writeFileSync(file, JSON.stringify(r.out)); fs.writeFileSync(summary, '');
+  assert.equal(spawnSync(process.execPath, ['-e', script, file], { env: { ...process.env, GITHUB_STEP_SUMMARY: summary } }).status, 0);
+  assert.match(fs.readFileSync(summary, 'utf8'), /^Judged by agent-workflow v2\.6\.0 \(aaaaaaaaaaaa\), the base branch’s pin\.$/m);
+});
+
+// Item 13. A milestone records the release it runs under; the pin and the milestone move together or not at all.
+const milestonePath = 'docs/workflow/milestones/M-0001.md';
+test('MAINT-0018: a milestone in progress that names another workflow release than the pin is refused', t => {
+  const p = project(t);
+  const records = () => p.run(['records']).out;
+  p.edit(milestonePath, x => x.replace('status: Authorised', 'status: Authorised\nworkflow_version: v2.5.1'));
+  assert.ok(records().errors.some(e => e.startsWith(`${milestonePath}: runs under workflow v2.5.1, but docs/workflow/config.json pins v2.6.0; a milestone in progress stays on its version unless the owner decides otherwise`)), JSON.stringify(records()));
+  p.edit(milestonePath, x => x.replace('workflow_version: v2.5.1', 'workflow_version: v2.6.0'));
+  assert.equal(records().ok, true, JSON.stringify(records()));
+  p.edit(milestonePath, x => x.replace('status: Authorised', 'status: Accepted').replace('workflow_version: v2.6.0', 'workflow_version: v2.4.2'));
+  assert.equal(records().ok, true, 'an accepted milestone keeps the version it ran under');
+});
+
+test('MAINT-0018: a milestone authorised in a pull request names its workflow release, and moving that line alone stales no task', async t => {
+  const p = project(t, { baselineEdit: q => q.edit(milestonePath, x => x.replace('status: Authorised', 'status: Draft')) });
+  p.edit(milestonePath, x => x.replace('status: Draft', 'status: Authorised'));
+  const bare = p.commit('Authorise M-0001');
+  assert.match(p.run(['ci', '--baseline', p.baseline, '--candidate', bare]).out.findings.join(' | '), /M-0001 is authorised here without workflow_version: set workflow_version: v2\.6\.0 in its record/);
+  p.edit(milestonePath, x => x.replace('status: Authorised', 'status: Authorised\nworkflow_version: v2.6.0'));
+  const stamped = p.commit('Authorise M-0001, with its workflow release');
+  assert.doesNotMatch(p.run(['ci', '--baseline', p.baseline, '--candidate', stamped]).out.findings.join(' | '), /without workflow_version/);
+
+  const { governingChanged } = await import('../lib/freshness.js');
+  const task = { id: 'T-0001', milestone: 'M-0001', governing: ['PROFILE'] };
+  p.edit(milestonePath, x => x.replace('workflow_version: v2.6.0', 'workflow_version: v2.7.0')); const moved = p.commit('the pin moves, and the milestone with it');
+  assert.equal(governingChanged({ baseline: gitSource(p.repo, moved), revision: stamped, recordsDir: 'docs/workflow', task, previous: task }), false);
+  p.edit(milestonePath, x => x.replace('limits: one bounded task session', 'limits: two sessions')); const limits = p.commit('the milestone\'s limits change');
+  assert.equal(governingChanged({ baseline: gitSource(p.repo, limits), revision: moved, recordsDir: 'docs/workflow', task, previous: task }), true);
+});

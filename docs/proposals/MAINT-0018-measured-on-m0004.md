@@ -1,6 +1,6 @@
 # MAINT-0018: What M-0004 measured, a version on every piece of work, and the next cuts
 
-**Status:** Part A is built for release v2.6.0, in the pull request that adds this record; the owner's merge of it releases it. Part B is a proposal for the owner's approval before it is built (14 October 2026).
+**Status:** Part A was released as v2.6.0 (Cazy00/agent-workflow#49, merged 14 October 2026). Part B is built for v2.7.0 at the owner's word of 14 October ("Do you want to actually build them … We need to get over with this"), with two changes from § 4 recorded in § 4a.
 
 **Classification** (`procedures/maintenance.md`): A1 and F-0001/F-0002 are workflow defects; A2 and A3 change what a gate accepts, the owner's policy decision, given below; A4 is an improvement proposal the owner asked for. Part B is improvement proposals.
 
@@ -66,6 +66,14 @@ Each item states the failure it prevents and the check that would catch a recurr
 - **B7. Less CI noise.** `wf ci` skips draft pull requests and runs on `ready_for_review` (GitHub will not merge a draft); a task's `baseline_result` may cite the trusted branch's CI run for the same commit instead of rerunning the suite. Prevents: 45 red runs that meant "not finished", and a full suite rerun at every task's start. Check: a `wf-ci.yml` test for the draft guard, and `readiness.js` accepting a cited run for the exact baseline.
 
 Not in Part B: running questions without stopping (MAINT-0017 B3, already proposed), and the milestone integration branch (IDEA-11, parked).
+
+## 4a. Part B as built (v2.7.0)
+
+B1, B3, B4, B5 and B6 are built as § 4 describes; `CHANGELOG.md` v2.7.0 lists them. Two changes:
+- **B2 has no new check.** The check proposed above (the walk's revision follows the review's) adds nothing: `acceptance-evidence.js` already refuses a walk or a review of code that changed afterwards, which is why M-0004 needed its second walk. What went wrong was timing, which no record holds. So B2 is the procedure and the walker's template: walk after the milestone review and its fixes, in the background, rerunning only the steps that changed.
+- **B7 keeps only its second half.** Skipping `wf ci` on draft pull requests would bring back the hole v2.4.1 closed: GitHub counts a skipped required check as passed, so a pull request marked ready, with auto-merge turned on at once, could merge before the check ran again. The trusted branch's own CI run on a task's exact baseline commit now counts as that task's baseline run (`readiness.md`); no check can verify that, so it is prose.
+
+Checks: `validator/test/maint-0018-b.test.js`.
 
 ## 5. What stays as it is
 

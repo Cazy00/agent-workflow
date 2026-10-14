@@ -40,6 +40,7 @@ Claims are the tasks' branches and pull requests (`procedures/execute.md`); keep
 Approved time, usage, retry, spending and owner-effort limits. Prefer limits the coordinator can measure at every checkpoint (wall-clock hours, task count, retries per named check or task); state the retry unit and counting rule. Add usage or spend limits only where the harness reports them, and name the counter. Running totals, remaining allowance and unknown usage go on the tasks' pull requests or handoffs; do not edit this governing record for bookkeeping.
 
 ## Technical verification and independent review
+Second-model budget: two runs per deep task (its review and one fix review), one for the milestone review (`procedures/review.md`).
 
 ## Stop conditions and acceptance boundary
 

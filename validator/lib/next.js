@@ -131,9 +131,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    // MAINT-0018: a task about to start is preceded by the access check (B5) and handed over with its lead's brief (B1).
+    // MAINT-0018: a task about to start also gets the access check (B5) and is handed over with its lead's brief (B1).
     const before = kind === 'start' ? ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${t.id} --baseline ${base}  (the task lead's brief)`] : [];
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...before, `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
+    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`, ...before] });
   };
   const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.

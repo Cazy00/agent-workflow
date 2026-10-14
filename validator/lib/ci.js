@@ -176,7 +176,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       for (const [stage, from] of [['verification', deliveryEvidence.verification?.revision], ['review', deliveryEvidence.review?.context?.candidate]]) {
         if (typeof from !== 'string' || from === candidate.name) continue;
         const c = carriedFrom({ config, baseline, candidate, from });
-        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records`); }
+        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records, or put governing files back to the trusted branch's content`); }
         else findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
       }
       // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md);
@@ -315,7 +315,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const later = reason => (defer ? deferred : ownerReasons).push(reason);
     const of = category => classes.filter(c => c.category === category).map(c => c.path);
     if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
-    if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}`);
+    // MAINT-0018 B3: a clarification nothing waits on belongs in the milestone's acceptance pull request (execute.md); put
+    // back, it leaves the review standing (lib/carry.js), and the agent merges.
+    if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}${production.length ? ' (a clarification nothing waits on goes into the milestone\'s acceptance pull request: put the file back here and the review still carries over)' : ''}`);
     // The records the owner approves stay the owner's whatever an older config classifies them as: a milestone's
     // acceptance lifts the checkpoint's hold, so the agent must never merge it.
     const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category)).map(c => c.path);

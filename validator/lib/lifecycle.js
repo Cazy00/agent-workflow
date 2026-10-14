@@ -81,6 +81,10 @@ export function evaluateSession({ record: r, candidate, lifecycle, repository, w
   const require = (...fields) => { for (const f of fields) if (!r?.[f]) errors.push(`session requires ${f}${HINTS[f] ? `: ${HINTS[f]}` : ''}`); };
   require('outcome', 'next_action', 'friction');
   errors.push(...workflowErrors(r, [workflow].flat()));
+  // MAINT-0018 B1: a task lead's outcome says who implemented the task; execute.md has a fresh helper do it.
+  const notes = [];
+  if (r?.implementer !== undefined && r.implementer !== '' && !['helper', 'lead'].includes(r.implementer)) errors.push('session implementer is helper or lead: who implemented the task');
+  if (r?.implementer === 'lead') notes.push('the task lead implemented the task itself; procedures/execute.md has a fresh helper implement it, so the lead\'s context stays small');
   const checkEvidence = () => {
     if (!Array.isArray(r.evidence) || !r.evidence.length) errors.push('session requires durable evidence');
     for (const p of r.evidence ?? []) {
@@ -102,5 +106,5 @@ export function evaluateSession({ record: r, candidate, lifecycle, repository, w
     case 'no-progress': require('failure', 'retry_difference'); break;
     default: errors.push('unknown session outcome');
   }
-  return { ok: !errors.length, errors, outcome: r?.outcome, unverified: lifecycle?.unverified ?? [], limitation: 'Evidence content must still be assessed for meaningful progress; process exit and record fields do not prove it.' };
+  return { ok: !errors.length, errors, outcome: r?.outcome, unverified: lifecycle?.unverified ?? [], ...(notes.length ? { notes } : {}), limitation: 'Evidence content must still be assessed for meaningful progress; process exit and record fields do not prove it.' };
 }

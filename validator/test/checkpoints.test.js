@@ -731,7 +731,7 @@ test('MAINT-0016: with defer_to_acceptance a minor accepted finding waits for th
   assert.match(out(missing).findings.join(' | '), /accepted findings N1 are not in the task record's accepted_findings \(as REVIEW\/FINDING, for example R-0030\/N1\)/);
 
   const blocking = setup(t, { checkpoint: 'milestone', configEdit: deferring });
-  const b = blocking.run('ci', { evidence: evidence(blocking.candidate, { review: { findings: [{ id: 'F1', severity: 'blocking', status: 'accepted', resolution: 'for the owner to decide' }] } }) });
+  const b = blocking.run('ci', { evidence: evidence(blocking.candidate, { review: { findings: [{ id: 'F1', severity: 'blocking', status: 'accepted', resolution: 'for the owner to decide', exposure: 'another shop\'s customers can be read (MAINT-0018: a blocking finding states its exposure)' }] } }) });
   assert.equal(b.status, 0, b.stdout + b.stderr);
   assert.equal(out(b).merge, 'owner');
   assert.match(out(b).owner_reasons.join(' | '), /blocking review findings accepted rather than fixed: F1/);

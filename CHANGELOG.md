@@ -2,6 +2,24 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.7.0
+
+MAINT-0018 Part B: the rest of what M-0004 of mateen-systems cost (record § 4).
+- **Task leads get their brief from the records** (`wf brief --lead --task T-NNNN`). It says that a fresh helper implements, a new helper takes each fix round and a small one writes the closing paperwork; what the lead must not edit; the task's own records; and the commands with their revisions. In M-0004, seven of eight leads implemented their tasks themselves and grew to 400–635 K tokens. A lead's session outcome may say who implemented (`implementer`), and `wf session` notes a lead that did.
+- **The trial walk comes after the milestone review and its fixes, in the background** (`accept-release.md`, `trial-walker.md`). The walker keeps its scripts, so a later walk reruns only the steps that changed. M-0004's first walk was voided by a later fix, and while it ran a blocking review result sat unread for 81 minutes. No new check: `wf ci` already refuses a walk of code that changed afterwards.
+- **Putting a governing file back keeps the review** (`lib/carry.js`). A governing file restored to the trusted branch's content no longer voids the review, and `wf ci`'s owner reason for a governing change says the clarification can move to the milestone's acceptance pull request. #73 of mateen-systems waited 13 hours on such an edit.
+- **A blocking finding states its exposure** (`delivery-evidence.js`, `review.md`, the review template and reviewer). Severity follows exposure. A residual with none left after a fix review is accepted and carried to a later milestone, without a second fix review or a question. M-0004's second fix review chased a gap the server already refused. The milestone template budgets two second-model runs per deep task and one for the milestone.
+- **`wf doctor`:** checks node, git, `gh` (signed in as the agent's account, with push access), the second model's tool and the project's own `preflight` commands. Those come from the trusted branch's config and run without signing variables. `execute.md` puts every gap in the first question to the owner, and `wf next` lists `wf doctor` and the lead's brief first in every action that starts, readies or continues a task. M-0004's missing staging access was seen at 18:17 and reported at 04:44.
+- **Commands for what agents wrote by hand:**
+  - `wf wait --pr N [--merged]` works through `gh api` with any `gh` and follows the current head. It waits until every required check (and `wf ci`) has a finished run and two polls agree, ignores a cancelled run, and survives network errors;
+  - `wf done --task T-NNNN --implemented SHA` writes the Done record;
+  - `wf next` reports `next_ids`, the next free T, M, D and F IDs;
+  - `wf evidence --json` prints the evidence alone.
+- **Baselines from CI** (`readiness.md`): the trusted branch's own CI run on a task's exact baseline commit counts as its baseline run.
+- **Not done, and why:** skipping `wf ci` on draft pull requests. GitHub counts a skipped required check as passed, the hole v2.4.1 closed, so a pull request marked ready could merge before the check ran again.
+
+Moving a project to this pin: `upgrades.json`.
+
 ## v2.6.0
 
 MAINT-0018 Part A: what M-0004 of mateen-systems (12–14 October) still cost, and which workflow version each piece of work ran under.

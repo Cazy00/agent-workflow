@@ -39,7 +39,7 @@
     },
     "coverage": ["<each area reviewed: scope, correctness, maintainability, security, regression, test-fidelity>"],
     "findings": [
-      { "id": "<finding id>", "severity": "<severity>", "status": "<resolved | accepted | open>", "resolution": "<how it was resolved, with the commit>" }
+      { "id": "<finding id>", "severity": "<severity>", "status": "<resolved | accepted | open>", "resolution": "<how it was resolved, with the commit>", "exposure": "<for a blocking, critical or high finding: what it exposes, to whom; leave out otherwise>" }
     ],
     "tasks": ["<T-NNNN of every task the review covered>"],
     "report": "<https link to the posted review report (templates/review.md)>"

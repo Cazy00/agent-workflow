@@ -81,6 +81,8 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   else for (const f of r.findings) {
     const dealt = isObject(f) && ['resolved', 'accepted'].includes(f.status) && typeof f.resolution === 'string' && f.resolution.trim();
     if (!dealt) errors.push(`review finding ${JSON.stringify(f?.id)} is not resolved, or accepted with a resolution`);
+    // MAINT-0018 B4: severity follows exposure (procedures/review.md); a blocking finding says what it exposes.
+    else if (isBlocking(f) && !(typeof f.exposure === 'string' && f.exposure.trim())) errors.push(`review finding ${JSON.stringify(f.id)} is blocking: say in exposure what it exposes and to whom, or that nothing is exposed (then it is not blocking)`);
   }
   if (!sameSet(r.tasks, taskIds)) errors.push('review must cover exactly the candidate\'s tasks');
   if (!reference(r.report)) errors.push('review needs an https reference to its report');

@@ -20,17 +20,24 @@ import { evaluateCloseout } from './lib/closeout.js';
 import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
+import { renderLeadBrief } from './lib/lead-brief.js';
+import { evaluateDoctor } from './lib/doctor.js';
+import { waitForPullRequest } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
   pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
+  brief --lead --task T-0001 [--baseline REV]: the task lead's brief, from the records (MAINT-0018)
+  doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the first question to the owner
+  wait --pr N [--merged] [--timeout MINUTES, default 30]: waits for the pull request's required checks to appear and finish (or, with --merged, for it to merge); exit 0 passed or merged; run it in the background
+  done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
@@ -60,6 +67,8 @@ async function main() {
     if (a === '--unsandboxed') { o.unsandboxed = true; continue; }
     if (a === '--client') { o.client = true; continue; }
     if (a === '--live') { o.live = true; continue; }
+    if (a === '--lead') { o.lead = true; continue; }
+    if (a === '--merged') { o.merged = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -81,7 +90,7 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
     return 0;
   }
-  if (cmd === 'brief') {
+  if (cmd === 'brief' && !o.lead) {
     if (!o.payloads) throw new WfError('--payloads FILE is required');
     const file = path.resolve(o.payloads);
     const raw = fs.readFileSync(file, 'utf8');
@@ -205,12 +214,12 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && !['records', 'status', 'next'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status', 'next', 'doctor', 'wait', 'done', 'brief'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
   // `wf next` defaults its baseline to the trusted branch named by the working tree's config. `git fetch` moves
   // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
   // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
   let baselineNote = null;
-  if (!o.baseline && cmd === 'next') {
+  if (!o.baseline && ['next', 'doctor'].includes(cmd)) { // doctor runs the trusted branch's preflight, not a working-tree edit
     let branch = 'main', adopted = false;
     try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; adopted = true; } catch { /* reported below */ }
     const run = gitRunner(repo);
@@ -231,6 +240,57 @@ async function main() {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
+  // MAINT-0018 Part B: helpers that grant nothing and no gate reads. The lead's brief (B1), the start-of-session check
+  // (B5), waiting on a pull request and the Done record (B6).
+  if (cmd === 'brief') {
+    if (!o.task || !/^T-\d{4}$/.test(o.task)) throw new WfError('brief --lead needs --task T-0001');
+    process.stdout.write(renderLeadBrief({ baseline, candidate, task: o.task }));
+    return 0;
+  }
+  if (cmd === 'doctor') {
+    const result = evaluateDoctor({ config });
+    // Which config the preflight came from: the trusted branch's, or the working tree's right after adoption (fix review).
+    result.config_from = baseline.kind === 'git' ? `the trusted branch at ${baseline.name.slice(0, 12)}` : 'the working tree (the trusted branch has no adopted config yet)';
+    if (baselineNote) result.note = baselineNote;
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+  if (cmd === 'wait') {
+    if (!/^\d+$/.test(o.pr ?? '')) throw new WfError('wait needs --pr NUMBER');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('wait needs repository in docs/workflow/config.json');
+    const interval = (process.env.WF_WAIT_INTERVAL ?? '') === '' ? 30 : Number(process.env.WF_WAIT_INTERVAL);
+    if (!Number.isFinite(interval) || interval < 0) throw new WfError('WF_WAIT_INTERVAL must be a number of seconds');
+    const timeoutMinutes = o.timeout === undefined ? 30 : Number(o.timeout);
+    if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new WfError('--timeout must be a number of minutes');
+    // The checks a merge needs: the profile's, and `wf ci` in the pull-request modes. Their runs may not exist yet.
+    const prMode = ['enforced', 'owner-merge'].includes(config.approval?.label);
+    const required = [...new Set([...list(loadAll(baseline, rd).profile?.data?.required_checks), ...(prMode ? ['wf ci'] : [])])];
+    const result = waitForPullRequest({ repository: config.repository, number: o.pr, merged: o.merged === true, interval, timeoutMinutes, required });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+  if (cmd === 'done') {
+    if (!o.task || !/^T-\d{4}$/.test(o.task)) throw new WfError('done needs --task T-0001');
+    if (!/^[0-9a-f]{40,64}$/.test(o.implemented ?? '')) throw new WfError('done needs --implemented with the full hash of the commit that implements the task');
+    const run = gitRunner(repo);
+    if (run('cat-file', '-e', `${o.implemented}^{commit}`).status !== 0 || run('merge-base', '--is-ancestor', o.implemented, 'HEAD').status !== 0) throw new WfError(`${o.implemented.slice(0, 12)} is not a commit in this checkout's history`);
+    const rel = `${rd}/tasks/${o.task}.md`;
+    // Read through the working-tree source, which refuses a path that leaves the repository or passes a symbolic link.
+    let text;
+    try { text = dirSource(repo).read(rel); } catch (e) { throw new WfError(e.message); }
+    if (text == null) throw new WfError(`${rel} not found`);
+    const file = path.join(fs.realpathSync(repo), rel);
+    const front = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
+    const status = front?.match(/^status:[ \t]*(\S+)/m)?.[1];
+    if (status === 'Done') throw new WfError(`${o.task} is Done already`);
+    if (!['Ready', 'Active'].includes(status)) throw new WfError(`${o.task} is ${status ?? 'without a status'}: claim it (Ready or Active) in an earlier commit of this pull request first`);
+    const eol = /\r\n/.test(front) ? '\r\n' : '\n';
+    let next = front.replace(/^status:[^\r\n]*/m, 'status: Done');
+    next = /^implemented:/m.test(next) ? next.replace(/^implemented:[^\r\n]*/m, `implemented: ${o.implemented}`) : next.replace(/^status: Done/m, `status: Done${eol}implemented: ${o.implemented}`);
+    fs.writeFileSync(file, next + text.slice(front.length));
+    console.log(JSON.stringify({ ok: true, path: rel, next: `git add ${rel} && git commit -m "${o.task}: Done"  (the last commit of the task's branch)` }, null, 2));
+    return 0;
+  }
   let trust = null, baseTrust = null;
   if (o['unsigned-receipts'] && !o.receipts) throw new WfError('--unsigned-receipts is a dry run of a manual-mode round: it needs --trust-key, --receipts and --repository too');
   if (o['trust-key'] || o.receipts || o.repository) {
@@ -337,7 +397,7 @@ async function main() {
     const previous = o.from ? parseDeliveryEvidence(fs.readFileSync(o.from, 'utf8')) : null;
     const { evidence, notes } = evidenceSkeleton({ baseline, candidate, task, previous });
     for (const n of notes) console.error(`wf: ${n}`);
-    console.log(`${DELIVERY_MARKER}\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``);
+    console.log(o.json ? JSON.stringify(evidence, null, 2) : `${DELIVERY_MARKER}\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``);
     return 0;
   }
   let result;

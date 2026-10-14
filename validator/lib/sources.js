@@ -43,6 +43,12 @@ export function dirSource(root) {
       if (!fs.existsSync(dir)) return [];
       return fs.readdirSync(dir, { withFileTypes: true }).filter(f => f.isFile()).sort((a,b) => a.name.localeCompare(b.name)).map(f => `${relDir}/${f.name}`);
     },
+    // The records now present: a directory has no history (MAINT-0018, next free IDs).
+    addedPaths(relDir) {
+      const dir = resolve(relDir);
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir, { withFileTypes: true }).filter(f => f.isFile()).map(f => `${relDir}/${f.name}`);
+    },
     isAncestor() { return null; },
     changedSince() { return null; },
     changedPaths() { return null; },
@@ -114,6 +120,13 @@ export function gitSource(repo, revision) {
       const r = git('log', '--full-history', '--format=%H', '--diff-filter=AM', rev, '--', rel);
       if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
       return r.stdout.split('\n').filter(Boolean);
+    },
+    // MAINT-0018: every path ever added under relDir in this revision's history, for the next free record ID.
+    addedPaths(relDir) {
+      safePath(relDir);
+      const r = git('log', '--full-history', '--format=', '--name-only', '--diff-filter=A', rev, '--', `${relDir}/`);
+      if (r.status !== 0) throw new Error(`cannot read the history of ${relDir} at ${rev}`);
+      return [...new Set(r.stdout.split('\n').filter(Boolean))];
     },
     // Claim branches (procedures/execute.md) as this clone last fetched them: branches of `origin` named exactly a task ID.
     claimBranches() {

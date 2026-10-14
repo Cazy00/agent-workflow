@@ -1,6 +1,6 @@
 # MAINT-0018: What M-0004 measured, a version on every piece of work, and the next cuts
 
-**Status:** Part A is built for release v2.6.0, in the pull request that adds this record; the owner's merge of it releases it. Part B is a proposal for the owner's approval before it is built (14 October 2026).
+**Status:** Part A was released as v2.6.0 (Cazy00/agent-workflow#49, merged 14 October 2026). Part B is built for v2.7.0 at the owner's word of 14 October ("Do you want to actually build them … We need to get over with this"), with two changes from § 4 recorded in § 4a.
 
 **Classification** (`procedures/maintenance.md`): A1 and F-0001/F-0002 are workflow defects; A2 and A3 change what a gate accepts, the owner's policy decision, given below; A4 is an improvement proposal the owner asked for. Part B is improvement proposals.
 
@@ -67,6 +67,19 @@ Each item states the failure it prevents and the check that would catch a recurr
 
 Not in Part B: running questions without stopping (MAINT-0017 B3, already proposed), and the milestone integration branch (IDEA-11, parked).
 
+## 4a. Part B as built (v2.7.0)
+
+What was built, against § 4, and the checks that hold it (`validator/test/maint-0018-b.test.js`):
+- **B1.** `wf brief --lead` prints the brief: the rule that a fresh helper implements, a new helper takes each fix round and a small one writes the paperwork; the task's records (its record, its milestone's outcome, limits and stop conditions, its acceptance definitions); the governing and enforcement paths it must not edit; the commands, with the trust options in manual mode. It lists the governing records to read rather than excerpting them, and gives the session outcome's skeleton, not a pull-request body. A lead's outcome may give `implementer`; `wf session` notes `lead`. `wf next` lists the brief, and `wf doctor`, first in every action that starts, readies or continues a task.
+- **B2.** The procedure and the walker's template only: walk after the milestone review and its fixes, in the background, rerunning only the steps that changed. The check § 4 proposed adds nothing: `acceptance-evidence.js` already refuses a walk or a review of code that changed afterwards, which is why M-0004 needed its second walk. What went wrong was timing, which no record holds.
+- **B3.** A governing file put back to the trusted branch's content no longer voids review or verification (`carry.js`); an acceptance test never carries this way. The owner's reason for a governing change in a pull request with code says the clarification can move to the milestone's acceptance pull request. Nothing checks the code against the restored text: the coordinator confirms the code does not rely on it.
+- **B4.** A blocking, critical or high finding needs `exposure` (`delivery-evidence.js`); the review template, the reviewer and `review.md` say severity follows exposure and the reviewer sets it. **The owner's policy decision** (14 October, approving § 4): a finding nothing is exposed to is not blocking, so with `approval.defer_to_acceptance` such a residual waits for the acceptance rather than the owner's merge. POLICY's rule that a blocking finding accepted rather than fixed always waits for the owner is unchanged; what changes is that severity is set by exposure. Not built: `wf next` naming a fresh helper for each fix round; the lead's brief says so instead.
+- **B5.** `wf doctor` checks node, git, `gh` (the account `gh api user` reports against `approval.agent_identity`, and push access), the second model's tool, and the config's `preflight` commands, read from the trusted branch the working tree's config names (the working tree right after adoption, which the output's `config_from` says) and run without signing, `WF_` or `GPG_` variables; the ssh agent stays, since a preflight usually tries ssh to staging. Not built: a gh token-scope check, and a record of a session's doctor run that `wf next` could test; `wf next` lists `wf doctor` instead.
+- **B6.** `wf wait` (the required checks, `wf ci` among them, must appear and finish, two polls must agree, a required check failed in two polls ends a `--merged` wait but a cancelled run does not, numbers are validated, 30 minutes by default), `wf done`, `next_ids` (T, M, D, F past every record the history added; an open pull request's new records are not seen; review IDs live on the pull requests and are not computed), `wf evidence --json`.
+- **B7.** Its second half only: the trusted branch's own CI run on a task's exact baseline commit counts as its baseline run when it ran the task's verification commands (`readiness.md`); no check can verify that, so it is prose. Skipping `wf ci` on draft pull requests would bring back the hole v2.4.1 closed: GitHub counts a skipped required check as passed, so a pull request marked ready, with auto-merge turned on at once, could merge before the check ran again.
+
+Independent review: approve with notes; its findings S1–S9 and notes N2–N7 are dealt with in this release. Its fix review: approve with notes; the ssh agent, the `--merged` rule, the sleep's cap and two missing tests are fixed too (the pull request lists each).
+
 ## 5. What stays as it is
 
 Every gate's evidence requirement, the owner's merge of the plan, the acceptance and workflow changes, the independent review, and manual and enforced modes. A1 accepts Done only with the claim in the pull request's own history; A2 carries only enforcement paths the trusted branch brought in; A3 changes only which test files a glob reaches.
@@ -82,3 +95,5 @@ Release v2.6.0. For mateen-systems, in that repository: run `bin/wf-upgrade` (it
 ## 8. Corpus size
 
 The shared corpus (policy, schema, quickstart, procedures, templates, skill) is 40,505 words before this change and 41,324 (+819) after, about 300 of it the launcher, now a template (`templates/scripts/wf`) rather than text inside `bin/wf-adopt`. Procedures changed, against the session budget of three to four thousand words for one procedure and its records: `execute.md` 2,088 → 2,120, `review.md` 1,148 → 1,196, `accept-release.md` 665 → 719, `operate.md` 1,099 → 1,143, `readiness.md` 1,072 → 1,080; `SCHEMA.md` 7,017 → 7,263.
+
+Part B (v2.7.0): the corpus grows from 41,324 to 41,946 words (+622); `execute.md` 2,120 → 2,174, `review.md` 1,196 → 1,329, `accept-release.md` 719 → 760, `readiness.md` 1,080 → 1,114; `SCHEMA.md` 7,263 → 7,496. `review.md` takes most of it, for the exposure rule and the fix-review default.

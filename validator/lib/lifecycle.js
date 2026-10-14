@@ -83,7 +83,7 @@ export function evaluateSession({ record: r, candidate, lifecycle, repository, w
   errors.push(...workflowErrors(r, [workflow].flat()));
   // MAINT-0018 B1: a task lead's outcome says who implemented the task; execute.md has a fresh helper do it.
   const notes = [];
-  if (r?.implementer !== undefined && !['helper', 'lead'].includes(r.implementer)) errors.push('session implementer is helper or lead: who implemented the task');
+  if (r?.implementer !== undefined && r.implementer !== '' && !['helper', 'lead'].includes(r.implementer)) errors.push('session implementer is helper or lead: who implemented the task');
   if (r?.implementer === 'lead') notes.push('the task lead implemented the task itself; procedures/execute.md has a fresh helper implement it, so the lead\'s context stays small');
   const checkEvidence = () => {
     if (!Array.isArray(r.evidence) || !r.evidence.length) errors.push('session requires durable evidence');

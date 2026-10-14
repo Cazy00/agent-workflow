@@ -3,6 +3,7 @@
 // said "Build it": seven of eight leads implemented their tasks themselves and grew to 400–635 K tokens. The brief says who
 // implements, what the lead must not edit, the task's own records and the commands with their revisions. It grants nothing.
 import { list, loadAll, loadConfig } from './records.js';
+import { ACCEPTANCE } from './acceptance-files.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 export function renderLeadBrief({ baseline, candidate = baseline, task }) {
@@ -13,12 +14,14 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   if (!t) throw new Error(`task ${task} not found`);
   const m = records.milestones.get(t.milestone)?.data ?? {};
   let examples = [];
-  try { examples = JSON.parse(candidate.read(`${rd}/acceptance.json`) ?? '{"examples":[]}').examples ?? []; } catch { examples = []; }
+  try { examples = JSON.parse(candidate.read(ACCEPTANCE) ?? '{"examples":[]}').examples ?? []; } catch { examples = []; }
   const acceptance = list(t.acceptance).map(id => { const e = examples.find(x => x?.id === id); return e ? `${id}: ${e.requirement ?? ''}${e.method ? ` (${e.method})` : ''}` : id; });
   const base = baseline.kind === 'git' ? baseline.name : 'TRUSTED_TIP';
   const governing = [...(config.paths?.governing ?? []), ...(config.paths?.enforcement ?? [])].map(g => (typeof g === 'string' ? g : g.pattern));
   const deep = config.review?.deep_paths ?? [];
-  const evidence = ['enforced', 'owner-merge'].includes(config.approval?.label) ? ' --delivery-evidence PR_DESCRIPTION_FILE' : '';
+  const prMode = ['enforced', 'owner-merge'].includes(config.approval?.label);
+  // Manual mode signs rounds: the trust options, and no pull-request commands (as wf next prints them).
+  const trust = prMode ? '' : ' --trust-key … --receipts … --repository …';
   const pin = config.workflow ?? {};
   const session = { outcome: 'ready-for-review', workflow: { version: pin.version ?? '', revision: pin.revision ?? '' }, implementer: 'helper', summary: '', candidate: '', evidence: ['<the pull request>'], next_action: '', friction: 'none' };
   return `# ${task}: ${t.title ?? ''}
@@ -45,12 +48,12 @@ ${deep.length ? `A change to these paths needs a deep review (review.deep_paths)
 
 ## Commands
 ${bullets([
-    `wf readiness --baseline ${base} --task ${task}`,
-    `wf ci --baseline ${base} --candidate HEAD --task ${task}${evidence}`,
-    `wf evidence --baseline ${base} --candidate HEAD --task ${task}  (starts the delivery evidence)`,
-    `wf done --task ${task} --implemented SHA  (the Done record, as the pull request's last commit)`,
-    'wf wait --pr N  (until its checks finish; --merged until it merges)',
-    `wf session --baseline ${base} --candidate HEAD --task ${task} --record FILE`,
+    `wf readiness --baseline ${base} --task ${task}${trust}`,
+    `wf ci --baseline ${base} --candidate HEAD --task ${task}${prMode ? ' --delivery-evidence PR_DESCRIPTION_FILE' : `${trust} --unsigned-receipts ROUND_FILE`}`,
+    ...(prMode ? [`wf evidence --baseline ${base} --candidate HEAD --task ${task}  (starts the delivery evidence)`] : []),
+    `wf done --task ${task} --implemented SHA  (the Done record, as ${prMode ? 'the pull request\'s last commit' : 'the task branch\'s last commit'})`,
+    ...(prMode ? ['wf wait --pr N  (until its checks finish; --merged until it merges)'] : []),
+    `wf session --baseline ${base} --candidate HEAD --task ${task}${trust} --record FILE`,
   ])}
 
 ## Session outcome to return

@@ -36,7 +36,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   brief --lead --task T-0001 [--baseline REV]: the task lead's brief, from the records (MAINT-0018)
   doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the first question to the owner
-  wait --pr N [--merged] [--timeout MINUTES]: waits for the pull request's checks to finish (or, with --merged, for it to merge); exit 0 passed or merged
+  wait --pr N [--merged] [--timeout MINUTES, default 30]: waits for the pull request's required checks to appear and finish (or, with --merged, for it to merge); exit 0 passed or merged; run it in the background
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
@@ -219,7 +219,7 @@ async function main() {
   // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
   // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
   let baselineNote = null;
-  if (!o.baseline && cmd === 'next') {
+  if (!o.baseline && ['next', 'doctor'].includes(cmd)) { // doctor runs the trusted branch's preflight, not a working-tree edit
     let branch = 'main', adopted = false;
     try { branch = loadConfig(dirSource(repo)).trusted_branch ?? 'main'; adopted = true; } catch { /* reported below */ }
     const run = gitRunner(repo);
@@ -256,7 +256,13 @@ async function main() {
     if (!/^\d+$/.test(o.pr ?? '')) throw new WfError('wait needs --pr NUMBER');
     if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('wait needs repository in docs/workflow/config.json');
     const interval = process.env.WF_WAIT_INTERVAL === undefined ? 30 : Number(process.env.WF_WAIT_INTERVAL);
-    const result = waitForPullRequest({ repository: config.repository, number: o.pr, merged: o.merged === true, interval, timeoutMinutes: o.timeout ? Number(o.timeout) : 120 });
+    if (!Number.isFinite(interval) || interval < 0) throw new WfError('WF_WAIT_INTERVAL must be a number of seconds');
+    const timeoutMinutes = o.timeout === undefined ? 30 : Number(o.timeout);
+    if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new WfError('--timeout must be a number of minutes');
+    // The checks a merge needs: the profile's, and `wf ci` in the pull-request modes. Their runs may not exist yet.
+    const prMode = ['enforced', 'owner-merge'].includes(config.approval?.label);
+    const required = [...new Set([...list(loadAll(baseline, rd).profile?.data?.required_checks), ...(prMode ? ['wf ci'] : [])])];
+    const result = waitForPullRequest({ repository: config.repository, number: o.pr, merged: o.merged === true, interval, timeoutMinutes, required });
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
@@ -266,15 +272,18 @@ async function main() {
     const run = gitRunner(repo);
     if (run('cat-file', '-e', `${o.implemented}^{commit}`).status !== 0 || run('merge-base', '--is-ancestor', o.implemented, 'HEAD').status !== 0) throw new WfError(`${o.implemented.slice(0, 12)} is not a commit in this checkout's history`);
     const rel = `${rd}/tasks/${o.task}.md`;
-    const file = path.join(repo, rel);
-    if (!fs.existsSync(file)) throw new WfError(`${rel} not found`);
-    const text = fs.readFileSync(file, 'utf8');
+    // Read through the working-tree source, which refuses a path that leaves the repository or passes a symbolic link.
+    let text;
+    try { text = dirSource(repo).read(rel); } catch (e) { throw new WfError(e.message); }
+    if (text == null) throw new WfError(`${rel} not found`);
+    const file = path.join(fs.realpathSync(repo), rel);
     const front = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
     const status = front?.match(/^status:[ \t]*(\S+)/m)?.[1];
     if (status === 'Done') throw new WfError(`${o.task} is Done already`);
     if (!['Ready', 'Active'].includes(status)) throw new WfError(`${o.task} is ${status ?? 'without a status'}: claim it (Ready or Active) in an earlier commit of this pull request first`);
-    let next = front.replace(/^status:.*$/m, 'status: Done');
-    next = /^implemented:.*$/m.test(next) ? next.replace(/^implemented:.*$/m, `implemented: ${o.implemented}`) : next.replace(/^status: Done$/m, `status: Done\nimplemented: ${o.implemented}`);
+    const eol = /\r\n/.test(front) ? '\r\n' : '\n';
+    let next = front.replace(/^status:[^\r\n]*/m, 'status: Done');
+    next = /^implemented:/m.test(next) ? next.replace(/^implemented:[^\r\n]*/m, `implemented: ${o.implemented}`) : next.replace(/^status: Done/m, `status: Done${eol}implemented: ${o.implemented}`);
     fs.writeFileSync(file, next + text.slice(front.length));
     console.log(JSON.stringify({ ok: true, path: rel, next: `git add ${rel} && git commit -m "${o.task}: Done"  (the pull request's last commit)` }, null, 2));
     return 0;

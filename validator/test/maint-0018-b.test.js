@@ -30,6 +30,15 @@ test('MAINT-0018 B1: wf brief --lead prints the task lead\'s brief: the task, wh
   ]) assert.match(r.stdout, want);
 });
 
+test('MAINT-0018 B1 (review S3): in manual mode the brief\'s commands carry the trust options, and pull-request commands are left out', t => {
+  const p = project(t, { configEdit: c => ({ ...c, approval: { ...c.approval, label: 'manual', mechanism: 'manual', checkpoint: undefined } }), baselineEdit: q => q.edit('docs/workflow/profile.md', x => x.replace('approval_label: owner-merge', 'approval_label: manual')) });
+  const r = spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', p.repo, '--baseline', p.baseline], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /wf readiness --baseline [0-9a-f]{40} --task T-0001 --trust-key … --receipts … --repository …/);
+  assert.match(r.stdout, /wf ci --baseline [0-9a-f]{40} --candidate HEAD --task T-0001 --trust-key … --receipts … --repository … --unsigned-receipts ROUND_FILE/);
+  assert.doesNotMatch(r.stdout, /wf evidence|wf wait/);
+});
+
 test('MAINT-0018 B1: a session outcome may say who implemented; a lead that implemented its own task is flagged', t => {
   const p = project(t);
   const head = p.git('rev-parse', 'HEAD');
@@ -58,13 +67,24 @@ test('MAINT-0018 B3: a governing file restored to the trusted branch\'s content 
   assert.deepEqual(carriedFrom({ config, baseline: gitSource(dir, base), candidate: gitSource(dir, restored), from: reviewed }).ok, true);
   write('src/a.js', 'a\n'); const reverted = commit('the code goes back too');
   assert.equal(carriedFrom({ config, baseline: gitSource(dir, base), candidate: gitSource(dir, reverted), from: reviewed }).ok, false, 'reverting reviewed code still needs a review');
+  // Review S7: a governing file that is also an acceptance test never carries; a file the trusted branch changed meanwhile
+  // carries once the pull request holds the trusted branch's new content.
+  const tests = { paths: { ...config.paths, acceptance_tests: ['apps/web/ARCHITECTURE.md'] } };
+  assert.equal(carriedFrom({ config: tests, baseline: gitSource(dir, base), candidate: gitSource(dir, restored), from: reviewed }).ok, false, 'an acceptance test put back still needs its run');
+  git('checkout', '-q', 'main'); write('apps/web/ARCHITECTURE.md', 'the architecture, revised on main\n'); const moved = commit('main revises the architecture');
+  git('checkout', '-q', 'task'); git('reset', '-q', '--hard', restored); git('merge', '-q', '--no-edit', 'main'); const merged = git('rev-parse', 'HEAD');
+  assert.equal(carriedFrom({ config, baseline: gitSource(dir, moved), candidate: gitSource(dir, merged), from: reviewed }).ok, true);
 });
 
 test('MAINT-0018 B3: the owner\'s reason for a governing change says it can move to the acceptance pull request', t => {
   const p = project(t);
-  p.edit('docs/specs/feature.md', x => `${x}\nA clarification.\n`); const head = p.commit('a governing clarification');
-  const r = p.run(['ci', '--baseline', p.baseline, '--candidate', head]);
-  assert.match(r.out.owner_reasons.join(' | '), /it changes the plan or requirements: docs\/specs\/feature\.md \(a clarification nothing waits on goes into the milestone's acceptance pull request: put the file back here and the review still carries over\)/);
+  p.edit('docs/specs/feature.md', x => `${x}\nA clarification.\n`); const records = p.commit('a governing clarification');
+  // Review N3: on its own, as in an authorisation or acceptance pull request, it is the owner's change and says no more.
+  assert.deepEqual(p.run(['ci', '--baseline', p.baseline, '--candidate', records]).out.owner_reasons, ['it changes the plan or requirements: docs/specs/feature.md']);
+  p.edit(taskPath, x => x.replace(`governing_baseline_revision: ${p.initial}`, `governing_baseline_revision: ${p.baseline}`));
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work, with the clarification');
+  const r = p.run(['ci', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: evidence(head) });
+  assert.match(r.out.owner_reasons.join(' | '), /it changes the plan or requirements: docs\/specs\/feature\.md \(a clarification nothing waits on goes into the milestone's acceptance pull request: put the file back here and the review still carries over\)/, r.stdout);
 });
 
 // B4. A blocking finding states what it exposes; M-0004's second fix review chased a gap the server already refused.
@@ -83,6 +103,7 @@ test('MAINT-0018 B5: wf doctor reports the tools and the project\'s preflight ch
   fakeExecutable(path.join(bin, 'gh'), `const a = process.argv.slice(2).join(' ');
 if (a === '--version') console.log('gh version 2.40.0 (2023-12-01)');
 else if (a.startsWith('auth status')) console.log('github.com\\n  ✓ Logged in to github.com account ' + (process.env.FAKE_GH_ACCOUNT || 'agent') + ' (keyring)');
+else if (a.startsWith('api user')) console.log(process.env.FAKE_GH_ACCOUNT || 'agent');
 else if (a.startsWith('api')) console.log(JSON.stringify({ full_name: 'fixture/project', permissions: { push: true } }));
 else process.exit(1);`);
   const env = { PATH: `${bin}:/usr/bin:/bin` };
@@ -99,6 +120,13 @@ else process.exit(1);`);
   const owner = p.run(['doctor'], { env: { ...env, FAKE_GH_ACCOUNT: 'owner' } }).out.checks.find(c => c.name === 'gh signed in');
   assert.equal(owner.ok, false);
   assert.match(owner.detail, /as owner, but the agent's account is agent: switch with gh auth switch --user agent/);
+  // Review S5: the preflight list is the trusted branch's, never a working-tree edit, and runs without signing variables.
+  const configPath = path.join(p.repo, 'docs/workflow/config.json');
+  const edited = JSON.parse(fs.readFileSync(configPath, 'utf8')); edited.preflight = [{ name: 'an edit in the working tree', run: 'true' }]; fs.writeFileSync(configPath, JSON.stringify(edited));
+  assert.equal(p.run(['doctor'], { env }).out.checks.some(c => c.name === 'an edit in the working tree'), false);
+  p.git('checkout', '-q', '--', 'docs/workflow/config.json');
+  const leak = project(t, { configEdit: c => ({ ...c, preflight: [{ name: 'no signing key', run: 'test -z "$OWNER_SIGNING_KEY$WF_READ_TOKEN$GPG_PASSPHRASE"' }] }) });
+  assert.equal(leak.run(['doctor'], { env: { ...env, OWNER_SIGNING_KEY: 'secret', WF_READ_TOKEN: 'secret', GPG_PASSPHRASE: 'secret' } }).out.checks.find(c => c.name === 'no signing key').ok, true);
   const bad = project(t, { configEdit: c => ({ ...c, preflight: [{ name: 'x' }] }) });
   assert.match(bad.run(['doctor'], { env }).stderr, /preflight entries need a name and a run command/);
 });
@@ -112,20 +140,40 @@ test('MAINT-0018 B6: wf wait follows a pull request\'s current head until its ch
 const n = (fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0) + 1; fs.writeFileSync(f, String(n));
 const a = process.argv.slice(2).join(' ');
 if (n === 2) { console.error('connection reset'); process.exit(1); }
-if (a.includes('/pulls/7')) console.log(JSON.stringify({ state: 'open', merged: n > 6, head: { sha: 'f'.repeat(40) } }));
+if (a.includes('/pulls/7')) console.log(JSON.stringify({ state: 'open', merged: n > 20, head: { sha: 'f'.repeat(40) } }));
 else if (a.includes('/check-runs')) console.log(JSON.stringify({ check_runs: n < 5
-  ? [{ name: 'wf ci', status: 'in_progress', conclusion: null, started_at: '2026-10-14T00:00:00Z' }, { name: 'checks', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' }]
-  : [{ name: 'wf ci', status: 'completed', conclusion: 'failure', started_at: '2026-10-14T00:00:00Z' }, { name: 'wf ci', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:01:00Z' }, { name: 'checks', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' }] }));
+  ? [{ name: 'wf ci', status: 'in_progress', conclusion: null, started_at: '2026-10-14T00:00:00Z' }, { name: 'unit', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' }]
+  : [{ name: 'wf ci', status: 'completed', conclusion: 'failure', started_at: '2026-10-14T00:00:00Z' }, { name: 'wf ci', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:01:00Z' }, { name: 'unit', status: 'completed', conclusion: 'success', started_at: '2026-10-14T00:00:00Z' }] }));
 else process.exit(1);`);
   const env = { PATH: `${bin}:${process.env.PATH}`, WF_WAIT_INTERVAL: '0' };
   const r = p.run(['wait', '--pr', '7'], { env });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(r.out.result, 'passed');
-  assert.deepEqual(r.out.checks.map(c => `${c.name}:${c.conclusion}`).sort(), ['checks:success', 'wf ci:success'], 'the newest run of each check counts');
+  assert.deepEqual(r.out.checks.map(c => `${c.name}:${c.conclusion}`).sort(), ['unit:success', 'wf ci:success'], 'the newest run of each check counts');
   fs.rmSync(state);
   const merged = p.run(['wait', '--pr', '7', '--merged'], { env });
   assert.equal(merged.status, 0, merged.stdout + merged.stderr);
   assert.equal(merged.out.result, 'merged');
+});
+
+test('MAINT-0018 B6 (review S6): wf wait waits for every required check to appear, stops on a failed one when waiting for a merge, and refuses bad numbers', t => {
+  const p = project(t);
+  const bin = path.join(p.temp, 'bin'); fs.mkdirSync(bin);
+  fakeExecutable(path.join(bin, 'gh'), `const a = process.argv.slice(2).join(' ');
+const runs = JSON.parse(process.env.FAKE_RUNS);
+if (a.includes('/pulls/7')) console.log(JSON.stringify({ state: 'open', merged: false, head: { sha: 'f'.repeat(40) } }));
+else if (a.includes('/check-runs')) console.log(JSON.stringify({ check_runs: runs }));
+else process.exit(1);`);
+  const env = runs => ({ PATH: `${bin}:${process.env.PATH}`, WF_WAIT_INTERVAL: '0', FAKE_RUNS: JSON.stringify(runs) });
+  const done = (name, conclusion) => ({ name, status: 'completed', conclusion, started_at: '2026-10-14T00:00:00Z' });
+  const missing = p.run(['wait', '--pr', '7', '--timeout', '0.02'], { env: env([done('wf ci', 'success')]) });
+  assert.equal(missing.out.result, 'timeout', 'the required check unit has not appeared, so wf ci alone is not a pass');
+  assert.deepEqual(missing.out.waiting_for, ['unit']);
+  const failed = p.run(['wait', '--pr', '7', '--merged', '--timeout', '1'], { env: env([done('wf ci', 'success'), done('unit', 'failure')]) });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.out.result, 'failed');
+  assert.match(p.run(['wait', '--pr', '7'], { env: { ...env([]), WF_WAIT_INTERVAL: 'soon' } }).stderr, /WF_WAIT_INTERVAL must be a number of seconds/);
+  assert.match(p.run(['wait', '--pr', '7', '--timeout', 'abc'], { env: env([]) }).stderr, /--timeout must be a number of minutes/);
 });
 
 test('MAINT-0018 B6: wf done marks a task Done with the commit it implemented, and refuses anything else', t => {
@@ -150,7 +198,15 @@ test('MAINT-0018 B6: wf next names the next free record IDs, counting removed re
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(r.out.next_ids.task, 'T-0008');
   assert.equal(r.out.next_ids.milestone, 'M-0002');
-  assert.ok(r.out.next.run.some(c => /^wf doctor/.test(c)), JSON.stringify(r.out.next));
+  assert.match(r.out.next.run[0], /^wf doctor/, JSON.stringify(r.out.next));
+  assert.match(r.out.next.run[1], /^wf brief --lead --task T-0001/);
+  // Review S2: the flow M-0004 used, a Draft on the trusted branch claimed on its own branch, shows them too.
+  const draft = project(t, { baselineEdit: q => q.edit(taskPath, x => x.replace('status: Ready', 'status: Draft')) });
+  assert.match(draft.run(['next']).out.next.run[0], /^wf doctor/);
+  draft.edit(taskPath, x => x.replace('status: Draft', 'status: Active')); draft.commit('T-0001: start');
+  const active = draft.run(['next']).out.next;
+  assert.equal(active.kind, 'continue');
+  assert.match(active.run[0], /^wf doctor/);
 });
 
 test('MAINT-0018 B6: wf evidence --json prints the evidence alone', t => {

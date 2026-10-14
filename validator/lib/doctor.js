@@ -4,8 +4,13 @@
 // project's `preflight` list (docs/workflow/config.json) adds its own, such as ssh to its staging host. No gate reads it.
 import { spawnSync } from 'node:child_process';
 
-const run = (cmd, args, timeout = 20000) => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+// The project's own preflight commands run without the owner's signing material or the workflow's own secrets, as
+// `wf attest` withholds them (lib/attest.js): the config they come from is the trusted branch's (cli.js), not the
+// working tree's, and still no sandbox (review S5 of MAINT-0018 Part B).
+const WITHHELD = /^(OWNER_SIGNING_|WF_|GPG_|SSH_AUTH_SOCK$)/;
+const quiet = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !WITHHELD.test(k)));
+const run = (cmd, args, timeout = 20000, env = process.env) => {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
   return { ok: r.status === 0 && !r.error, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim(), missing: r.error?.code === 'ENOENT' };
 };
 const firstLine = s => String(s ?? '').split('\n').find(Boolean) ?? '';
@@ -20,11 +25,12 @@ export function evaluateDoctor({ config }) {
   const ghVersion = run('gh', ['--version']);
   add('gh', ghVersion.ok, ghVersion.ok ? firstLine(ghVersion.out) : 'not found on PATH', 'pull requests, wf wait, auto-merge');
   if (ghVersion.ok) {
-    const auth = run('gh', ['auth', 'status']);
-    const account = auth.out.match(/account (\S+)/)?.[1] ?? null;
+    // The signed-in account from the API, which every gh version answers the same way (`auth status` words it differently).
+    const user = run('gh', ['api', 'user', '--jq', '.login']);
+    const account = user.ok ? firstLine(user.out) : null;
     const agent = config.approval?.agent_identity || null;
-    add('gh signed in', auth.ok, auth.ok ? `as ${account ?? 'an account'}${agent && account && account !== agent ? `, but the agent's account is ${agent}: switch with gh auth switch --user ${agent}` : ''}` : 'gh auth status failed: sign in with gh auth login', 'pull requests');
-    if (auth.ok && agent && account && account !== agent) checks.at(-1).ok = false;
+    const wrong = agent && account && account !== agent;
+    add('gh signed in', user.ok && !wrong && !(agent && !account), !user.ok ? 'gh cannot read the signed-in account: sign in with gh auth login' : wrong ? `as ${account}, but the agent's account is ${agent}: switch with gh auth switch --user ${agent}` : `as ${account}`, 'pull requests');
     if (config.repository) {
       const repo = run('gh', ['api', `repos/${config.repository}`]);
       let push = null;
@@ -38,7 +44,7 @@ export function evaluateDoctor({ config }) {
     add(`${second.tool} (review.second_model)`, tool.ok, tool.ok ? firstLine(tool.out) : `not found on PATH: deep reviews fall back to a fresh reviewer of your own tool, which review.fallback records`, 'deep and milestone reviews');
   }
   for (const p of config.preflight ?? []) {
-    const r = run('bash', ['-c', p.run], 30000);
+    const r = run('bash', ['-c', p.run], 30000, quiet());
     add(p.name, r.ok, r.ok ? 'ok' : `failed: ${firstLine(r.out) || p.run}`, p.why ?? 'the project (preflight)');
   }
   const gaps = checks.filter(c => !c.ok).map(c => c.name);

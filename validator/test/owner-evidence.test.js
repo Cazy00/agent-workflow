@@ -399,7 +399,7 @@ test('wf next starts the ready task and names only what to read for it', t => {
   const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
   assert.equal(next.next.kind, 'start'); assert.equal(next.next.item, 'T-0001');
   assert.deepEqual(next.next.read, ['docs/workflow/tasks/T-0001.md', 'docs/workflow/milestones/M-0001.md', 'docs/workflow/profile.md', 'docs/workflow/acceptance.json', 'tests/acceptance-map.json', 'procedures/execute.md *Implement a task*, then procedures/review.md']);
-  assert.match(next.next.run[0], new RegExp(`wf readiness --baseline ${p.B} --task T-0001`));
+  assert.match(next.next.run.find(c => c.startsWith('wf readiness')), new RegExp(`wf readiness --baseline ${p.B} --task T-0001`)); // MAINT-0018: wf doctor and the lead's brief come first
 });
 
 test('wf next keeps working through a milestone that signs once at its end', t => {
@@ -487,7 +487,7 @@ test('wf next prints manual-mode commands with the trust options they need', t =
   const p = project(t);
   p.git('checkout', '-q', 'main');
   const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: dirSource(p.repo) });
-  assert.match(next.next.run[0], /^wf readiness --baseline [0-9a-f]{40} --task T-0001 --trust-key … --receipts … --repository …$/);
+  assert.match(next.next.run.find(c => c.startsWith('wf readiness')), /^wf readiness --baseline [0-9a-f]{40} --task T-0001 --trust-key … --receipts … --repository …$/);
 });
 
 test('wf next reads pull-request claims: a duplicate claim comes first, and a claimed task is not started again', t => {
@@ -519,7 +519,7 @@ test('wf next keeps a selected candidate in the commands it prints', t => {
   const p = project(t);
   const next = evaluateNext({ baseline: gitSource(p.repo, p.B), candidate: gitSource(p.repo, p.C) });
   assert.equal(next.next.kind, 'start');
-  assert.match(next.next.run[0], new RegExp(`^wf readiness --baseline ${p.B} --candidate ${p.C} --task T-0001 --trust-key`));
+  assert.match(next.next.run.find(c => c.startsWith('wf readiness')), new RegExp(`^wf readiness --baseline ${p.B} --candidate ${p.C} --task T-0001 --trust-key`));
   const printed = p.run(['readiness', '--baseline', p.B, '--candidate', p.C, '--task', 'T-0001'], { claims: [{ purpose: 'baseline', revision: p.B }] });
   assert.equal(printed.status, 0, printed.stdout + printed.stderr);
 });

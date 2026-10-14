@@ -53,7 +53,8 @@ export function workflowOf(config, latestRelease = null) {
 }
 
 // MAINT-0018: the next free ID of each record kind: past every record now present and every one the history ever added, so
-// a record removed after its milestone's acceptance keeps its number (ci.js refuses a reused one).
+// a record removed after its milestone's acceptance keeps its number (ci.js refuses a reused one). An open pull request's
+// new records are not seen here; null when the history cannot be read.
 const KINDS = { task: ['tasks', 'T'], milestone: ['milestones', 'M'], decision: ['decisions', 'D'], feedback: ['feedback/inbox', 'F'] };
 export function nextIds(sources, rd) {
   const ids = {};
@@ -61,7 +62,7 @@ export function nextIds(sources, rd) {
     let max = 0;
     for (const source of sources) {
       let paths = [];
-      try { paths = source.addedPaths ? source.addedPaths(`${rd}/${dir}`) : []; } catch { paths = []; }
+      try { paths = source.addedPaths ? source.addedPaths(`${rd}/${dir}`) : []; } catch { return null; }
       for (const p of paths) { const n = Number(p.match(new RegExp(`(?:^|/)${letter}-(\\d{4})\\.md$`))?.[1] ?? 0); if (n > max) max = n; }
     }
     ids[kind] = `${letter}-${String(max + 1).padStart(4, '0')}`;
@@ -129,11 +130,12 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const claimed = t => (t.pull_requests ?? []).length > 0 || t.claim_branch === true;
   const ownersDecision = t => (t.reasons ?? []).length > 0 && (t.reasons ?? []).every(r => /^(decision|deferred input) D-\d{4}/.test(r));
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
+  // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
+  // to start, is being made Ready, or continues on its own branch (a Draft on the trusted branch, claimed there).
+  const handOver = id => ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${id} --baseline ${base}${manual ? trustOptions : ''}  (the task lead's brief)`];
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    // MAINT-0018: a task about to start also gets the access check (B5) and is handed over with its lead's brief (B1).
-    const before = kind === 'start' ? ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${t.id} --baseline ${base}  (the task lead's brief)`] : [];
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`, ...before] });
+    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
   };
   const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.
@@ -145,7 +147,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   }
   for (const t of eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.ready).sort(byPriority)) taskAction(t, 'start', 'Claim and start', 'Ready, and its readiness passes');
   for (const t of eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.subset).sort(byPriority)) taskAction(t, 'start', 'Claim and start the ready subset of', `ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
-  for (const t of eligible.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
+  for (const t of eligible.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   for (const t of eligible.filter(t => ['Ready', 'Draft'].includes(t.status) && t.readiness === OUTCOMES.needs).sort(byPriority)) {
     if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);
@@ -185,7 +187,7 @@ export function renderNext(n) {
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
-  if (n.next_ids) lines.push('', `Next free IDs: ${Object.values(n.next_ids).join(', ')} (reviews are numbered on the pull requests)`);
+  if (n.next_ids) lines.push('', `Next free IDs here: ${Object.values(n.next_ids).join(', ')}; check the open pull requests too (wf status --pull-requests). Reviews are numbered on the pull requests.`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;
 }

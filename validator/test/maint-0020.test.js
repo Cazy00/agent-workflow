@@ -496,7 +496,8 @@ function carrying(t, { defer = true } = {}) {
   taskLike(p, 'T-0002', 'src/b', x => fixes('R-0001/F1')(x).replace('status: Ready', 'status: Draft'));
   taskLike(p, 'T-0003', 'src/c', x => x.replace('status: Ready', 'status: Draft'));
   taskLike(p, 'T-0004', 'src/d', x => fixes('R-0001/F2')(x).replace('status: Ready', 'status: Draft'));
-  const base = p.commit('records: the found T-0002 and T-0004, the planned T-0003');
+  taskLike(p, 'T-0005', 'src/e', x => fixes('R-0001/F1')(x).replace('status: Ready', 'status: Draft').replace('milestone: M-0001', 'milestone: M-0002'));
+  const base = p.commit('records: the found T-0002 and T-0004, the planned T-0003, T-0005 of another milestone');
   p.write('src/a.js', 'export const result = 1;\n');
   p.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1]'));
   const head = p.commit('T-0001: the work; R-0001/F1 accepted, T-0002 fixes it');
@@ -520,6 +521,7 @@ test('MAINT-0020 P11: a blocking finding outside the diff, carried by a found ta
     [{ carried_by: 'T-0001' }, 'carried_by names no other found task of M-0001'],
     [{ carried_by: 'T-0003' }, 'carried_by names no other found task of M-0001'],
     [{ carried_by: 'T-0009' }, 'carried_by names no other found task of M-0001'],
+    [{ carried_by: 'T-0005' }, 'carried_by names no other found task of M-0001'],
     [{ carried_by: 'T-0004' }, 'T-0004\'s found_from is not R-0001/F1'],
     [{ merge_increases_exposure: true }, 'merge_increases_exposure is not false'],
     [{ merge_increases_exposure: undefined }, 'merge_increases_exposure is not false'],

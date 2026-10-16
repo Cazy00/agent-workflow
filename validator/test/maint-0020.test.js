@@ -443,10 +443,11 @@ test('MAINT-0020 P6(b): a found task that names its finding passes readiness wit
   // The found task without found_from takes no place: T-0004 is the second.
   assert.deepEqual(ready('T-0003').reasons, [`T-0003 is a found task of M-0001 (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`]);
   assert.deepEqual(ready('T-0005').reasons, [`T-0005 would be found task 3 of M-0001, beyond its found_tasks allowance of 2: ${ask}`]);
-  // One recorded only on its own branch counts too, after those on the trusted branch.
+  // Those recorded only on the branch count too, after those on the trusted branch.
   taskLike(p, 'T-0006', 'src/f', fixes('trial'));
-  const branch = p.commit('T-0006: claimed on its branch');
-  assert.deepEqual(ready('T-0006', '--candidate', branch).reasons, [`T-0006 would be found task 4 of M-0001, beyond its found_tasks allowance of 2: ${ask}`]);
+  taskLike(p, 'T-0007', 'src/g', fixes('R-0003/F1'));
+  const branch = p.commit('T-0006, T-0007: recorded on a branch');
+  assert.deepEqual(ready('T-0007', '--candidate', branch).reasons, [`T-0007 would be found task 5 of M-0001, beyond its found_tasks allowance of 2: ${ask}`]);
   // Without found_tasks none is allowed, as before; without a tasks: list no task is found, as wf status counts them.
   const none = project(t, { baselineEdit: planOf('') });
   taskLike(none, 'T-0002', 'src/b', fixes('R-0001/F1'));
@@ -515,10 +516,10 @@ test('MAINT-0020 P11: a blocking finding outside the diff, carried by a found ta
     [{ paths: ['src/a.js'] }, 'this pull request changes src/a.js'],
     [{ paths: ['src/b.js', 'src'] }, 'this pull request changes src'],
     [{ paths: undefined }, 'it names no paths'],
-    [{ carried_by: undefined }, 'carried_by names no found task of M-0001'],
-    [{ carried_by: 'T-0001' }, 'carried_by names no found task of M-0001'],
-    [{ carried_by: 'T-0003' }, 'carried_by names no found task of M-0001'],
-    [{ carried_by: 'T-0009' }, 'carried_by names no found task of M-0001'],
+    [{ carried_by: undefined }, 'carried_by names no other found task of M-0001'],
+    [{ carried_by: 'T-0001' }, 'carried_by names no other found task of M-0001'],
+    [{ carried_by: 'T-0003' }, 'carried_by names no other found task of M-0001'],
+    [{ carried_by: 'T-0009' }, 'carried_by names no other found task of M-0001'],
     [{ carried_by: 'T-0004' }, 'T-0004\'s found_from is not R-0001/F1'],
     [{ merge_increases_exposure: true }, 'merge_increases_exposure is not false'],
     [{ merge_increases_exposure: undefined }, 'merge_increases_exposure is not false'],
@@ -528,6 +529,15 @@ test('MAINT-0020 P11: a blocking finding outside the diff, carried by a found ta
   p.write('src/a.js', 'export const result = 1;\n');
   const unlisted = p.commit('T-0001: the work, R-0001/F1 not listed');
   assert.deepEqual(owner([race()], unlisted), ['blocking review findings accepted rather than fixed: F1 (not carried: not in the task record\'s accepted_findings)']);
+  // A found task cannot carry a finding of its own review.
+  p.git('checkout', '-q', '--detach', p.base);
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Draft', 'status: Ready').replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1]'));
+  p.write('src/b/fix.js', 'export const fixed = false;\n');
+  const own = p.commit('T-0002: its work, its own finding accepted');
+  const e = evidence(own); e.tasks = e.review.tasks = ['T-0002']; e.review.findings = [race({ paths: ['src/c.js'] })];
+  const self = p.run(['ci', '--baseline', p.base, '--candidate', own, '--task', 'T-0002'], { evidence: e });
+  assert.equal(self.status, 0, self.stdout + self.stderr);
+  assert.deepEqual([self.out.merge, self.out.owner_reasons], ['owner', ['blocking review findings accepted rather than fixed: F1 (not carried: carried_by names no other found task of M-0001)']]);
   // A non-blocking accepted finding behaves as before, whatever it carries.
   const minor = p.ci([race({ severity: 'should fix', exposure: undefined })]);
   assert.deepEqual([minor.status, minor.out.merge, minor.out.deferred], [0, 'agent', ['review findings accepted rather than fixed: F1']]);

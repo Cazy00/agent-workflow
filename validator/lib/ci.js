@@ -341,7 +341,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const uncarried = f => {
         if (!entry(f)) return 'not in the task record\'s accepted_findings';
         const by = candidateRecords.tasks.get(f.carried_by)?.data;
-        if (typeof f.carried_by !== 'string' || selected.includes(f.carried_by) || by?.milestone !== milestoneId || !plan.length || plan.includes(f.carried_by)) return `carried_by names no found task of ${milestoneId}`;
+        if (selected.includes(f.carried_by) || by?.milestone !== milestoneId || !plan.length || plan.includes(f.carried_by)) return `carried_by names no other found task of ${milestoneId}`;
         if (by.found_from !== entry(f)) return `${f.carried_by}'s found_from is not ${entry(f)}`;
         if (!Array.isArray(f.paths) || !f.paths.length) return 'it names no paths';
         const inside = f.paths.filter(p => changed.some(c => within(c, p)));

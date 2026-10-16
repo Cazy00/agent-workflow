@@ -9,7 +9,7 @@
   "candidate": "",
   "evidence": [],
   "next_action": "",
-  "friction": "none",
+  "friction": "",
   "usage": {
     "time_seconds": null,
     "tokens": null,

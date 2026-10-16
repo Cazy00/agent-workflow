@@ -54,7 +54,9 @@ export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage 
 // Run evidence lives on the task's GitHub pull request or issue; a link to it is durable evidence.
 const GITHUB_EVIDENCE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/\d+(#[\w-]+)?$/;
 // What each outcome-specific field holds, so a missing one says how to fill it in (MAINT-0018, F-0001 of mateen-systems).
+// MAINT-0020 P13: friction is required and never pre-filled, so "none" is a statement the lead makes.
 const HINTS = {
+  friction: 'write none if the workflow got in the way of nothing, or the report IDs or what went wrong (the template leaves it empty on purpose)',
   limit: 'the limit that stopped the session, for example "thirty-minute maintenance limit" or "context limit"',
   usage: 'time_seconds, tokens, spend and attempts, null where unknown',
   checkpoint: 'the commit or record where work can resume',
@@ -78,7 +80,7 @@ function workflowErrors(r, pins) {
 }
 export function evaluateSession({ record: r, candidate, lifecycle, repository, workflow = [] }) {
   const errors = [];
-  const require = (...fields) => { for (const f of fields) if (!r?.[f]) errors.push(`session requires ${f}${HINTS[f] ? `: ${HINTS[f]}` : ''}`); };
+  const require = (...fields) => { for (const f of fields) if (!r?.[f] || (typeof r[f] === 'string' && !r[f].trim())) errors.push(`session requires ${f}${HINTS[f] ? `: ${HINTS[f]}` : ''}`); };
   require('outcome', 'next_action', 'friction');
   errors.push(...workflowErrors(r, [workflow].flat()));
   // MAINT-0018 B1: a task lead's outcome says who implemented the task; execute.md has a fresh helper do it.

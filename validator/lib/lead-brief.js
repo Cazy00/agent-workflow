@@ -23,7 +23,9 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   // Manual mode signs rounds: the trust options, and no pull-request commands (as wf next prints them).
   const trust = prMode ? '' : ' --trust-key … --receipts … --repository …';
   const pin = config.workflow ?? {};
-  const session = { outcome: 'ready-for-review', workflow: { version: pin.version ?? '', revision: pin.revision ?? '' }, implementer: 'helper', summary: '', candidate: '', evidence: ['<the pull request>'], next_action: '', friction: 'none' };
+  // MAINT-0020 P13: friction starts empty and `wf session` refuses it empty, so "none" is a statement the lead makes (F13: all
+  // 13 outcomes of M-0005 kept a pre-filled "none").
+  const session = { outcome: 'ready-for-review', workflow: { version: pin.version ?? '', revision: pin.revision ?? '' }, implementer: 'helper', summary: '', candidate: '', evidence: ['<the pull request>'], next_action: '', friction: '' };
   return `# ${task}: ${t.title ?? ''}
 
 ${t.objective ?? ''}

@@ -22,12 +22,12 @@ import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { renderLeadBrief } from './lib/lead-brief.js';
 import { evaluateDoctor } from './lib/doctor.js';
-import { waitForPullRequest } from './lib/wait.js';
+import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -36,7 +36,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   brief --lead --task T-0001 [--baseline REV]: the task lead's brief, from the records (MAINT-0018)
   doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the first question to the owner
-  wait --pr N [--merged] [--timeout MINUTES, default 30]: waits for the pull request's required checks to appear and finish (or, with --merged, for it to merge); exit 0 passed or merged; run it in the background
+  wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
+    for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
@@ -248,7 +249,7 @@ async function main() {
     return 0;
   }
   if (cmd === 'doctor') {
-    const result = evaluateDoctor({ config });
+    const result = evaluateDoctor({ config, repo });
     // Which config the preflight came from: the trusted branch's, or the working tree's right after adoption (fix review).
     result.config_from = baseline.kind === 'git' ? `the trusted branch at ${baseline.name.slice(0, 12)}` : 'the working tree (the trusted branch has no adopted config yet)';
     if (baselineNote) result.note = baselineNote;
@@ -256,18 +257,30 @@ async function main() {
     return result.ok ? 0 : 1;
   }
   if (cmd === 'wait') {
-    if (!/^\d+$/.test(o.pr ?? '')) throw new WfError('wait needs --pr NUMBER');
+    if ((o.pr === undefined) === (o.commit === undefined)) throw new WfError('wait needs --pr NUMBER or --commit SHA');
+    if (o.pr !== undefined && !/^\d+$/.test(o.pr)) throw new WfError('wait needs --pr NUMBER');
+    if (o.commit !== undefined && o.merged) throw new WfError('wait --commit has no --merged: a commit does not merge');
+    if (o.commit !== undefined && !/^[0-9a-f]{40,64}$/.test(o.commit)) throw new WfError('wait --commit needs the full hash of the commit');
     if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('wait needs repository in docs/workflow/config.json');
     const interval = (process.env.WF_WAIT_INTERVAL ?? '') === '' ? 30 : Number(process.env.WF_WAIT_INTERVAL);
     if (!Number.isFinite(interval) || interval < 0) throw new WfError('WF_WAIT_INTERVAL must be a number of seconds');
-    const timeoutMinutes = o.timeout === undefined ? 30 : Number(o.timeout);
-    if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new WfError('--timeout must be a number of minutes');
-    // The checks a merge needs: the profile's, and `wf ci` in the pull-request modes. Their runs may not exist yet.
+    const minutes = o.timeout === undefined ? null : Number(o.timeout);
+    if (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0)) throw new WfError('--timeout must be a number of minutes');
+    // The ceiling is injectable as the interval is (WF_WAIT_INTERVAL), so a test need not wait 270 s for `pending`.
+    const ceiling = (process.env.WF_WAIT_CEILING ?? '') === '' ? WAIT_CEILING_SECONDS : Number(process.env.WF_WAIT_CEILING);
+    if (!Number.isFinite(ceiling) || ceiling <= 0) throw new WfError('WF_WAIT_CEILING must be a number of seconds');
+    const seconds = minutes === null ? ceiling : minutes * 60;
+    // The checks a merge needs: the profile's, and `wf ci` in the pull-request modes (it runs on pull requests only, so
+    // never for a commit). Their runs may not exist yet.
     const prMode = ['enforced', 'owner-merge'].includes(config.approval?.label);
-    const required = [...new Set([...list(loadAll(baseline, rd).profile?.data?.required_checks), ...(prMode ? ['wf ci'] : [])])];
-    const result = waitForPullRequest({ repository: config.repository, number: o.pr, merged: o.merged === true, interval, timeoutMinutes, required });
+    const profile = list(loadAll(baseline, rd).profile?.data?.required_checks);
+    const result = o.commit !== undefined
+      ? waitForCommit({ repository: config.repository, sha: o.commit, interval, seconds, required: [...new Set(profile)] })
+      : waitForPullRequest({ repository: config.repository, number: o.pr, merged: o.merged === true, interval, seconds, required: [...new Set([...profile, ...(prMode ? ['wf ci'] : [])])] });
+    // MAINT-0020 P12: still pending is neither a pass nor a failure: exit 4, and the exact command to run again.
+    if (result.result === 'pending') result.next = ['wf wait', o.commit !== undefined ? `--commit ${o.commit}` : `--pr ${o.pr}`, o.merged ? '--merged' : '', minutes === null ? '' : `--timeout ${o.timeout}`].filter(Boolean).join(' ');
     console.log(JSON.stringify(result, null, 2));
-    return result.ok ? 0 : 1;
+    return result.ok ? 0 : result.result === 'pending' ? 4 : 1;
   }
   if (cmd === 'done') {
     if (!o.task || !/^T-\d{4}$/.test(o.task)) throw new WfError('done needs --task T-0001');

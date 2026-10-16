@@ -2,7 +2,11 @@
 // reaches the owner in the first question rather than at the end. In M-0004 of mateen-systems the home server's missing
 // access to staging was seen at 18:17 and reported at 04:44. Built-in checks cover the tools every project uses; the
 // project's `preflight` list (docs/workflow/config.json) adds its own, such as ssh to its staging host. No gate reads it.
+// MAINT-0020 P9: it also checks where the session started. In M-0005 the session started in the parent folder, so the
+// project's reviewer and walker agents were "not registered" and ran as general-purpose agents with write tools.
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { workTreeRoot } from './git.js';
 
 // The project's own preflight commands run without the owner's signing material or the workflow's own secrets, as
 // `wf attest` withholds them (lib/attest.js), from the config of the trusted branch the working tree's config names
@@ -16,9 +20,14 @@ const run = (cmd, args, timeout = 20000, env = process.env) => {
 };
 const firstLine = s => String(s ?? '').split('\n').find(Boolean) ?? '';
 
-export function evaluateDoctor({ config }) {
+const real = p => { try { return fs.realpathSync(p); } catch { return p; } };
+export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const checks = [];
   const add = (name, ok, detail, neededFor) => checks.push({ name, ok, detail, needed_for: neededFor });
+  if (repo) {
+    const root = real(workTreeRoot(repo)), here = real(cwd);
+    add('session started in the repository root', here === root, here === root ? `in ${root}` : `started in ${here}, not in the repository root ${root}: the project's agents and instructions (.claude/agents, CLAUDE.md, AGENTS.md) are not loaded from a parent folder, so its reviewer and walker agents are missing: start the session in ${root}`, "the project's agents and instructions");
+  }
   const [major] = process.versions.node.split('.').map(Number);
   add('node 22 or later', major >= 22, `node ${process.versions.node}`, 'the validator');
   const git = run('git', ['--version']);

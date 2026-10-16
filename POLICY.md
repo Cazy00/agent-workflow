@@ -167,7 +167,7 @@ Before beginning a task, check that:
 - Required prerequisites are satisfied.
 - Relevant reserved decisions have valid approval.
 - Assumptions fall within delegated authority.
-- The starting revision and baseline condition are recorded.
+- The starting revision and baseline condition are recorded; a task may begin with the trusted branch's run on its baseline named (`pending: <run>`) and its result recorded before verification (the owner's decision of 17 October 2026, MAINT-0020 § 10).
 - Verification and review requirements are known.
 - Readiness uses current governing records.
 

@@ -4,6 +4,7 @@
 // grants anything. The reviewer's effort stays with review.md and review.second_model.
 import { LEVELS, ROLES, list } from './records.js';
 import { deepChanges } from './paths.js';
+import { reachesBelow } from './scope.js';
 
 // What a project that names no `roles` gets, and what config.default.json writes (a test keeps the two equal).
 export const DEFAULT_ROLES = {
@@ -22,8 +23,9 @@ export const effortOf = (role, level) => (role.effort && typeof role.effort === 
 export function reviewLevel(task, deepPaths = []) {
   const word = String(task?.review ?? '').trim().match(/^[a-z]+/i)?.[0].toLowerCase();
   if (LEVELS.includes(word)) return { level: word, why: `the task's review field starts with ${word}` };
-  // A scope entry is a path prefix: it reaches a glob that matches the path itself or a file under it.
-  const hit = list(task?.scope).map(s => String(s).replace(/\/+$/, '')).find(s => deepChanges(deepPaths, [s, `${s}/x`]).length);
+  // A scope entry is a path prefix: it reaches a glob that matches the path itself or a file under it, or a folder the glob
+  // pins below it (v2.8.0 review X3: `src` reaches `src/auth/**`, which the probe of `src/x` missed; scope.js reachesBelow).
+  const hit = list(task?.scope).map(s => String(s).replace(/\/+$/, '')).find(s => deepChanges(deepPaths, [s, `${s}/x`]).length || (deepPaths ?? []).some(g => reachesBelow(s, g)));
   if (hit) return { level: 'deep', why: `its scope reaches review.deep_paths (${hit})` };
   return { level: null, why: 'its review field names no level (light, standard or deep) and its scope reaches no review.deep_paths; standard is the default' };
 }

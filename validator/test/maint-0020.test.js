@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WAIT_CEILING_SECONDS, waitForCommit, waitForPullRequest } from '../lib/wait.js';
 import os from 'node:os';
 import { dirSource, loadConfig } from '../lib/index.js';
-import { DEFAULT_ROLES } from '../lib/roles.js';
+import { DEFAULT_ROLES, reviewLevel } from '../lib/roles.js';
 import { renderNext } from '../lib/next.js';
 import { fakeExecutable } from './helpers.js';
 import { evidenceErrors } from '../lib/delivery-evidence.js';
@@ -797,4 +797,44 @@ test('v2.8.0 review C3: a change that drops an accepted finding or a Done task r
   p.git('checkout', '-q', '--detach', base);
   p.edit(taskPath, x => x.replace('accepted_findings: [R-0001/F1, R-0002/N1]', 'accepted_findings: [R-0001/F1, R-0002/N1, R-0003/N2]'));
   assert.deepEqual(ci(p.commit('records: one more accepted finding')), ['agent', []]);
+});
+
+test('v2.8.0 review C1: wf next starts the planned Drafts of an authorised milestone whose readiness passes, claimed on their branches', t => {
+  const p = project(t);
+  const draft = x => x.replace('status: Ready', 'status: Draft');
+  p.edit(taskPath, x => draft(x).replace(/^scope: .*$/m, 'scope: [src/a]'));
+  taskLike(p, 'T-0002', 'src/b', draft);
+  taskLike(p, 'T-0003', 'src/c', draft);
+  taskLike(p, 'T-0004', 'src/a/x', draft); // overlaps T-0001
+  const sha = p.commit('records: four planned Drafts');
+  const r = p.run(['next', '--baseline', sha]).out;
+  assert.deepEqual([r.startable, r.running], [['T-0001', 'T-0002', 'T-0003'], []]);
+  assert.deepEqual([r.next.kind, r.next.do, r.next.why], ['start', 'Claim and start T-0001: Task T-0001', 'a Draft here: claim it on its own branch, Ready or Active there, and its readiness passes']);
+  assert.ok(r.next.run.includes(`wf wait --commit ${sha}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`), JSON.stringify(r.next.run));
+  assert.ok(lines(r).includes('Start together, each with its own lead in the background: T-0001, T-0002, T-0003'), renderNext(r));
+  assert.ok(![r.next, ...r.also].some(a => /^Mark /.test(a.do)), 'the claim replaces "Mark … Ready"');
+  // A Draft claimed by an open pull request runs; it is not started again.
+  const prs = path.join(p.temp, 'prs.json');
+  fs.writeFileSync(prs, JSON.stringify([{ number: 9, title: 'T-0002: Task T-0002', headRefName: 'T-0002', author: { login: 'agent' } }]));
+  const c = p.run(['next', '--baseline', sha, '--pull-requests', prs]).out;
+  assert.deepEqual([c.startable, c.running], [['T-0001', 'T-0003'], ['T-0002']]);
+  assert.ok(![c.next, ...c.also].some(a => a.item === 'T-0002'));
+  // The Drafts of a Draft milestone wait for its authorisation.
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Draft'));
+  assert.deepEqual(p.run(['next', '--baseline', p.commit('M-0001 back to Draft')]).out.startable, []);
+});
+
+test('v2.8.0 review X3, C notes: a scope reaches a deep glob nested below it, and the second-model budget counts deep tasks as the brief does', t => {
+  const plain = { review: 'independent context required' };
+  assert.equal(reviewLevel({ ...plain, scope: ['src'] }, ['src/auth/**']).level, 'deep');
+  for (const [scope, glob] of [['src/', 'src/{auth,billing}/**'], ['src', 'src/*/keys.js'], ['src/billing', 'src/*/auth/**'], ['src', 'src/**'], ['src', '**/src/auth/**'], ['src/auth', '**/auth/**']]) assert.equal(reviewLevel({ ...plain, scope: [scope] }, [glob]).level, 'deep', `${scope} ${glob}`);
+  for (const [scope, glob] of [['src', 'docs/**'], ['src/billing', 'src/*.sql'], ['lib', 'src/{auth,billing}/**'], ['src/a', 'src/ab/**'], ['apps/web', 'apps/**/migrations/**']]) assert.equal(reviewLevel({ ...plain, scope: [scope] }, [glob]).level, null, `${scope} ${glob}`);
+  // A glob matching by name anywhere is below every folder, so a scope reaches it only by its own path, as before (MAINT-0018).
+  for (const [scope, glob] of [['src', '**/auth/**'], ['tests', '**/*numbering*'], ['src/a.test.js', '**/*a*']]) assert.equal(reviewLevel({ ...plain, scope: [scope] }, [glob]).level, null, `${scope} ${glob}`);
+  const p = project(t, { configEdit: c => ({ ...c, review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' }, deep_paths: ['src/auth/**'] } }) });
+  taskLike(p, 'T-0002', 'docs/workflow/tasks', reviewIs('Deep (permissions)'));
+  taskLike(p, 'T-0003', 'docs/workflow/tasks', reviewIs('light: copy'));
+  const sha = p.commit('records: T-0001 reaches src/auth, T-0002 says deep, T-0003 light');
+  assert.deepEqual(p.run(['next', '--baseline', sha]).out.second_model_budget, [{ milestone: 'M-0001', deep_tasks: 2, runs: 5 }]);
+  assert.match(fs.readFileSync(path.join(root, 'validator/lib/next.js'), 'utf8'), /the runs already used are left to v2\.9\.0's `wf usage` \(P14\)/);
 });

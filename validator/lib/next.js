@@ -8,6 +8,7 @@ import { OUTCOMES } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
+import { reviewLevel } from './roles.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -133,7 +134,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const ownersDecision = t => (t.reasons ?? []).length > 0 && (t.reasons ?? []).every(r => /^(decision|deferred input) D-\d{4}/.test(r));
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
-  // to start, is being made Ready, or continues on its own branch (a Draft on the trusted branch, claimed there).
+  // to start (Ready, or a Draft claimed on its own branch) or continues there.
   const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
   // MAINT-0020 P10: a claim does not wait for the trusted branch's checks on its baseline (P2(b)); the lead waits with this.
   const baselineWait = kind => kind === 'start' && !manual ? [`wf wait --commit ${base}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`] : [];
@@ -149,10 +150,15 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
     else if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);
   }
-  const ready = eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.ready).sort(byPriority);
-  const subset = eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.subset).sort(byPriority);
-  for (const t of ready) taskAction(t, 'start', 'Claim and start', 'Ready, and its readiness passes');
-  for (const t of subset) taskAction(t, 'start', 'Claim and start the ready subset of', `ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
+  // v2.8.0 review C1: planned tasks wait on the trusted branch as Draft and are claimed on their own branch (readiness.md, ci.js
+  // claimedHere), so a Draft of an Authorised or Active milestone whose readiness passes starts as a Ready one does.
+  const authorised = t => ['Authorised', 'Active'].includes(live.find(m => m.id === t.milestone)?.status);
+  const claimable = t => !claimed(t) && (t.status === 'Ready' || (t.status === 'Draft' && authorised(t)));
+  const ready = eligible.filter(t => claimable(t) && t.readiness === OUTCOMES.ready).sort(byPriority);
+  const subset = eligible.filter(t => claimable(t) && t.readiness === OUTCOMES.subset).sort(byPriority);
+  const claimHow = t => t.status === 'Draft' ? 'a Draft here: claim it on its own branch, Ready or Active there' : 'Ready';
+  for (const t of ready) taskAction(t, 'start', 'Claim and start', `${claimHow(t)}, and its readiness passes`);
+  for (const t of subset) taskAction(t, 'start', 'Claim and start the ready subset of', `${claimHow(t)}; ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
   // MAINT-0020 P2(a): every task that can start now, each with its own lead in the background. In M-0005 the leads ran in the
   // foreground one after another (17.4 h), though T-0025, T-0026 and T-0028 could have run beside T-0029. In priority order, a
   // task whose readiness passes (so no prerequisite is outstanding on the trusted branch) joins when its scope overlaps no
@@ -165,7 +171,6 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
     if (running.length + startable.length >= 3) break;
     if (![...running, ...startable].some(u => clash(t, u))) startable.push(t);
   }
-  for (const t of eligible.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   for (const t of eligible.filter(t => ['Ready', 'Draft'].includes(t.status) && t.readiness === OUTCOMES.needs).sort(byPriority)) {
     if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);
@@ -186,11 +191,13 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   if (!drafts.length && stale.length) add({ kind: 'prune', item: stale.map(m => m.id).join(', '), do: `Remove the Done task records of ${stale.map(m => m.id).join(', ')}`, why: 'the milestone is accepted; its Done task records are read by every wf next and readiness run', read: [PROCEDURE.pr], run: prune });
 
   // MAINT-0020 P5(a): the second model's runs a milestone can spend (review.md): two per deep task, one for the milestone review,
-  // which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. Only the budget is printed, not the runs
-  // used: the pull-request data (`gh pr list`, readPullRequests) holds the open pull requests with no description or comments,
-  // and a milestone's finished tasks are on merged ones, so the runs used are not in what `wf next` is given.
+  // which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. A task is deep as the lead's brief reads
+  // it (roles.js reviewLevel: its review field, else its scope against review.deep_paths; v2.8.0 review). Only the budget is
+  // printed: the runs already used are left to v2.9.0's `wf usage` (P14), since the pull-request data `wf next` is given holds
+  // only the open pull requests, without their descriptions or comments.
+  const deepPaths = config.review?.deep_paths ?? [];
   const secondModel = config.review?.second_model ? milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => {
-    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === m.id && /^deep\b/i.test(String(r.data.review ?? '').trim())).length;
+    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === m.id && reviewLevel(r.data, deepPaths).level === 'deep').length;
     return { milestone: m.id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
   }) : [];
   const owner = status.waiting.filter(w => w.owner !== 'agent').map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));

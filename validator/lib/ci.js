@@ -334,8 +334,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const entry = f => listed.find(e => e.split('/').pop() === f.id);
       // MAINT-0020 P11 (the owner's decision of 16 October 2026, § 10): in M-0005 a race from M-0004's T-0020, found in
       // T-0031's review, made #91 the owner's merge though T-0032 fixed it. A blocking finding stays the agent's merge, carried to
-      // the acceptance, only when its code is outside this diff, the merge does not increase its exposure, a found task of the
-      // same milestone fixes it, and the task record lists it. Any other blocking finding, one the task introduced included, waits.
+      // the acceptance, only when its code is outside this diff, the merge does not increase its exposure, another found task
+      // of the same milestone fixes it, and the task record lists it. Any other blocking finding, one the task introduced included, waits.
       const milestoneId = candidateRecords.tasks.get(selected[0])?.data?.milestone;
       const plan = list(candidateRecords.milestones.get(milestoneId)?.data?.tasks);
       const uncarried = f => {

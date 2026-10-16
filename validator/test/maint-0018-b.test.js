@@ -115,7 +115,7 @@ else process.exit(1);`);
   assert.equal(by('a browser for the trial walk').ok, false);
   assert.equal(by('codex (review.second_model)').ok, false);
   assert.deepEqual(r.out.gaps.sort(), ['a browser for the trial walk', 'codex (review.second_model)']);
-  assert.match(r.out.next, /ask the owner about every gap in your first question/);
+  assert.match(r.out.next, /ask the owner about every gap in your next question \(the plan's, when planning\)/); // MAINT-0020 P7(c)
   // The owner's account signed in where the agent works (the MacBook's arrangement since 13 October) is a gap too.
   const owner = p.run(['doctor'], { env: { ...env, FAKE_GH_ACCOUNT: 'owner' } }).out.checks.find(c => c.name === 'gh signed in');
   assert.equal(owner.ok, false);

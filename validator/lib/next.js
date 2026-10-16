@@ -6,6 +6,7 @@ import { list, loadAll, loadConfig } from './records.js';
 import { evaluateStatus } from './status.js';
 import { OUTCOMES } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
+import { overlaps } from './scope.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -132,10 +133,12 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
   // to start, is being made Ready, or continues on its own branch (a Draft on the trusted branch, claimed there).
-  const handOver = id => ['wf doctor  (raise every gap in the first question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
+  const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
+  // MAINT-0020 P10: a claim does not wait for the trusted branch's checks on its baseline (P2(b)); the lead waits with this.
+  const baselineWait = kind => kind === 'start' && !manual ? [`wf wait --commit ${base}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`] : [];
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
+    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, ...baselineWait(kind), `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
   };
   const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.
@@ -145,15 +148,31 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
     else if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);
   }
-  for (const t of eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.ready).sort(byPriority)) taskAction(t, 'start', 'Claim and start', 'Ready, and its readiness passes');
-  for (const t of eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.subset).sort(byPriority)) taskAction(t, 'start', 'Claim and start the ready subset of', `ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
+  const ready = eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.ready).sort(byPriority);
+  const subset = eligible.filter(t => t.status === 'Ready' && !claimed(t) && t.readiness === OUTCOMES.subset).sort(byPriority);
+  for (const t of ready) taskAction(t, 'start', 'Claim and start', 'Ready, and its readiness passes');
+  for (const t of subset) taskAction(t, 'start', 'Claim and start the ready subset of', `ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
+  // MAINT-0020 P2(a): every task that can start now, each with its own lead in the background. In M-0005 the leads ran in the
+  // foreground one after another (17.4 h), though T-0025, T-0026 and T-0028 could have run beside T-0029. In priority order, a
+  // task whose readiness passes (so no prerequisite is outstanding on the trusted branch) joins when its scope overlaps no
+  // running (Active or claimed) or joining task's, until three run (execute.md). A task with no scope overlaps every other.
+  const running = open.filter(t => t.status === 'Active' || claimed(t));
+  const scopeOf = t => list(task(t.id).scope);
+  const clash = (a, b) => { const [x, y] = [scopeOf(a), scopeOf(b)]; return !x.length || !y.length || x.some(p => y.some(q => overlaps(p, q))); };
+  const startable = [];
+  for (const t of [...ready, ...subset]) {
+    if (running.length + startable.length >= 3) break;
+    if (![...running, ...startable].some(u => clash(t, u))) startable.push(t);
+  }
   for (const t of eligible.filter(t => t.status === 'Draft' && t.readiness === OUTCOMES.ready).sort(byPriority)) add({ kind: 'plan', item: t.id, do: `Mark ${t.id} Ready, or finish planning it`, why: 'a Draft whose readiness passes', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   for (const t of eligible.filter(t => ['Ready', 'Draft'].includes(t.status) && t.readiness === OUTCOMES.needs).sort(byPriority)) {
     if (ownersDecision(t)) held.push({ task: t.id, reasons: t.reasons });
     else resolve(t);
   }
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'plan')) add({ kind: 'plan', item: w.item, do: `Complete the plan of ${w.item}`, why: w.detail, read: [`${rd}/milestones/${w.item}.md`, PROCEDURE.plan] });
-  for (const m of drafts) add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan] });
+  // MAINT-0020 P7(c): `wf doctor` before the plan's question as well, since in M-0005 it first ran 7 h 40 min after the plan's
+  // one question round (at the first hand-over), and its gap reached the owner a day late.
+  for (const m of drafts) add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)'] });
   for (const d of status.open_for_agent) add({ kind: 'decide', item: d.id, do: `Resolve ${d.id} within delegated authority, or propose it to its owner`, why: d.question ?? 'open decision', read: [`${rd}/decisions/${d.id}.md`, PROCEDURE.plan] });
   for (const m of milestones.filter(m => ['Authorised', 'Active'].includes(m.status) && m.tasks.length && m.tasks.every(t => t.status === 'Done') && !m.plan.uncovered.length && !m.plan.missing.length)) {
     add({ kind: 'present', item: m.id, do: `Prepare ${m.id} for the owner's acceptance`, why: 'every planned task is Done', read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.present, ...(manual ? [PROCEDURE.round] : [])] });
@@ -173,7 +192,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
     ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease), next_ids: nextIds([baseline, candidate], rd),
-    next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel,
+    next, startable: startable.map(t => t.id), running: running.map(t => t.id).sort(), also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
 }
@@ -191,6 +210,7 @@ export function renderNext(n) {
   lines.push(`Next: ${n.next.do}`, `Why: ${n.next.why}`);
   if (n.next.read.length) lines.push('Read:', ...bullet(n.next.read));
   if (n.next.run.length) lines.push('Run:', ...bullet(n.next.run));
+  if (n.startable?.length) lines.push('', `${n.startable.length > 1 ? 'Start together, each with its own lead' : 'Start, with its own lead'} in the background${n.running?.length ? ` (beside ${n.running.join(', ')})` : ''}: ${n.startable.join(', ')}`);
   if (n.also.length) lines.push('', 'Also open (after this one):', ...bullet(n.also.map(a => `${a.do} (${a.why})`)), ...(n.more ? [`  - and ${n.more} more`] : []));
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));

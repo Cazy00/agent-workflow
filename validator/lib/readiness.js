@@ -11,6 +11,11 @@ export const OUTCOMES = {
   needs: 'Needs discovery or resolution',
 };
 
+// MAINT-0020 P2(b): a claim need not wait for the trusted branch's run on its baseline (six claims of M-0005 waited 9–16 min
+// each): `pending: <run>` stands for that run's result while the task is implemented. Verification, review and integration
+// still need the result: from `verify` on readiness refuses it, and so does `review-packet`.
+export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?? '')) ? `baseline_result is still ${t.baseline_result}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${t.baseline_revision ?? 'SHA'}, then pass or fail: <summary>) before the review packet` : null;
+
 export function stageOf(task) {
   if (task.accepted) return 'release';
   if (task.verified) return 'accept';
@@ -147,6 +152,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   if (!t.baseline_revision) fail('baseline_revision is not recorded');
   else if (baseline.kind === 'git' && !(candidate.kind === 'git' ? candidate.isAncestor(t.baseline_revision) : baseline.hasCommit(t.baseline_revision))) fail(`baseline_revision ${t.baseline_revision} is not an available commit in the candidate history`);
   if (!t.baseline_result) fail('baseline_result is not recorded (pass, or fail: <summary> for a known failing baseline)');
+  else if (stageIdx > 0 && baselinePending(t)) fail(baselinePending(t));
 
   return finish({ taskId, status: t.status, stage, reasons, pending, structural, blocks, subset: list(t.subset).map(trim), baseline: baseline.name });
 }

@@ -8,8 +8,9 @@ import { WAIT_CEILING_SECONDS, waitForCommit, waitForPullRequest } from '../lib/
 import os from 'node:os';
 import { dirSource, loadConfig } from '../lib/index.js';
 import { DEFAULT_ROLES } from '../lib/roles.js';
+import { renderNext } from '../lib/next.js';
 import { fakeExecutable } from './helpers.js';
-import { cli, project, taskPath } from './helpers/maint-0018.js';
+import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0020: what M-0005 of mateen-systems (14–16 October 2026) cost on v2.7.0, and the cuts v2.8.0 makes. Later slices of
 // the release append their tests here.
@@ -304,3 +305,120 @@ test('MAINT-0020 P5(b), P12: the lead\'s brief says to run wf ci after a merge o
   assert.match(fs.readFileSync(path.join(root, 'procedures/review.md'), 'utf8'), /launched detached from the agent's process, its output to a file \(`setsid` or `nohup`\), so a restart of the session does not kill it/);
 });
 
+// P2(a). M-0005's coordinator ran each task lead in the foreground, one after another: 17.4 h, though T-0025, T-0026 and T-0028
+// shared no prerequisite or scope with T-0029.
+const taskLike = (p, id, scope, edit = x => x) => p.write(`docs/workflow/tasks/${id}.md`, edit(fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', id).replace(/^scope: .*$/m, `scope: [${scope}]`)));
+const lines = out => renderNext(out).split('\n'); // the text wf next prints from the same view
+
+test('MAINT-0020 P2(a): wf next lists the tasks to start together: disjoint scopes, no outstanding prerequisite, at most three running', t => {
+  const p = project(t);
+  p.edit(taskPath, x => x.replace(/^scope: .*$/m, 'scope: [src/a]'));
+  taskLike(p, 'T-0002', 'src/b');
+  const two = p.commit('two tasks with disjoint scopes');
+  const r = p.run(['next', '--baseline', two]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([r.out.startable, r.out.running], [['T-0001', 'T-0002'], []]);
+  assert.ok(lines(r.out).includes('Start together, each with its own lead in the background: T-0001, T-0002'), renderNext(r.out));
+  assert.match(spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', two], { encoding: 'utf8' }).stdout, /\n\nStart together, each with its own lead in the background: T-0001, T-0002\n/);
+  // An overlapping scope gives one of the two; an outstanding prerequisite keeps a disjoint task out (its readiness fails).
+  taskLike(p, 'T-0003', 'src/a/deep');
+  taskLike(p, 'T-0004', 'src/c', x => x.replace('prerequisites: []', 'prerequisites: [T-0001]'));
+  const more = p.commit('an overlapping task and one waiting for T-0001');
+  assert.deepEqual(p.run(['next', '--baseline', more]).out.startable, ['T-0001', 'T-0002']);
+  // Three at most, in priority order.
+  taskLike(p, 'T-0005', 'src/d'); taskLike(p, 'T-0006', 'src/e');
+  const many = p.commit('two more disjoint tasks');
+  assert.deepEqual(p.run(['next', '--baseline', many]).out.startable, ['T-0001', 'T-0002', 'T-0005']);
+  // An Active task counts toward the three, and a task overlapping its scope waits.
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Active'));
+  const active = p.commit('T-0001: start');
+  const a = p.run(['next', '--baseline', active]).out;
+  assert.deepEqual([a.startable, a.running], [['T-0002', 'T-0005'], ['T-0001']]);
+  assert.equal(a.next.kind, 'continue');
+  assert.ok(lines(a).includes('Start together, each with its own lead in the background (beside T-0001): T-0002, T-0005'));
+  // A claimed task (an open pull request from its branch) runs as well.
+  const prs = path.join(p.temp, 'prs.json');
+  fs.writeFileSync(prs, JSON.stringify([{ number: 9, title: 'T-0002: Task T-0002', headRefName: 'T-0002', author: { login: 'agent' } }]));
+  const c = p.run(['next', '--baseline', active, '--pull-requests', prs]).out;
+  assert.deepEqual([c.startable, c.running], [['T-0005'], ['T-0001', 'T-0002']]);
+  assert.ok(lines(c).includes('Start, with its own lead in the background (beside T-0001, T-0002): T-0005'));
+  // Three running leave nothing to start, and no line.
+  taskLike(p, 'T-0007', 'src/f', x => x.replace('status: Ready', 'status: Active'));
+  const full = p.commit('a second Active task');
+  const none = p.run(['next', '--baseline', full, '--pull-requests', prs]).out;
+  assert.deepEqual([none.startable, none.running], [[], ['T-0001', 'T-0002', 'T-0007']]);
+  assert.ok(!lines(none).some(l => l.startsWith('Start')));
+});
+
+// P2(b), P10. Six claims of M-0005 waited 9–16 min each for main's run before recording baseline_result.
+const pendingResult = 'pending: https://github.com/fixture/project/actions/runs/42';
+const baselineIs = text => x => x.replace(/^baseline_result: .*$/m, `baseline_result: ${text}`);
+
+test('MAINT-0020 P2(b): a pending baseline_result passes readiness at implement and is refused from verify on, saying how to fill it', t => {
+  const p = project(t);
+  p.edit(taskPath, baselineIs(pendingResult));
+  const sha = p.commit('T-0001: claimed while main\'s run finishes');
+  assert.equal(p.run(['records', '--candidate', sha]).status, 0);
+  const implement = p.run(['readiness', '--baseline', sha, '--task', 'T-0001']);
+  assert.equal(implement.status, 0, implement.stdout + implement.stderr);
+  assert.equal(implement.out.outcome, 'Ready');
+  const message = `baseline_result is still ${pendingResult}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${p.initial}, then pass or fail: <summary>) before the review packet`;
+  for (const stage of ['verify', 'integrate', 'accept']) {
+    const later = p.run(['readiness', '--baseline', sha, '--task', 'T-0001', '--stage', stage]);
+    assert.equal(later.out.outcome, 'Needs discovery or resolution', stage);
+    assert.ok(later.out.reasons.includes(message), later.stdout);
+  }
+  // The record's own stage counts: an implemented task is at verify.
+  p.edit(taskPath, x => x.replace(/^implemented:.*$/m, `implemented: ${sha}`));
+  assert.ok(p.run(['readiness', '--baseline', sha, '--task', 'T-0001']).out.reasons.includes(message));
+  // The format: pass, fail: <summary> and pending: <run reference>; nothing else.
+  for (const ok of ['pass', 'fail: 3 pricing tests', 'pending: run 42']) { p.edit(taskPath, baselineIs(ok)); assert.equal(p.run(['records']).status, 0, ok); }
+  for (const bad of ['pending:', 'pending', 'waiting for main', 'passed']) {
+    p.edit(taskPath, baselineIs(bad));
+    const r = p.run(['records']);
+    assert.equal(r.status, 1, bad);
+    assert.match(r.out.errors.join(' | '), /baseline_result must be "pass", "fail: <summary>" or "pending: <run reference>"/, bad);
+  }
+});
+
+test('MAINT-0020 P2(b): review-packet and wf ci refuse a pending baseline_result, and take the filled one', t => {
+  const p = project(t);
+  p.edit(taskPath, baselineIs(pendingResult)); p.write('src/a.js', 'export const result = 1;\n');
+  const pending = p.commit('T-0001: the work, baseline still pending');
+  const checks = path.join(p.temp, 'checks.txt'); fs.writeFileSync(checks, 'checks observed');
+  const git = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_COUNT: '0' }; // no host filters, as review-packet.test.js
+  const packet = () => p.run(['review-packet', '--baseline', p.baseline, '--candidate', p.git('rev-parse', 'HEAD'), '--task', 'T-0001', '--evidence', checks], { env: git });
+  const refused = packet();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /review task T-0001: baseline_result is still pending: https:\/\/github\.com\/fixture\/project\/actions\/runs\/42: fill it from the trusted branch's run on the baseline commit \(wf wait --commit [0-9a-f]{40}, then pass or fail: <summary>\) before the review packet/);
+  const ci = p.run(['ci', '--baseline', p.baseline, '--candidate', pending, '--task', 'T-0001'], { evidence: evidence(pending) });
+  assert.equal(ci.status, 1, ci.stdout + ci.stderr);
+  assert.match(ci.out.findings.join(' | '), /readiness T-0001: Needs discovery or resolution \|\s+baseline_result is still pending: /);
+  p.edit(taskPath, baselineIs('pass'));
+  const filled = p.commit('T-0001: baseline_result from main\'s run');
+  assert.equal(packet().status, 0);
+  const passed = p.run(['ci', '--baseline', p.baseline, '--candidate', filled, '--task', 'T-0001'], { evidence: evidence(filled) });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+});
+
+test('MAINT-0020 P10, P7(c): the start action prints wf wait --commit for the baseline, and the Draft milestone action wf doctor', t => {
+  const p = project(t);
+  const start = p.run(['next', '--baseline', p.baseline]).out.next;
+  assert.equal(start.kind, 'start');
+  assert.ok(start.run.includes(`wf wait --commit ${p.baseline}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`), JSON.stringify(start.run));
+  assert.match(start.run[0], /^wf doctor  \(raise every gap in the next question to the owner\)$/, 'kept at the hand-over');
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Active'));
+  const resumed = p.run(['next', '--baseline', p.commit('T-0001: start')]).out.next;
+  assert.deepEqual([resumed.kind, resumed.run.some(c => c.startsWith('wf wait'))], ['continue', false], 'only at the claim');
+  // Manual mode has no pull-request commands (as the lead's brief), so no wf wait.
+  const manual = project(t, { configEdit: c => ({ ...c, approval: { ...c.approval, label: 'manual', mechanism: 'manual', checkpoint: undefined } }), baselineEdit: q => q.edit('docs/workflow/profile.md', x => x.replace('approval_label: owner-merge', 'approval_label: manual')) });
+  const claim = manual.run(['next', '--baseline', manual.baseline]).out.next;
+  assert.deepEqual([claim.kind, claim.run.some(c => c.startsWith('wf wait'))], ['start', false]);
+  // P7(c): before the plan's question, not 7 h 40 min after it.
+  const draft = project(t, { baselineEdit: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Draft')) });
+  const plan = draft.run(['next', '--baseline', draft.baseline]).out.next;
+  assert.deepEqual([plan.kind, plan.item, plan.do], ['plan', 'M-0001', 'Prepare M-0001 for the owner\'s authorisation']);
+  assert.deepEqual(plan.run, ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)']);
+  // doctor's own next text says the same: maint-0018-b.test.js (B5).
+  assert.match(fs.readFileSync(path.join(root, 'procedures/execute.md'), 'utf8'), /Run `wf doctor` when planning and before work starts; put every gap it names in the plan's question to the owner when planning, otherwise in the next\. Claim every task `wf next` lists as startable and hand each to a fresh task lead \(an empty-context subagent, in the background\)/);
+});

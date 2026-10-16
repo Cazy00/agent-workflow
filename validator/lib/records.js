@@ -167,7 +167,8 @@ export function loadRecord(source, relPath, expected) {
   if (expected === 'task') {
     if (data.status === 'Blocked' && !data.resume_condition) errors.push('a Blocked task must record resume_condition');
     for (const d of list(data.deferred_inputs)) if (!DEFERRED_RE.test(d)) errors.push(`deferred input "${d}" must look like D-0001@verify`);
-    if (data.baseline_result != null && !/^(pass$|fail:)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass" or "fail: <summary>" (got "${data.baseline_result}")`);
+    // MAINT-0020 P2(b): `pending: <run reference>` until the trusted branch's run on the baseline finishes (readiness.js).
+    if (data.baseline_result != null && !/^(pass$|fail:|pending:\s*\S)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass", "fail: <summary>" or "pending: <run reference>" (got "${data.baseline_result}")`);
     // MAINT-0016: the findings this task's reviews accepted rather than fixed, kept for the milestone's acceptance.
     if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !/^[\w.-]+\/[\w.-]+$/.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
   }

@@ -36,7 +36,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   brief --lead --task T-0001 [--baseline REV]: the task lead's brief, from the records (MAINT-0018)
-  doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the first question to the owner
+  doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the next question to the owner (the plan's, when planning)
   wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit

@@ -58,9 +58,10 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
     add(p.name, r.ok, r.ok ? 'ok' : `failed: ${firstLine(r.out) || p.run}`, p.why ?? 'the project (preflight)');
   }
   const gaps = checks.filter(c => !c.ok).map(c => c.name);
+  // MAINT-0020 P7(c): when planning, the plan's question, before authorisation (wf next prints doctor in the plan action).
   return {
     ok: !gaps.length, checks, gaps,
-    next: gaps.length ? 'ask the owner about every gap in your first question, and carry on with the work the gaps do not block' : 'nothing is missing',
+    next: gaps.length ? 'ask the owner about every gap in your next question (the plan\'s, when planning), and carry on with the work the gaps do not block' : 'nothing is missing',
     limitation: 'A check that passes says the tool or access answered now; it grants nothing and no gate reads it.',
   };
 }

@@ -365,6 +365,19 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
         if (missing.length) { findings.push(`accepted findings ${missing.join(', ')} are not in the task record's accepted_findings (as REVIEW/FINDING, for example R-0030/N1), so the milestone's acceptance would not list them`); fail = true; }
       }
     }
+    // v2.8.0 review C3: a milestone's acceptance lists the accepted findings of its task records (lib/acceptance-evidence.js),
+    // and P11 lets a blocking one wait for it there, so a change that drops an entry, or a Done task record, of a milestone not
+    // yet Accepted or Released is the owner's merge, even records-only. `wf prune` removes only an accepted milestone's records.
+    const dropped = [], removedDone = [];
+    for (const { data: d } of baselineRecords.tasks.values()) {
+      if (!d?.id || !d.milestone || ACCEPTED.includes(baselineRecords.milestones.get(d.milestone)?.data?.status)) continue;
+      const now = candidateRecords.tasks.get(d.id)?.data;
+      if (!now && d.status === 'Done') removedDone.push(d.id);
+      const gone = list(d.accepted_findings).filter(e => !list(now?.accepted_findings).includes(e));
+      if (gone.length) dropped.push(`${d.id} (${gone.join(', ')})`);
+    }
+    if (dropped.length) ownerReasons.push(`it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${dropped.join(', ')}`);
+    if (removedDone.length) ownerReasons.push(`it removes Done task records of a milestone not yet accepted, which its acceptance reads: ${removedDone.join(', ')}`);
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;

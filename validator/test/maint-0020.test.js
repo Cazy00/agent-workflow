@@ -781,3 +781,20 @@ test('v2.8.0 review C2: the carrier of a P11 finding has room in found_tasks, co
   // A milestone with no tasks: field has no found task, whatever its found_tasks says (P11's guard).
   owner(carrying(t, { plan: 'found_tasks: 3\n' }), 'carried_by names no other found task of M-0001');
 });
+
+test('v2.8.0 review C3: a change that drops an accepted finding or a Done task record of a milestone not yet accepted is the owner\'s merge', t => {
+  const p = project(t);
+  taskLike(p, 'T-0002', 'src/b', doneAs);
+  p.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1, R-0002/N1]'));
+  const base = p.commit('records: T-0001 lists two accepted findings; T-0002 Done');
+  const ci = head => { const r = p.run(['ci', '--baseline', base, '--candidate', head]); assert.equal(r.status, 0, r.stdout + r.stderr); return [r.out.merge, r.out.owner_reasons]; };
+  p.edit(taskPath, x => x.replace('accepted_findings: [R-0001/F1, R-0002/N1]', 'accepted_findings: [R-0002/N1]'));
+  assert.deepEqual(ci(p.commit('records: drop R-0001/F1')), ['owner', ['it removes accepted findings that the acceptance of a milestone not yet accepted lists: T-0001 (R-0001/F1)']]);
+  p.git('checkout', '-q', '--detach', base);
+  p.git('rm', '-q', 'docs/workflow/tasks/T-0002.md');
+  assert.deepEqual(ci(p.commit('records: remove T-0002')), ['owner', ['it removes Done task records of a milestone not yet accepted, which its acceptance reads: T-0002']]);
+  // A finding added, or a record that changes no entry, is the agent's merge, as is the prune of an accepted milestone (P8).
+  p.git('checkout', '-q', '--detach', base);
+  p.edit(taskPath, x => x.replace('accepted_findings: [R-0001/F1, R-0002/N1]', 'accepted_findings: [R-0001/F1, R-0002/N1, R-0003/N2]'));
+  assert.deepEqual(ci(p.commit('records: one more accepted finding')), ['agent', []]);
+});

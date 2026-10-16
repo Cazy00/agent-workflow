@@ -98,5 +98,15 @@
       "Optional: list the project's own start-of-session checks in docs/workflow/config.json preflight, for example { \"name\": \"staging deploy access\", \"run\": \"ssh -o BatchMode=yes -o ConnectTimeout=5 STAGING true\" }; wf doctor runs them (a workflow change for the owner).",
       "New helpers, which grant nothing: wf brief --lead, wf doctor, wf wait, wf done, wf evidence --json, and next_ids in wf next."
     ]
+  },
+  "v2.8.0": {
+    "notes": [
+      "wf wait returns pending (exit status 4) after 270 s instead of waiting up to 30 min, so a waiting agent keeps its prompt cache: call it again, or pass --timeout MINUTES for one longer wait. New: wf wait --commit SHA for the trusted branch's checks on a commit.",
+      "Session outcomes: friction is written, never pre-filled; wf session refuses an empty one. templates/session.json gains an optional models object.",
+      "Optional roles in docs/workflow/config.json: without it the defaults apply (lead sonnet at low effort, paperwork haiku at low, walker sonnet at medium, the implementer at its task's review level). A project whose agents run on another harness sets its own model names.",
+      "Found tasks: a task of an Authorised or Active milestone that is not in the milestone's tasks: list now needs found_from and room in the milestone's found_tasks (0-3), or readiness refuses it and says to ask the owner. Before moving a milestone in progress to this pin, add both, or add the task to tasks: (the owner's change).",
+      "baseline_result may be pending: <run> at the claim; fill it before verification (wf wait --commit). Delivery evidence: a blocking finding may name carried_by, paths and merge_increases_exposure (with approval.defer_to_acceptance).",
+      "New helpers, which grant nothing: wf prune --milestone M (records-only removal of an accepted milestone's Done records), the startable set and the second-model budget in wf next, and wf doctor's check that the session started in the repository root."
+    ]
   }
 }

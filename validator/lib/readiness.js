@@ -64,6 +64,21 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     for (const scope of list(t.scope)) if (!list(milestone.scope).some(s => scope === s || scope.startsWith(s.replace(/\/$/, '') + '/'))) fail(`task scope ${scope} is outside milestone authority`);
     for (const id of list(t.acceptance)) if (!list(milestone.acceptance).includes(id)) fail(`acceptance ${id} is outside milestone authority`);
   }
+  // MAINT-0020 P6(b): five of M-0005's seven question rounds were about its limits; tasks 8, 9 and 10 were each asked. A found
+  // task (one naming the milestone that the trusted branch's `tasks:` list does not) fixes a finding of the milestone's own
+  // review or trial, named in `found_from`, within the milestone's `found_tasks` (none when unset), counted by ID. Any other
+  // is the owner's to allow, as before.
+  const planned = list(milestone?.tasks);
+  if (['Authorised', 'Active'].includes(milestone?.status) && planned.length && !planned.includes(taskId)) {
+    const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;
+    if (!t.found_from) fail(`${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
+    else {
+      const recorded = [base, ...(candidate === baseline ? [] : [loadAll(candidate, rd)])].flatMap(r => [...r.tasks.values()].map(x => x.data));
+      const found = [...new Set([taskId, ...recorded.filter(d => d?.milestone === t.milestone && d.found_from && /^T-\d{4}$/.test(d.id ?? '')).map(d => d.id)])].filter(id => !planned.includes(id)).sort();
+      const allowed = Number(milestone.found_tasks ?? 0) || 0, n = found.indexOf(taskId) + 1;
+      if (n > allowed) fail(`${taskId} would be found task ${n} of ${t.milestone}, beyond its found_tasks allowance of ${allowed}: ${ask}`);
+    }
+  }
   for (const p of changed) if (!list(t.scope).some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'))) fail(`changed production path ${p} is outside task scope`);
   if (t.feature_readiness && !baseline.exists(t.feature_readiness)) fail(`feature_readiness ${t.feature_readiness} is not on the baseline`);
   if (list(t.risks).some(r => ['shared-contract', 'synchronisation', 'money', 'stock', 'security', 'irreversible-data', 'cross-component'].includes(r)) && (!t.design || !baseline.exists(t.design))) fail('a governing design is required for the recorded risk');

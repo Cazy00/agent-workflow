@@ -2,6 +2,7 @@
 // require of a production change, checked by ci.js like a receipt. It is the agent's own report: its completeness and its
 // binding to the exact candidate are checked here, not its truth.
 import { WfError } from './records.js';
+import { unsafePath } from './git.js';
 
 const REVIEW_AREAS = ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'];
 export const DELIVERY_MARKER = '<!-- agent-workflow:delivery-evidence@1 -->';
@@ -29,6 +30,8 @@ const reference = v => {
   if (typeof v !== 'string' || /\s/.test(v)) return false;
   try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; }
 };
+// A path a finding names is matched literally against the changed paths (ci.js): no glob, and nothing that could pass for another.
+const repoPath = p => typeof p === 'string' && !unsafePath(p) && !/[*?[\]{}]/.test(p) && p.split('/').every(s => s && s !== '.' && s !== '..');
 const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && new Set(a).size === a.length && b.every(x => a.includes(x));
 const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verification', 'integration', 'review'];
 
@@ -83,6 +86,11 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
     if (!dealt) errors.push(`review finding ${JSON.stringify(f?.id)} is not resolved, or accepted with a resolution`);
     // MAINT-0018 B4: severity follows exposure (procedures/review.md); a blocking finding says what it exposes.
     else if (isBlocking(f) && !(typeof f.exposure === 'string' && f.exposure.trim())) errors.push(`review finding ${JSON.stringify(f.id)} is blocking: say in exposure what it exposes and to whom, or that nothing is exposed (then it is not blocking)`);
+    // MAINT-0020 P11: a blocking finding in code the pull request does not change, carried by a found task; ci.js judges it.
+    if (!isObject(f)) continue;
+    if (f.carried_by !== undefined && !(typeof f.carried_by === 'string' && /^T-\d{4}$/.test(f.carried_by))) errors.push(`review finding ${JSON.stringify(f.id)}: carried_by must be the T-NNNN of the found task that fixes it`);
+    if (f.paths !== undefined && !(Array.isArray(f.paths) && f.paths.length && f.paths.every(repoPath))) errors.push(`review finding ${JSON.stringify(f.id)}: paths must list the files or folders of its code as Git names them (no globs, no ./ or ..)`);
+    if (f.merge_increases_exposure !== undefined && typeof f.merge_increases_exposure !== 'boolean') errors.push(`review finding ${JSON.stringify(f.id)}: merge_increases_exposure must be true or false`);
   }
   if (!sameSet(r.tasks, taskIds)) errors.push('review must cover exactly the candidate\'s tasks');
   if (!reference(r.report)) errors.push('review needs an https reference to its report');

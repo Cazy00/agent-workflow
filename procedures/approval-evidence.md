@@ -15,7 +15,7 @@ For a single owner with one account or no rulesets, the owner may choose, on the
 With `approval.defer_to_acceptance` (checkpoint `milestone` or `plan`), these are reported as `deferred` instead, and the agent merges them:
 - a change to acceptance tests;
 - a records change that makes a scenario wait for a found task, or completes one;
-- a finding accepted rather than fixed that is not `blocking` (nor `critical` or `high`).
+- a finding accepted rather than fixed that is not `blocking` (nor `critical` or `high`), or a blocking one a found task carries (`review.md`).
 
 The agent lists each accepted finding in its task record's `accepted_findings`, and the milestone's acceptance pull request lists every deferred item for the owner (`accept-release.md`). `wf ci` cross-checks only the accepted findings against the task records; the changed tests and scenario changes are the agent's list.
 

@@ -36,6 +36,7 @@ const ENUMS = {
 };
 const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
 export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|integrate|accept|release)$/;
+const FINDING = /^[\w.-]+\/[\w.-]+$/; // REVIEW/FINDING, as R-0030/N1
 
 // The client page's settings (`wf status --client`). A theme's values reach CSS, so each is checked to be only what it
 // says: a hex colour, a plain font name, a repository path, a number. Paths are read through the source, which refuses
@@ -170,8 +171,12 @@ export function loadRecord(source, relPath, expected) {
     // MAINT-0020 P2(b): `pending: <run reference>` until the trusted branch's run on the baseline finishes (readiness.js).
     if (data.baseline_result != null && !/^(pass$|fail:|pending:\s*\S)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass", "fail: <summary>" or "pending: <run reference>" (got "${data.baseline_result}")`);
     // MAINT-0016: the findings this task's reviews accepted rather than fixed, kept for the milestone's acceptance.
-    if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !/^[\w.-]+\/[\w.-]+$/.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
+    if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !FINDING.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
+    // MAINT-0020 P6(b): what a found task fixes, a review finding in accepted_findings' form or the owner's trial (readiness.js).
+    if (data.found_from != null && !(typeof data.found_from === 'string' && (data.found_from === 'trial' || FINDING.test(data.found_from)))) errors.push(`found_from must name what the task fixes: a review finding like R-0073/F1, or trial (got "${data.found_from}")`);
   }
+  // MAINT-0020 P6(b): up to three found tasks fix the milestone's own review or trial findings without asking (§ 10).
+  if (expected === 'milestone' && data.found_tasks != null && !(typeof data.found_tasks === 'string' && /^[0-3]$/.test(data.found_tasks))) errors.push(`found_tasks must be 0, 1, 2 or 3, the found tasks allowed without asking the owner (MAINT-0020 § 10); a further task goes in tasks: with the owner's approval (got "${data.found_tasks}")`);
   if (expected === 'decision') {
     for (const f of ['supersedes', 'superseded_by']) if (data[f] && !ID_RE.decision.test(data[f])) errors.push(`${f} must be a decision id`);
   }

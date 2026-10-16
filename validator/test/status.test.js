@@ -221,11 +221,13 @@ test('pull request text is kept to plain single-line fields', () => {
   assert.deepEqual([q.task, q.mismatch], [null, ['T-0002', 'T-0003']], 'a pull request naming two tasks claims neither');
 });
 
-// The milestone plan (IDEA-14): `tasks` is the plan as authorised; task records stay until acceptance.
+// The milestone plan (IDEA-14): `tasks` is the plan as authorised; task records stay until acceptance. The discovered T-0002
+// fixes a review finding within the milestone's allowance, so its readiness passes (MAINT-0020 P6(b)).
 function planned(t) {
   const dir = copy(t, '02-unrelated-task-ready');
   const edit = (p, fn) => fs.writeFileSync(path.join(dir, p), fn(fs.readFileSync(path.join(dir, p), 'utf8')));
-  edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]\ntasks: [T-0001, T-0009]'));
+  edit('docs/workflow/milestones/M-0001.md', x => x.replace('acceptance: [AC-001-1]', 'acceptance: [AC-001-1, AC-001-2]\ntasks: [T-0001, T-0009]\nfound_tasks: 1'));
+  edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Ready', 'status: Ready\nfound_from: R-0001/F1'));
   return { dir, edit };
 }
 

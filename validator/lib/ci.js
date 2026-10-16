@@ -329,12 +329,31 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted');
     if (!defer) { if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.map(f => f.id).join(', ')}`); }
     else {
-      const blocking = accepted.filter(isBlocking).map(f => f.id), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
-      if (blocking.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${blocking.join(', ')}`);
+      // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
+      const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
+      const entry = f => listed.find(e => e.split('/').pop() === f.id);
+      // MAINT-0020 P11 (the owner's decision of 16 October 2026, § 10): in M-0005 a race from M-0004's T-0020, found in
+      // T-0031's review, made #91 the owner's merge though T-0032 fixed it. A blocking finding stays the agent's merge, carried to
+      // the acceptance, only when its code is outside this diff, the merge does not increase its exposure, a found task of the
+      // same milestone fixes it, and the task record lists it. Any other blocking finding, one the task introduced included, waits.
+      const milestoneId = candidateRecords.tasks.get(selected[0])?.data?.milestone;
+      const plan = list(candidateRecords.milestones.get(milestoneId)?.data?.tasks);
+      const uncarried = f => {
+        if (!entry(f)) return 'not in the task record\'s accepted_findings';
+        const by = candidateRecords.tasks.get(f.carried_by)?.data;
+        if (typeof f.carried_by !== 'string' || selected.includes(f.carried_by) || by?.milestone !== milestoneId || !plan.length || plan.includes(f.carried_by)) return `carried_by names no found task of ${milestoneId}`;
+        if (by.found_from !== entry(f)) return `${f.carried_by}'s found_from is not ${entry(f)}`;
+        if (!Array.isArray(f.paths) || !f.paths.length) return 'it names no paths';
+        const inside = f.paths.filter(p => changed.some(c => within(c, p)));
+        if (inside.length) return `this pull request changes ${inside.join(', ')}`;
+        return f.merge_increases_exposure === false ? null : 'merge_increases_exposure is not false';
+      };
+      const blocking = accepted.filter(isBlocking), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
+      const held = blocking.filter(uncarried), carriedHere = blocking.filter(f => !uncarried(f));
+      if (held.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${held.map(f => `${f.id} (not carried: ${uncarried(f)})`).join(', ')}`);
+      if (carriedHere.length) deferred.push(`blocking review findings carried by found tasks, in code this pull request does not change: ${carriedHere.map(f => `${entry(f)} by ${f.carried_by}`).join(', ')}`);
       if (minor.length) {
         deferred.push(`review findings accepted rather than fixed: ${minor.join(', ')}`);
-        // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
-        const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
         const missing = minor.filter(id => !listed.some(e => e.split('/').pop() === id));
         if (missing.length) { findings.push(`accepted findings ${missing.join(', ')} are not in the task record's accepted_findings (as REVIEW/FINDING, for example R-0030/N1), so the milestone's acceptance would not list them`); fail = true; }
       }

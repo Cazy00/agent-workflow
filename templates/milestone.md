@@ -20,6 +20,7 @@ demonstration:
 stop_conditions:
 release_authority:
 tasks: []
+found_tasks: 3
 prerequisites: []
 ---
 # M-0000 — coherent journey or demonstrable technical outcome
@@ -34,7 +35,7 @@ Stable acceptance IDs, actions, expected results and evidence methods.
 ## Governing requirements, decisions and contracts
 
 ## Tasks, priority and prerequisites
-Claims are the tasks' branches and pull requests (`procedures/execute.md`); keep task scope and prerequisites here. `owner`: the person who authorises and accepts the milestone. `tasks`: the plan as authorised (`procedures/readiness.md`); work found later is not added.
+Claims are the tasks' branches and pull requests (`procedures/execute.md`); keep task scope and prerequisites here. `owner`: the person who authorises and accepts the milestone. `tasks`: the plan as authorised (`procedures/readiness.md`); work found later is not added. `found_tasks`: the owner's allowance, 0 to 3, of found tasks fixing findings of this milestone's own review or trial without asking; the acceptance reports each.
 
 ## Execution authority and limits
 Approved time, usage, retry, spending and owner-effort limits. Prefer limits the coordinator can measure at every checkpoint (wall-clock hours, task count, retries per named check or task); state the retry unit and counting rule. Add usage or spend limits only where the harness reports them, and name the counter. Running totals, remaining allowance and unknown usage go on the tasks' pull requests or handoffs; do not edit this governing record for bookkeeping.

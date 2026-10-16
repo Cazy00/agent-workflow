@@ -9,7 +9,7 @@ Then, in order:
 
 A project without a user interface says so instead. An unavailable walk is a blocker.
 
-Prepare `templates/acceptance.md`: candidate revision/build/environment; delivered behaviour and exclusions, with the planned and discovered tasks and work moved to later milestones; access or reproducible demo; scenarios with actions/expected results; persistence/calculations/state-transition evidence; checks/review/resolved findings; issues/unavailable checks; consequential changes; next milestone/prerequisites/proposed limits.
+Prepare `templates/acceptance.md`: candidate revision/build/environment; delivered behaviour and exclusions, with the planned tasks, each found task and the finding it fixed in one sentence, and work moved to later milestones; access or reproducible demo; scenarios with actions/expected results; persistence/calculations/state-transition evidence; checks/review/resolved findings; issues/unavailable checks; consequential changes; next milestone/prerequisites/proposed limits.
 
 Derive data, access, external services, configuration and operations changes from the actual candidate. Use none only when verified absent, and not verified when evidence is unavailable. Do not include secret values. This summary cannot retroactively authorise reserved choices. Unavailable required technical checks block acceptance presentation. Encode an approved pre-merge condition as a governing decision with `required_before: integrate` (or a deferred `D-NNNN@integrate`), so `wf ci` enforces it; a Draft PR or prose warning is not a gate.
 

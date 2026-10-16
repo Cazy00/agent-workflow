@@ -106,7 +106,7 @@
       "Optional roles in docs/workflow/config.json: without it the defaults apply (lead sonnet at low effort, paperwork haiku at low, walker sonnet at medium, the implementer at its task's review level). A project whose agents run on another harness sets its own model names.",
       "Found tasks: a task of an Authorised or Active milestone that is not in the milestone's tasks: list now needs found_from and room in the milestone's found_tasks (0-3), or readiness refuses it and says to ask the owner. Before moving a milestone in progress to this pin, add both, or add the task to tasks: (the owner's change).",
       "baseline_result may be pending: <run> at the claim; fill it before verification (wf wait --commit). Delivery evidence: a blocking finding may name carried_by, paths and merge_increases_exposure (with approval.defer_to_acceptance).",
-      "Delivery evidence refuses a malformed paths, carried_by or merge_increases_exposure on any finding. A change that removes an accepted_findings entry, or a Done task record, of a milestone not yet accepted is now the owner's merge; remove Done records after acceptance with wf prune.",
+      "Delivery evidence refuses a malformed paths, carried_by or merge_increases_exposure on any finding. A change that edits or removes a task record Done on the trusted branch, in a milestone not yet accepted, is now the owner's merge: put such corrections in the acceptance pull request, and remove Done records after acceptance with wf prune.",
       "New helpers, which grant nothing: wf prune --milestone M (records-only removal of an accepted milestone's Done records), the startable set and the second-model budget in wf next, and wf doctor's check that the session started in the repository root."
     ]
   }

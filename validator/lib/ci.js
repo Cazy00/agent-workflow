@@ -1,5 +1,5 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
+import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list, namesIn } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths, deepChanges } from './paths.js';
 import { showPath, unsafePath } from './git.js';
@@ -12,6 +12,7 @@ import { carriedFrom } from './carry.js';
 import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
+import { ACCEPTED, prunable } from './prune.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 // The records the owner approves, whatever a project's config classifies them as (owner-merge's `merge`, MAINT-0010).
@@ -57,8 +58,6 @@ function recordIds({ baseline, candidate, rd, changed }) {
 // stays, Done, until the last record naming it is removed (procedures/execute.md). A change fails when it removes a record
 // that a remaining task names, or when a task record newly names one that is not in the candidate. The candidate
 // contains the current baseline, so a removal and a planning branch meet in whichever merges second.
-const NAMED = ['prerequisites', 'governing'];
-const namesIn = data => NAMED.flatMap(field => list(data?.[field]).filter(v => /^T-\d{4}$/.test(v)).map(id => ({ field, id })));
 function recordReferences({ baseline, candidate, rd, changed }) {
   const errors = [];
   const dir = `${rd}/${DIRS.task}/`;
@@ -153,6 +152,11 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
+  // MAINT-0020 P8: an accepted milestone's Done task records stay on the trusted branch until `wf prune` removes them (execute.md).
+  for (const r of baselineRecords.milestones.values()) {
+    const left = r.data?.id && ACCEPTED.includes(r.data.status) ? prunable(baselineRecords, r.data.id).remove.filter(t => candidate.exists(t.path)) : [];
+    if (left.length) findings.push(`note: ${r.data.id} is ${r.data.status}, but the trusted branch still holds ${left.length} of its Done task records: wf prune --milestone ${r.data.id} removes them in one records-only commit`);
+  }
   let readiness = null;
   if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
   // The pull-request modes (enforced, owner-merge) hold the quality gates as manual mode does (MAINT-0010): a production

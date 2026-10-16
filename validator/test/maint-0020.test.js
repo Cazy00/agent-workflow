@@ -564,3 +564,170 @@ test('MAINT-0020 P11: the delivery evidence checks carried_by, paths and merge_i
   for (const value of ['false', 0, null]) assert.deepEqual(errorsWith({ merge_increases_exposure: value }), ['review finding "F1": merge_increases_exposure must be true or false'], String(value));
   assert.deepEqual(errorsWith({ severity: 'low', exposure: undefined, carried_by: 'T-2' }), ['review finding "F1": carried_by must be the T-NNNN of the found task that fixes it'], 'on any finding');
 });
+
+// P8. mateen-systems kept 34 Done task records of five accepted milestones on main, read by every `wf next` and readiness run;
+// the one removal tried by hand, on 16 October, was refused as ad hoc deletion. `wf prune` removes what execute.md says.
+const doneAs = x => x.replace('status: Ready', 'status: Done');
+function acceptedMilestone(t, { status = 'Accepted', next = 'Draft' } = {}) {
+  const p = project(t);
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised\n', `status: ${status}\ntasks: [T-0001, T-0002, T-0003, T-0004, T-0005, T-0006]\n`));
+  p.write('docs/workflow/milestones/M-0002.md', fs.readFileSync(path.join(p.repo, 'docs/workflow/milestones/M-0001.md'), 'utf8').replace('M-0001', 'M-0002').replace(/^status: .*$/m, `status: ${next}`).replace(/^tasks: .*\n/m, ''));
+  for (const id of ['T-0002', 'T-0003', 'T-0005']) taskLike(p, id, `src/${id}`, doneAs);
+  taskLike(p, 'T-0004', 'src/T-0004', x => doneAs(x).replace('governing: [PROFILE]', 'governing: [PROFILE, T-0003]')); // names T-0003, which comes first
+  taskLike(p, 'T-0006', 'src/T-0006', x => x.replace('status: Ready', 'status: Active')); // not Done
+  taskLike(p, 'T-0011', 'src/T-0011', x => doneAs(fixes('trial')(x))); // a found task: the milestone's tasks: omits it
+  taskLike(p, 'T-0008', 'src/T-0008', x => doneAs(x).replace('milestone: M-0001', 'milestone: M-0002')); // Done, another milestone's
+  taskLike(p, 'T-0010', 'src/T-0010', x => x.replace('status: Ready', 'status: Draft').replace('milestone: M-0001', 'milestone: M-0002').replace('prerequisites: []', 'prerequisites: [T-0004]')); // names T-0004
+  p.edit(taskPath, doneAs); // named by D-0001's affects
+  const stale = p.commit(`${milestone(status)}: its tasks are Done`);
+  p.git('checkout', '-q', '-b', 'prune');
+  const prune = (...args) => p.run(['prune', '--milestone', 'M-0001', ...args]);
+  const tasks = () => fs.readdirSync(path.join(p.repo, 'docs/workflow/tasks')).map(f => f.replace('.md', '')).sort();
+  return { ...p, stale, prune, tasks };
+}
+const milestone = status => `M-0001 ${status}`;
+const REMOVED = ['T-0002', 'T-0005', 'T-0011'];
+const KEPT = [{ task: 'T-0001', named_by: ['D-0001 (affects)'] }, { task: 'T-0003', named_by: ['T-0004 (governing)'] }, { task: 'T-0004', named_by: ['T-0010 (prerequisites)'] }];
+
+test('MAINT-0020 P8: wf prune --dry-run lists what it removes by each task\'s own milestone, and what it keeps with the record that names it; nothing changes', t => {
+  const p = acceptedMilestone(t);
+  const before = p.tasks();
+  const r = p.prune('--dry-run');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  // T-0011 is in no tasks: list; T-0006 is Active and T-0008 another milestone's. T-0001 is named by D-0001, T-0004 by T-0010, and
+  // T-0003 by T-0004, which stays: a chain goes together.
+  assert.deepEqual(r.out, { ok: true, milestone: 'M-0001', dry_run: true, branch: 'prune', removed: REMOVED, kept: KEPT, commit: null });
+  assert.deepEqual(p.tasks(), before);
+  assert.equal(p.git('status', '--porcelain'), '');
+  assert.equal(p.git('rev-parse', 'HEAD'), p.stale);
+  // Feedback and another milestone's tasks: name a task too. A dry run lists even where the tree is dirty.
+  p.write('docs/workflow/feedback/inbox/F-0001.md', '---\nrecord: feedback\nid: F-0001\ntask: T-0002\nrevision: abc\nworkflow_version: v2.7.0\nrule: execute.md\nstatus: Open\n---\n# F-0001\n');
+  p.edit('docs/workflow/milestones/M-0002.md', x => x.replace('status: Draft\n', 'status: Draft\ntasks: [T-0005]\n'));
+  const named = p.prune('--dry-run').out;
+  assert.deepEqual([named.removed, named.kept.filter(k => !['T-0001', 'T-0003', 'T-0004'].includes(k.task))], [['T-0011'], [{ task: 'T-0002', named_by: ['F-0001 (task)'] }, { task: 'T-0005', named_by: ['M-0002 (tasks)'] }]]);
+});
+
+test('MAINT-0020 P8: wf prune commits the removal of exactly those records on the current branch, and nothing else', t => {
+  const p = acceptedMilestone(t);
+  const branches = p.git('branch', '--format=%(refname:short) %(objectname)');
+  const r = p.prune();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([r.out.removed, r.out.kept, r.out.dry_run], [REMOVED, KEPT, false]);
+  assert.equal(r.out.commit, p.git('rev-parse', 'HEAD'));
+  assert.equal(p.git('rev-list', '--count', `${p.stale}..HEAD`), '1');
+  assert.equal(p.git('diff-tree', '-r', '--no-commit-id', '--name-status', 'HEAD'), REMOVED.map(id => `D\tdocs/workflow/tasks/${id}.md`).join('\n'));
+  const message = p.git('log', '-1', '--format=%B');
+  assert.match(message, /^Prune M-0001: remove its 3 Done task records\n\nRemoved: T-0002, T-0005, T-0011\nKept, named by another record: T-0001, T-0003, T-0004$/);
+  assert.equal(p.git('status', '--porcelain'), '');
+  assert.deepEqual(p.tasks(), ['T-0001', 'T-0003', 'T-0004', 'T-0006', 'T-0008', 'T-0010']);
+  // No other branch moved or went, and the trusted branch is where it was.
+  assert.equal(p.git('branch', '--format=%(refname:short) %(objectname)').split('\n').filter(l => !l.startsWith('prune ')).join('\n'), branches.split('\n').filter(l => !l.startsWith('prune ')).join('\n'));
+  assert.equal(p.git('rev-parse', 'main'), p.stale);
+  // Run again, there is nothing left to remove, and no commit.
+  const again = p.prune();
+  assert.deepEqual([again.status, again.out.removed, again.out.commit], [0, [], null]);
+  assert.equal(p.git('rev-parse', 'HEAD'), r.out.commit);
+  // Released counts as accepted; the milestone's own record and everything else stay.
+  const released = acceptedMilestone(t, { status: 'Released' });
+  assert.deepEqual(released.prune().out.removed, REMOVED);
+  assert.ok(fs.existsSync(path.join(released.repo, 'docs/workflow/milestones/M-0001.md')));
+});
+
+test('MAINT-0020 P8: wf prune refuses a milestone that is not Accepted or Released, a dirty tree, a detached HEAD and records with errors, changing nothing', t => {
+  const refused = (p, args, pattern) => {
+    const head = p.git('rev-parse', 'HEAD'), before = p.tasks();
+    const r = p.prune(...args);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, pattern);
+    assert.deepEqual([p.git('rev-parse', 'HEAD'), p.tasks()], [head, before], 'nothing was removed or committed');
+  };
+  for (const status of ['Draft', 'Authorised', 'Active', 'Blocked', 'Verified']) {
+    const p = acceptedMilestone(t, { status });
+    refused(p, [], new RegExp(`M-0001 is ${status}: prune takes only an Accepted or Released milestone`));
+    refused(p, ['--dry-run'], /prune takes only an Accepted or Released/);
+  }
+  const p = acceptedMilestone(t);
+  assert.match(p.run(['prune', '--milestone', 'M-0009']).stderr, /M-0009 has no record in docs\/workflow\/milestones/);
+  refused(p, ['--candidate', p.stale], /takes no --baseline or --candidate/);
+  assert.match(p.run(['prune']).stderr, /prune needs --milestone M-0001/);
+  assert.match(p.run(['prune', '--milestone', 'next']).stderr, /prune needs --milestone M-0001/);
+  assert.match(p.run(['records', '--dry-run']).stderr, /--dry-run and --milestone are only for prune/);
+  // A change not yet committed, staged or not.
+  p.edit('docs/workflow/tasks/T-0006.md', x => `${x}\nnote\n`);
+  refused(p, [], /the working tree has uncommitted changes: commit or discard them first/);
+  p.git('add', '-A');
+  refused(p, [], /uncommitted changes/);
+  assert.equal(p.prune('--dry-run').status, 0, 'a dry run changes nothing, so a dirty tree is no reason to refuse it');
+  p.git('reset', '-q', '--hard');
+  p.write('scratch.txt', 'untracked'); // untracked files cannot enter a commit that names its paths
+  assert.equal(p.prune().status, 0);
+  // HEAD on no branch, and a record that cannot be read: a name in it could leave a dangling reference.
+  const detached = acceptedMilestone(t);
+  detached.git('checkout', '-q', '--detach');
+  refused(detached, [], /HEAD is detached/);
+  // A commit the repository's own hook refuses leaves the records where they were.
+  const hooked = acceptedMilestone(t);
+  fakeExecutable(path.join(hooked.repo, '.git/hooks/pre-commit'), 'process.exit(1);');
+  refused(hooked, [], /git commit failed/);
+  assert.equal(hooked.git('status', '--porcelain'), '');
+  const broken = acceptedMilestone(t);
+  broken.edit('docs/workflow/tasks/T-0010.md', x => x.replace('title: Task T-0010\n', ''));
+  broken.commit('T-0010 loses its title');
+  refused(broken, [], /fix the record errors first \(wf records\): docs\/workflow\/tasks\/T-0010\.md: missing title/);
+});
+
+test('MAINT-0020 P8: wf ci notes an accepted milestone\'s Done records on the trusted branch, passes the prune commit as records only, and notes nothing after it', t => {
+  const p = acceptedMilestone(t);
+  const note = 'note: M-0001 is Accepted, but the trusted branch still holds 3 of its Done task records: wf prune --milestone M-0001 removes them in one records-only commit';
+  const ci = (base, head) => p.run(['ci', '--baseline', base, '--candidate', head]);
+  const stale = ci(p.stale, p.stale);
+  assert.equal(stale.status, 0, stale.stdout + stale.stderr);
+  assert.ok(stale.out.findings.includes(note), JSON.stringify(stale.out.findings));
+  const pruned = p.prune().out.commit;
+  const r = ci(p.stale, pruned);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([...new Set(r.out.classes.map(c => c.category))], ['planning'], 'a records-only change: no task, no delivery evidence, no review');
+  assert.deepEqual([r.out.merge, r.out.owner_reasons], ['agent', []]);
+  assert.ok(!r.out.findings.some(f => f.includes('wf prune')), 'the candidate no longer holds them');
+  // Merged, only what another record names is left, and that is not the prune\'s to remove.
+  p.git('checkout', '-q', 'main'); p.git('merge', '-q', '--ff-only', 'prune');
+  const after = ci(pruned, pruned);
+  assert.equal(after.status, 0, after.stdout + after.stderr);
+  assert.ok(!after.out.findings.some(f => f.includes('wf prune')), JSON.stringify(after.out.findings));
+  // The removed IDs stay used: the next free one is past T-0011, and a new record cannot take T-0011 again.
+  assert.equal(p.run(['next', '--baseline', pruned]).out.next_ids.task, 'T-0012');
+  p.git('checkout', '-q', '-b', 'again');
+  taskLike(p, 'T-0011', 'src/other', x => x.replace('title: Task T-0011', 'title: Other work'));
+  const reused = ci(pruned, p.commit('a record under a removed ID'));
+  assert.equal(reused.status, 1);
+  assert.match(reused.out.findings.join(' | '), /record docs\/workflow\/tasks\/T-0011\.md reuses an ID already used on the trusted branch/);
+  // Once T-0010 goes, what it named is free to go too (T-0004, and T-0003 with it): ci's note comes back, and the prune takes them.
+  p.git('checkout', '-q', '-b', 'later', 'main');
+  p.git('rm', '-q', 'docs/workflow/tasks/T-0010.md');
+  const freed = p.commit('T-0010 removed');
+  assert.match(ci(freed, freed).out.findings.join(' | '), /M-0001 is Accepted, but the trusted branch still holds 2 of its Done task records/);
+  assert.deepEqual(p.prune().out.removed, ['T-0003', 'T-0004']);
+});
+
+test('MAINT-0020 P8: wf next names the prune in the Draft milestone\'s authorisation action, or as an action of its own', t => {
+  const p = acceptedMilestone(t);
+  const line = 'wf prune --milestone M-0001  (removes its 3 Done task records in one records-only commit; it rides in this pull request)';
+  const view = base => p.run(['next', '--baseline', base]).out;
+  const first = view(p.stale), plan = first.next;
+  assert.deepEqual([plan.kind, plan.item], ['plan', 'M-0002']);
+  assert.deepEqual(plan.run, ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)', line]);
+  assert.ok(!first.also.some(a => a.kind === 'prune'), 'one place for it');
+  assert.ok(lines(first).includes(`  - ${line}`), 'printed with that action');
+  // With no Draft milestone to prepare, an action of its own.
+  p.edit('docs/workflow/milestones/M-0002.md', x => x.replace('status: Draft', 'status: Authorised'));
+  const live = p.commit('M-0002 authorised');
+  const second = view(live), actions = [second.next, ...second.also], own = actions.find(a => a.kind === 'prune');
+  assert.deepEqual([own.item, own.do, own.run], ['M-0001', 'Remove the Done task records of M-0001', ['wf prune --milestone M-0001  (removes its 3 Done task records in one records-only commit)']]);
+  assert.ok(actions.every(a => a.kind === 'prune' || !a.run.some(l => l.startsWith('wf prune'))));
+  // After the prune, only records another record names remain, and nothing is named.
+  p.prune();
+  const done = view(p.git('rev-parse', 'HEAD'));
+  assert.ok(![done.next, ...done.also].some(a => a.kind === 'prune' || a.run.some(l => l.startsWith('wf prune'))), JSON.stringify(done.also));
+  // execute.md says how, in the sentence it already had.
+  assert.match(fs.readFileSync(path.join(root, 'procedures/execute.md'), 'utf8'), /then remove them with `wf prune --milestone M`, one records-only change \(one completed in a round only after that round has closed/);
+});

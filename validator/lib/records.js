@@ -10,6 +10,10 @@ export class WfError extends Error {}
 export const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
 
 export const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
+// MAINT-0020 P8: where a record names a task by ID. `wf ci` leaves no task record that a remaining task names (prerequisites,
+// governing), and `wf prune` keeps one any record names, a decision's `affects` and a feedback record's `task` included.
+const TASK_REFS = { task: ['prerequisites', 'governing'], decision: ['affects'], feedback: ['task'], milestone: ['tasks', 'prerequisites', 'governing'] };
+export const namesIn = (data, kind = 'task') => TASK_REFS[kind].flatMap(field => list(data?.[field]).filter(v => /^T-\d{4}$/.test(v)).map(id => ({ field, id })));
 // A task's branch: exactly its ID (the claim branch, procedures/execute.md), or the ID after an optional `codex/`
 // followed by `-` and a description.
 export const TASK_BRANCH = /^(?:(?:codex|claude)\/)?(T-\d{4})(?:-|$)/; // the tool prefixes Codex and Claude Code give branches

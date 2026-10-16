@@ -7,6 +7,7 @@ import { evaluateStatus } from './status.js';
 import { OUTCOMES } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
+import { ACCEPTED, prunable } from './prune.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -172,12 +173,17 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'plan')) add({ kind: 'plan', item: w.item, do: `Complete the plan of ${w.item}`, why: w.detail, read: [`${rd}/milestones/${w.item}.md`, PROCEDURE.plan] });
   // MAINT-0020 P7(c): `wf doctor` before the plan's question as well, since in M-0005 it first ran 7 h 40 min after the plan's
   // one question round (at the first hand-over), and its gap reached the owner a day late.
-  for (const m of drafts) add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)'] });
+  // MAINT-0020 P8: an accepted milestone's Done task records still here (M-0005 of mateen-systems: 34 of five milestones) go in
+  // one `wf prune` commit, which rides in the pull request that prepares the next authorisation, or is an action of its own.
+  const stale = [...records.milestones.values()].map(r => r.data).filter(m => m?.id && ACCEPTED.includes(m.status)).sort(byId).map(m => ({ id: m.id, n: prunable(records, m.id).remove.length })).filter(m => m.n);
+  const prune = stale.map(m => `wf prune --milestone ${m.id}  (removes its ${m.n} Done task record${m.n === 1 ? '' : 's'} in one records-only commit${drafts.length ? '; it rides in this pull request' : ''})`);
+  drafts.forEach((m, i) => add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)', ...(i === 0 ? prune : [])] }));
   for (const d of status.open_for_agent) add({ kind: 'decide', item: d.id, do: `Resolve ${d.id} within delegated authority, or propose it to its owner`, why: d.question ?? 'open decision', read: [`${rd}/decisions/${d.id}.md`, PROCEDURE.plan] });
   for (const m of milestones.filter(m => ['Authorised', 'Active'].includes(m.status) && m.tasks.length && m.tasks.every(t => t.status === 'Done') && !m.plan.uncovered.length && !m.plan.missing.length)) {
     add({ kind: 'present', item: m.id, do: `Prepare ${m.id} for the owner's acceptance`, why: 'every planned task is Done', read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.present, ...(manual ? [PROCEDURE.round] : [])] });
   }
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'inbox')) add({ kind: 'triage', item: w.item, do: 'Triage the inbox', why: w.detail, read: [w.item, PROCEDURE.triage] });
+  if (!drafts.length && stale.length) add({ kind: 'prune', item: stale.map(m => m.id).join(', '), do: `Remove the Done task records of ${stale.map(m => m.id).join(', ')}`, why: 'the milestone is accepted; its Done task records are read by every wf next and readiness run', read: [PROCEDURE.pr], run: prune });
 
   // MAINT-0020 P5(a): the second model's runs a milestone can spend (review.md): two per deep task, one for the milestone review,
   // which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. Only the budget is printed, not the runs

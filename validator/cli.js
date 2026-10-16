@@ -23,12 +23,13 @@ import { evaluateNext, renderNext } from './lib/next.js';
 import { renderLeadBrief } from './lib/lead-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
+import { prune } from './lib/prune.js';
 import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -40,6 +41,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
+  prune --milestone M-0001 [--dry-run]: one commit on the current branch removing the Done task records of an Accepted or Released milestone, except those another record names
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
@@ -71,6 +73,7 @@ async function main() {
     if (a === '--live') { o.live = true; continue; }
     if (a === '--lead') { o.lead = true; continue; }
     if (a === '--merged') { o.merged = true; continue; }
+    if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -85,6 +88,7 @@ async function main() {
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
+  if ((o.dryRun || o.milestone !== undefined) && cmd !== 'prune') throw new WfError('--dry-run and --milestone are only for prune');
   if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
@@ -216,7 +220,7 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && !['records', 'status', 'next', 'doctor', 'wait', 'done', 'brief'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status', 'next', 'doctor', 'wait', 'done', 'prune', 'brief'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
   // `wf next` defaults its baseline to the trusted branch named by the working tree's config. `git fetch` moves
   // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
   // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
@@ -303,6 +307,13 @@ async function main() {
     next = /^implemented:/m.test(next) ? next.replace(/^implemented:[^\r\n]*/m, `implemented: ${o.implemented}`) : next.replace(/^status: Done/m, `status: Done${eol}implemented: ${o.implemented}`);
     fs.writeFileSync(file, next + text.slice(front.length));
     console.log(JSON.stringify({ ok: true, path: rel, next: `git add ${rel} && git commit -m "${o.task}: Done"  (the last commit of the task's branch)` }, null, 2));
+    return 0;
+  }
+  // MAINT-0020 P8: the Done task records of an accepted milestone, removed by one commit that names them (lib/prune.js).
+  if (cmd === 'prune') {
+    if (!/^M-\d{4}$/.test(o.milestone ?? '')) throw new WfError('prune needs --milestone M-0001');
+    if (o.baseline || o.candidate || o.head) throw new WfError('prune reads the working tree and commits to the current branch: it takes no --baseline or --candidate');
+    console.log(JSON.stringify(prune({ repo, rd, all: loadAll(dirSource(repo), rd), milestone: o.milestone, dryRun: o.dryRun === true }), null, 2));
     return 0;
   }
   let trust = null, baseTrust = null;

@@ -855,6 +855,33 @@ test('v2.8.0 review C1: wf next starts the planned Drafts of an authorised miles
   assert.deepEqual(p.run(['next', '--baseline', p.commit('M-0001 back to Draft')]).out.startable, []);
 });
 
+test('v2.8.0 fix review: wf next starts no more found Drafts of a milestone than its found_tasks has left, and holds the rest for the owner', t => {
+  // Each found Draft passes readiness alone, so both were listed; integration then refused the second after its work.
+  const twoDrafts = found => {
+    const q = project(t, { baselineEdit: planOf(found) });
+    q.edit(taskPath, x => x.replace(/^scope: .*$/m, 'scope: [src/a]'));
+    const draft = x => x.replace('status: Ready', 'status: Draft');
+    taskLike(q, 'T-0002', 'src/b', x => draft(fixes('R-0001/F1')(x)));
+    taskLike(q, 'T-0003', 'src/c', x => draft(fixes('R-0002/F3')(x)));
+    taskLike(q, 'T-0004', 'src/d', x => doneAs(fixes('trial')(x))); // begun: one of the places used
+    return { ...q, sha: q.commit('records: two found Drafts, T-0004 begun') };
+  };
+  const p = twoDrafts('found_tasks: 2\n'), sha = p.sha;
+  const r = p.run(['next', '--baseline', sha]).out;
+  const beyond = why => ({ task: 'T-0003', reasons: [`T-0003 would be found task 3 of M-0001, beyond its found_tasks allowance of 2 (${why}): ${ask}`] });
+  assert.deepEqual([r.startable, r.held], [['T-0001', 'T-0002'], [beyond('begun: T-0004; starting first: T-0002')]]);
+  assert.ok(![r.next, ...r.also].some(a => a.item === 'T-0003'), 'no action starts it');
+  assert.ok(lines(r).includes(`  - T-0003: T-0003 would be found task 3 of M-0001, beyond its found_tasks allowance of 2 (begun: T-0004; starting first: T-0002): ${ask}`), renderNext(r));
+  // A found Draft claimed on its branch (an open pull request) has begun, though the trusted branch still holds it as a Draft.
+  const prs = path.join(p.temp, 'prs.json');
+  fs.writeFileSync(prs, JSON.stringify([{ number: 9, title: 'T-0002: Task T-0002', headRefName: 'T-0002', author: { login: 'agent' } }]));
+  const c = p.run(['next', '--baseline', sha, '--pull-requests', prs]).out;
+  assert.deepEqual([c.startable, c.running, c.held], [['T-0001'], ['T-0002'], [beyond('begun: T-0002, T-0004')]]);
+  // With a place for each, both start.
+  const wide = twoDrafts('found_tasks: 3\n'), wider = wide.run(['next', '--baseline', wide.sha]).out;
+  assert.deepEqual([wider.startable, wider.held], [['T-0001', 'T-0002', 'T-0003'], []]);
+});
+
 test('v2.8.0 review X3, C notes: a scope reaches a deep glob nested below it, and the second-model budget counts deep tasks as the brief does', t => {
   const plain = { review: 'independent context required' };
   assert.equal(reviewLevel({ ...plain, scope: ['src'] }, ['src/auth/**']).level, 'deep');

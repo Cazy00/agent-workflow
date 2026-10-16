@@ -19,7 +19,8 @@ export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?
 // v2.8.0 review X1: the found-task allowance is a count, not a place in ID order, which let a Draft with a lower ID start once a
 // later one had used the allowance. `id` is within it while fewer than `found_tasks` other found tasks of the milestone have
 // begun: beyond Draft, with found_from, in any of `records` (the trusted branch's, and the candidate's). Two claims on separate
-// branches meet at integrate, where the first is on the trusted branch. A milestone with no `tasks:` field has no found task
+// branches meet at integrate, where the first is on the trusted branch; `wf next` lists no more to start than the places left
+// (next.js, v2.8.0 fix review). A milestone with no `tasks:` field has no found task
 // (null); an explicit `tasks: []` makes every task naming it one. Shared with P11's carrier (ci.js, review C2).
 export function foundRoom({ milestone, id, records }) {
   if (milestone?.tasks == null || list(milestone.tasks).includes(id)) return null;

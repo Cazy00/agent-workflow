@@ -4,7 +4,7 @@
 // reads it; the gates still decide. It replaces reading the procedures to find out what to do next, not the gates.
 import { list, loadAll, loadConfig } from './records.js';
 import { evaluateStatus } from './status.js';
-import { OUTCOMES } from './readiness.js';
+import { OUTCOMES, foundRoom } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
@@ -96,7 +96,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
 
   // Tasks Done in the candidate but not on the baseline: their work is finished and waits for the owner's round (manual
   // mode) or the pull request (enforced, owner-merge), unless their milestone collects one round at its end and still has work open.
-  const baseTasks = loadAll(baseline, rd).tasks;
+  const trusted = loadAll(baseline, rd), baseTasks = trusted.tasks;
   const finished = [...records.tasks.values()].map(r => r.data).filter(t => t?.id && t.status === 'Done' && baseTasks.get(t.id)?.data?.status !== 'Done').sort(byId);
   const openIn = m => [...records.tasks.values()].some(r => r.data?.milestone === m && r.data?.status !== 'Done');
   const milestoneRound = t => records.milestones.get(t.milestone)?.data?.signing === 'milestone' && openIn(t.milestone);
@@ -122,7 +122,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   // Priority is the authorised plan's order, read from the baseline: milestones by ID, then the order of each
   // milestone's `tasks:` as approved (the candidate's own order for a milestone not yet on the baseline), then tasks
   // discovered since, by ID.
-  const approvedPlan = loadAll(baseline, rd).milestones;
+  const approvedPlan = trusted.milestones;
   const rank = new Map();
   [...live].sort(byId).forEach((m, mi) => {
     const planned = approvedPlan.has(m.id) ? list(approvedPlan.get(m.id)?.data?.tasks) : m.plan.planned;
@@ -154,8 +154,24 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   // claimedHere), so a Draft of an Authorised or Active milestone whose readiness passes starts as a Ready one does.
   const authorised = t => ['Authorised', 'Active'].includes(live.find(m => m.id === t.milestone)?.status);
   const claimable = t => !claimed(t) && (t.status === 'Ready' || (t.status === 'Draft' && authorised(t)));
-  const ready = eligible.filter(t => claimable(t) && t.readiness === OUTCOMES.ready).sort(byPriority);
-  const subset = eligible.filter(t => claimable(t) && t.readiness === OUTCOMES.subset).sort(byPriority);
+  const passing = [OUTCOMES.ready, OUTCOMES.subset].map(o => eligible.filter(t => claimable(t) && t.readiness === o).sort(byPriority));
+  // v2.8.0 fix review: two found Drafts that each pass readiness alone within found_tasks were both listed to start, and
+  // integration then refused the second after its work was done. In the order they would start, a milestone's found Drafts take
+  // only the places its allowance leaves after the found tasks begun (past Draft in the records, or claimed on a branch); the rest
+  // are held for the owner, with readiness's reason.
+  const running = open.filter(t => t.status === 'Active' || claimed(t));
+  const foundOf = t => { const m = approvedPlan.get(t.milestone)?.data; return m?.tasks != null && !list(m.tasks).includes(t.id) && !!task(t.id).found_from; };
+  const placed = new Map(), beyond = new Set();
+  for (const t of passing.flat().filter(t => t.status === 'Draft')) {
+    const room = foundRoom({ milestone: { ...approvedPlan.get(t.milestone)?.data, id: t.milestone }, id: t.id, records: [trusted, records] });
+    if (!room) continue;
+    const begun = [...new Set([...room.begun, ...running.filter(u => u.milestone === t.milestone && foundOf(u)).map(u => u.id)])].sort(), first = placed.get(t.milestone) ?? [];
+    if (begun.length + first.length < room.allowed) { placed.set(t.milestone, [...first, t.id]); continue; }
+    beyond.add(t.id);
+    const why = [begun.length ? `begun: ${begun.join(', ')}` : '', first.length ? `starting first: ${first.join(', ')}` : ''].filter(Boolean).join('; ');
+    held.push({ task: t.id, reasons: [`${t.id} would be found task ${begun.length + first.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed} (${why}): ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`] });
+  }
+  const [ready, subset] = passing.map(ts => ts.filter(t => !beyond.has(t.id)));
   const claimHow = t => t.status === 'Draft' ? 'a Draft here: claim it on its own branch, Ready or Active there' : 'Ready';
   for (const t of ready) taskAction(t, 'start', 'Claim and start', `${claimHow(t)}, and its readiness passes`);
   for (const t of subset) taskAction(t, 'start', 'Claim and start the ready subset of', `${claimHow(t)}; ready only for a bounded subset: ${(t.reasons ?? []).slice(0, 2).join('; ')}`);
@@ -163,7 +179,6 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   // foreground one after another (17.4 h), though T-0025, T-0026 and T-0028 could have run beside T-0029. In priority order, a
   // task whose readiness passes (so no prerequisite is outstanding on the trusted branch) joins when its scope overlaps no
   // running (Active or claimed) or joining task's, until three run (execute.md). A task with no scope overlaps every other.
-  const running = open.filter(t => t.status === 'Active' || claimed(t));
   const scopeOf = t => list(task(t.id).scope);
   const clash = (a, b) => { const [x, y] = [scopeOf(a), scopeOf(b)]; return !x.length || !y.length || x.some(p => y.some(q => overlaps(p, q))); };
   const startable = [];

@@ -18,7 +18,7 @@ MAINT-0020, first part: what M-0005 of mateen-systems (14–16 October) cost on 
 - **`wf prune --milestone M-NNNN`** (P8): removes an Accepted or Released milestone's Done task records in one records-only commit. It selects them by each task's own `milestone` field: three of M-0005's ten were not in its `tasks:` list. It keeps any record another record still names, and says which; `--dry-run` lists without committing. It never commits on the trusted branch, and checks that its commit holds only the removals. `wf ci` notes the Done records an accepted milestone left on the trusted branch, and `wf next` names the prune in the next milestone's authorisation, which the owner merges anyway. 34 such records sat on mateen-systems' `main`, and an ad hoc removal had been refused as irreversible deletion.
 - **Not done, and why:** P5(a)'s count of second-model runs already used, with its warning before the milestone's reserve: `wf next` does not read merged pull requests, so the count moves to v2.9.0's `wf usage` (review X2). P15, a draft's pushes running only quick checks, was withdrawn: GitHub counts a skipped required check as passed, the hole v2.4.1 closed.
 
-Corpus: 41,947 → 42,915 words; `execute.md` 2,174 → 2,286, `review.md` 1,329 → 1,413, `readiness.md` 1,114 → 1,128, `accept-release.md` 760 → 775.
+Corpus: 41,947 → 42,979 words; `execute.md` 2,174 → 2,286, `review.md` 1,329 → 1,413, `readiness.md` 1,114 → 1,128, `accept-release.md` 760 → 775.
 
 Moving a project to this pin: `upgrades.json`.
 

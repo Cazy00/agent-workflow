@@ -16,6 +16,19 @@ export const OUTCOMES = {
 // still need the result: from `verify` on readiness refuses it, and so does `review-packet`.
 export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?? '')) ? `baseline_result is still ${t.baseline_result}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${t.baseline_revision ?? 'SHA'}, then pass or fail: <summary>) before the review packet` : null;
 
+// v2.8.0 review X1: the found-task allowance is a count, not a place in ID order, which let a Draft with a lower ID start once a
+// later one had used the allowance. `id` is within it while fewer than `found_tasks` other found tasks of the milestone have
+// begun: beyond Draft, with found_from, in any of `records` (the trusted branch's, and the candidate's). Two claims on separate
+// branches meet at integrate, where the first is on the trusted branch. A milestone with no `tasks:` field has no found task
+// (null); an explicit `tasks: []` makes every task naming it one. Shared with P11's carrier (ci.js, review C2).
+export function foundRoom({ milestone, id, records }) {
+  if (milestone?.tasks == null || list(milestone.tasks).includes(id)) return null;
+  const planned = list(milestone.tasks);
+  const begun = [...new Set(records.flatMap(r => [...r.tasks.values()].map(x => x.data)).filter(d => /^T-\d{4}$/.test(d?.id ?? '') && d.id !== id && d.milestone === milestone.id && !planned.includes(d.id) && d.found_from && d.status !== 'Draft').map(d => d.id))].sort();
+  const allowed = Number(milestone.found_tasks ?? 0) || 0;
+  return { allowed, begun, within: begun.length < allowed };
+}
+
 export function stageOf(task) {
   if (task.accepted) return 'release';
   if (task.verified) return 'accept';
@@ -66,18 +79,13 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   }
   // MAINT-0020 P6(b): five of M-0005's seven question rounds were about its limits; tasks 8, 9 and 10 were each asked. A found
   // task (one naming the milestone that the trusted branch's `tasks:` list does not) fixes a finding of the milestone's own
-  // review or trial, named in `found_from`, within the milestone's `found_tasks` (none when unset), counted by ID. Any other
+  // review or trial, named in `found_from`, within the milestone's `found_tasks` (none when unset; foundRoom). Any other
   // is the owner's to allow, as before.
-  const planned = list(milestone?.tasks);
-  if (['Authorised', 'Active'].includes(milestone?.status) && planned.length && !planned.includes(taskId)) {
+  const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candidate === baseline ? [] : [loadAll(candidate, rd)])] }) : null;
+  if (room) {
     const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;
     if (!t.found_from) fail(`${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
-    else {
-      const recorded = [base, ...(candidate === baseline ? [] : [loadAll(candidate, rd)])].flatMap(r => [...r.tasks.values()].map(x => x.data));
-      const found = [...new Set([taskId, ...recorded.filter(d => d?.milestone === t.milestone && d.found_from && /^T-\d{4}$/.test(d.id ?? '')).map(d => d.id)])].filter(id => !planned.includes(id)).sort();
-      const allowed = Number(milestone.found_tasks ?? 0) || 0, n = found.indexOf(taskId) + 1;
-      if (n > allowed) fail(`${taskId} would be found task ${n} of ${t.milestone}, beyond its found_tasks allowance of ${allowed}: ${ask}`);
-    }
+    else if (!room.within) fail(`${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
   }
   for (const p of changed) if (!list(t.scope).some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'))) fail(`changed production path ${p} is outside task scope`);
   if (t.feature_readiness && !baseline.exists(t.feature_readiness)) fail(`feature_readiness ${t.feature_readiness} is not on the baseline`);

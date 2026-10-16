@@ -4,7 +4,7 @@ import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths, deepChanges } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
-import { evaluateReadiness, OUTCOMES } from './readiness.js';
+import { evaluateReadiness, foundRoom, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
@@ -341,11 +341,14 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       // the acceptance, only when its code is outside this diff, the merge does not increase its exposure, another found task
       // of the same milestone fixes it, and the task record lists it. Any other blocking finding, one the task introduced included, waits.
       const milestoneId = candidateRecords.tasks.get(selected[0])?.data?.milestone;
-      const plan = list(candidateRecords.milestones.get(milestoneId)?.data?.tasks);
+      const ms = candidateRecords.milestones.get(milestoneId)?.data;
       const uncarried = f => {
         if (!entry(f)) return 'not in the task record\'s accepted_findings';
         const by = candidateRecords.tasks.get(f.carried_by)?.data;
-        if (selected.includes(f.carried_by) || by?.milestone !== milestoneId || !plan.length || plan.includes(f.carried_by)) return `carried_by names no other found task of ${milestoneId}`;
+        // v2.8.0 review C2: the carrier is a found task with room in the milestone's allowance, counted as readiness counts it.
+        const room = by && ms ? foundRoom({ milestone: { ...ms, id: milestoneId }, id: f.carried_by, records: [baselineRecords, candidateRecords] }) : null;
+        if (selected.includes(f.carried_by) || by?.milestone !== milestoneId || !room) return `carried_by names no other found task of ${milestoneId}`;
+        if (!room.within) return `${f.carried_by} is beyond ${milestoneId}'s found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}`;
         if (by.found_from !== entry(f)) return `${f.carried_by}'s found_from is not ${entry(f)}`;
         if (!Array.isArray(f.paths) || !f.paths.length) return 'it names no paths';
         const inside = f.paths.filter(p => changed.some(c => within(c, p)));

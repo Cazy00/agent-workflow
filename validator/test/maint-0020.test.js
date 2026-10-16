@@ -433,22 +433,22 @@ const ask = 'ask the owner, who adds it to M-0001\'s tasks: or moves the work to
 
 test('MAINT-0020 P6(b): a found task that names its finding passes readiness within found_tasks; beyond it, or without found_from, it asks the owner', t => {
   const p = project(t, { baselineEdit: planOf() });
-  taskLike(p, 'T-0002', 'src/b', fixes('R-0001/F1'));
-  taskLike(p, 'T-0003', 'src/c');
-  taskLike(p, 'T-0004', 'src/d', fixes('trial'));
-  taskLike(p, 'T-0005', 'src/e', fixes('R-0002/F3'));
-  const sha = p.commit('records: four found tasks');
+  const draft = x => x.replace('status: Ready', 'status: Draft');
+  taskLike(p, 'T-0002', 'src/b', x => draft(fixes('R-0001/F1')(x)));
+  taskLike(p, 'T-0003', 'src/c', draft);
+  taskLike(p, 'T-0004', 'src/d', fixes('trial')); // begun: Ready on the trusted branch
+  taskLike(p, 'T-0005', 'src/e', x => draft(fixes('R-0002/F3')(x)));
+  const sha = p.commit('records: four found tasks, one begun');
   const ready = (id, ...more) => p.run(['readiness', '--baseline', sha, '--task', id, ...more]).out;
-  for (const id of ['T-0001', 'T-0002', 'T-0004']) assert.equal(ready(id).outcome, 'Ready', `${id}: ${ready(id).reasons.join(' | ')}`);
-  // The found task without found_from takes no place: T-0004 is the second.
+  for (const id of ['T-0001', 'T-0002', 'T-0004', 'T-0005']) assert.equal(ready(id).outcome, 'Ready', `${id}: ${ready(id).reasons.join(' | ')}`);
+  // The found task without found_from takes no place.
   assert.deepEqual(ready('T-0003').reasons, [`T-0003 is a found task of M-0001 (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`]);
-  assert.deepEqual(ready('T-0005').reasons, [`T-0005 would be found task 3 of M-0001, beyond its found_tasks allowance of 2: ${ask}`]);
-  // Those recorded only on the branch count too, after those on the trusted branch.
-  taskLike(p, 'T-0006', 'src/f', fixes('trial'));
-  taskLike(p, 'T-0007', 'src/g', fixes('R-0003/F1'));
-  const branch = p.commit('T-0006, T-0007: recorded on a branch');
-  assert.deepEqual(ready('T-0007', '--candidate', branch).reasons, [`T-0007 would be found task 5 of M-0001, beyond its found_tasks allowance of 2: ${ask}`]);
-  // Without found_tasks none is allowed, as before; without a tasks: list no task is found, as wf status counts them.
+  // A claim recorded only on its branch counts too: with T-0002 and T-0004 begun, the allowance of 2 is used.
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Draft', 'status: Ready'));
+  const branch = p.commit('T-0002: claim');
+  assert.deepEqual(ready('T-0005', '--candidate', branch).reasons, [`T-0005 would be found task 3 of M-0001, beyond its found_tasks allowance of 2 (begun: T-0002, T-0004): ${ask}`]);
+  assert.equal(ready('T-0002', '--candidate', branch).outcome, 'Ready', 'the task itself is not counted');
+  // Without found_tasks none is allowed, as before; without a tasks: field no task is found, as wf status counts them.
   const none = project(t, { baselineEdit: planOf('') });
   taskLike(none, 'T-0002', 'src/b', fixes('R-0001/F1'));
   const noAllowance = none.commit('records: a found task');
@@ -457,6 +457,11 @@ test('MAINT-0020 P6(b): a found task that names its finding passes readiness wit
   const unplanned = project(t);
   taskLike(unplanned, 'T-0002', 'src/b');
   assert.equal(unplanned.run(['readiness', '--baseline', unplanned.commit('records: T-0002'), '--task', 'T-0002']).out.outcome, 'Ready');
+  // v2.8.0 review X1: an explicit tasks: [] plans nothing, so every task naming the milestone is a found task.
+  const empty = project(t, { baselineEdit: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised\n', 'status: Authorised\ntasks: []\nfound_tasks: 1\n')) });
+  assert.match(empty.run(['readiness', '--baseline', empty.baseline, '--task', 'T-0001']).out.reasons.join(' | '), /^T-0001 is a found task of M-0001 \(its tasks: list does not name it\) without found_from/);
+  empty.edit(taskPath, fixes('trial'));
+  assert.equal(empty.run(['readiness', '--baseline', empty.commit('T-0001 fixes the trial'), '--task', 'T-0001']).out.outcome, 'Ready');
 });
 
 test('MAINT-0020 P6(b): wf records takes found_from as a review finding or trial, and found_tasks as 0 to 3; the template proposes 3', t => {
@@ -491,12 +496,13 @@ test('MAINT-0020 P6(a): execute.md records a flake in tests the task does not ch
 // P11. R-0063/F1, a race from M-0004's T-0020 found in T-0031's review, made #91 the owner's merge though T-0032 fixed it.
 const deferring = c => ({ ...c, approval: { ...c.approval, defer_to_acceptance: true } });
 const race = (over = {}) => ({ id: 'F1', severity: 'blocking', status: 'accepted', resolution: 'carried by T-0002', exposure: 'two invoices can take the same number', carried_by: 'T-0002', paths: ['src/b.js'], merge_increases_exposure: false, ...over });
-function carrying(t, { defer = true } = {}) {
-  const p = project(t, { configEdit: defer ? deferring : c => c, baselineEdit: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised\n', 'status: Authorised\ntasks: [T-0001, T-0003]\nfound_tasks: 3\n')) });
+function carrying(t, { defer = true, plan = 'tasks: [T-0001, T-0003]\nfound_tasks: 3\n', records = () => {} } = {}) {
+  const p = project(t, { configEdit: defer ? deferring : c => c, baselineEdit: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised\n', `status: Authorised\n${plan}`)) });
   taskLike(p, 'T-0002', 'src/b', x => fixes('R-0001/F1')(x).replace('status: Ready', 'status: Draft'));
   taskLike(p, 'T-0003', 'src/c', x => x.replace('status: Ready', 'status: Draft'));
   taskLike(p, 'T-0004', 'src/d', x => fixes('R-0001/F2')(x).replace('status: Ready', 'status: Draft'));
   taskLike(p, 'T-0005', 'src/e', x => fixes('R-0001/F1')(x).replace('status: Ready', 'status: Draft').replace('milestone: M-0001', 'milestone: M-0002'));
+  records(p);
   const base = p.commit('records: the found T-0002 and T-0004, the planned T-0003, T-0005 of another milestone');
   p.write('src/a.js', 'export const result = 1;\n');
   p.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1]'));
@@ -730,4 +736,48 @@ test('MAINT-0020 P8: wf next names the prune in the Draft milestone\'s authorisa
   assert.ok(![done.next, ...done.also].some(a => a.kind === 'prune' || a.run.some(l => l.startsWith('wf prune'))), JSON.stringify(done.also));
   // execute.md says how, in the sentence it already had.
   assert.match(fs.readFileSync(path.join(root, 'procedures/execute.md'), 'utf8'), /then remove them with `wf prune --milestone M`, one records-only change \(one completed in a round only after that round has closed/);
+});
+
+// The fix round of v2.8.0's two independent reviews (C: the Claude review, X: the Codex review).
+test('v2.8.0 review X1: the found-task allowance counts the found tasks begun, whatever their IDs, at implement, verify and integrate', t => {
+  // T-0003 used the allowance of 1 while T-0002, the lower ID, waited as a Draft; claimed later, T-0002 had been Ready.
+  const p = project(t, { baselineEdit: planOf('found_tasks: 1\n') });
+  taskLike(p, 'T-0002', 'src/b', x => fixes('trial')(x).replace('status: Ready', 'status: Draft'));
+  taskLike(p, 'T-0003', 'src/c', x => doneAs(fixes('R-0001/F1')(x)));
+  const base = p.commit('records: T-0003 Done, T-0002 waits');
+  p.git('checkout', '-q', '-b', 'T-0002');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Draft', 'status: Ready'));
+  const claim = p.commit('T-0002: claim');
+  const beyond = `T-0002 would be found task 2 of M-0001, beyond its found_tasks allowance of 1 (begun: T-0003): ${ask}`;
+  for (const stage of ['implement', 'verify', 'integrate']) {
+    const r = p.run(['readiness', '--baseline', base, '--candidate', claim, '--task', 'T-0002', '--stage', stage]).out;
+    assert.ok(r.reasons.includes(beyond), `${stage}: ${r.reasons.join(' | ')}`);
+  }
+  // Two claims on separate branches each pass alone; the second meets the first at integrate, on the trusted branch, though its
+  // own branch still holds the first as a Draft (the trusted branch's records count).
+  const q = project(t, { baselineEdit: planOf('found_tasks: 1\n') });
+  for (const [id, scope] of [['T-0002', 'src/b'], ['T-0003', 'src/c']]) taskLike(q, id, scope, x => fixes('trial')(x).replace('status: Ready', 'status: Draft'));
+  const planned = q.commit('records: two found Drafts');
+  const claimOn = id => { q.git('checkout', '-q', '-b', id, planned); q.edit(`docs/workflow/tasks/${id}.md`, x => x.replace('status: Draft', 'status: Ready')); return q.commit(`${id}: claim`); };
+  const [first, second] = [claimOn('T-0002'), claimOn('T-0003')];
+  const at = (b, c, id, stage = 'implement') => q.run(['readiness', '--baseline', b, '--candidate', c, '--task', id, '--stage', stage]).out;
+  assert.equal(at(planned, first, 'T-0002').outcome, 'Ready');
+  assert.equal(at(planned, second, 'T-0003').outcome, 'Ready');
+  q.git('checkout', '-q', 'main'); q.git('merge', '-q', '--ff-only', 'T-0002');
+  q.edit('docs/workflow/tasks/T-0002.md', doneAs);
+  const merged = q.commit('T-0002: Done');
+  assert.ok(at(merged, second, 'T-0003', 'integrate').reasons.includes(`T-0003 would be found task 2 of M-0001, beyond its found_tasks allowance of 1 (begun: T-0002): ${ask}`));
+});
+
+test('v2.8.0 review C2: the carrier of a P11 finding has room in found_tasks, counted as readiness counts it, in a milestone with a tasks: field', t => {
+  const owner = (p, why) => { const r = p.ci([race()]); assert.equal(r.status, 0, r.stdout + r.stderr); assert.deepEqual([r.out.merge, r.out.owner_reasons], ['owner', [`blocking review findings accepted rather than fixed: F1 (not carried: ${why})`]]); };
+  owner(carrying(t, { plan: 'tasks: [T-0001, T-0003]\n' }), 'T-0002 is beyond M-0001\'s found_tasks allowance of 0');
+  // The fourth of three: three other found tasks have begun.
+  owner(carrying(t, { records: p => {
+    p.edit('docs/workflow/tasks/T-0004.md', x => x.replace('status: Draft', 'status: Ready'));
+    taskLike(p, 'T-0006', 'src/f', x => doneAs(fixes('trial')(x)));
+    taskLike(p, 'T-0007', 'src/g', x => doneAs(fixes('R-0001/F3')(x)));
+  } }), 'T-0002 is beyond M-0001\'s found_tasks allowance of 3 (begun: T-0004, T-0006, T-0007)');
+  // A milestone with no tasks: field has no found task, whatever its found_tasks says (P11's guard).
+  owner(carrying(t, { plan: 'found_tasks: 3\n' }), 'carried_by names no other found task of M-0001');
 });

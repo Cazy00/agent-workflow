@@ -4,7 +4,7 @@
 Revision, artifact/build, environment and reproducible access:
 
 ## Delivered behaviour and exclusions
-Planned tasks, discovered tasks (Found in …) and work moved to later milestones, each with its pull request:
+Planned tasks, found tasks (each with the finding it fixed, its `found_from`, in one sentence) and work moved to later milestones, each with its pull request:
 
 ## Demonstration
 

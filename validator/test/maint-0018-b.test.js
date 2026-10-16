@@ -107,7 +107,7 @@ else if (a.startsWith('api user')) console.log(process.env.FAKE_GH_ACCOUNT || 'a
 else if (a.startsWith('api')) console.log(JSON.stringify({ full_name: 'fixture/project', permissions: { push: true } }));
 else process.exit(1);`);
   const env = { PATH: `${bin}:/usr/bin:/bin` };
-  const r = p.run(['doctor'], { env });
+  const r = p.run(['doctor'], { env, cwd: p.repo }); // from the root, as a session starts (MAINT-0020 P9 adds the check)
   assert.equal(r.status, 1, r.stdout + r.stderr);
   const by = name => r.out.checks.find(c => c.name === name);
   assert.equal(by('gh signed in').ok, true);
@@ -115,7 +115,7 @@ else process.exit(1);`);
   assert.equal(by('a browser for the trial walk').ok, false);
   assert.equal(by('codex (review.second_model)').ok, false);
   assert.deepEqual(r.out.gaps.sort(), ['a browser for the trial walk', 'codex (review.second_model)']);
-  assert.match(r.out.next, /ask the owner about every gap in your first question/);
+  assert.match(r.out.next, /ask the owner about every gap in your next question \(the plan's, when planning\)/); // MAINT-0020 P7(c)
   // The owner's account signed in where the agent works (the MacBook's arrangement since 13 October) is a gap too.
   const owner = p.run(['doctor'], { env: { ...env, FAKE_GH_ACCOUNT: 'owner' } }).out.checks.find(c => c.name === 'gh signed in');
   assert.equal(owner.ok, false);
@@ -169,7 +169,7 @@ else process.exit(1);`);
   const env = runs => ({ PATH: `${bin}:${process.env.PATH}`, WF_WAIT_INTERVAL: '0', FAKE_RUNS: JSON.stringify(runs) });
   const done = (name, conclusion) => ({ name, status: 'completed', conclusion, started_at: '2026-10-14T00:00:00Z' });
   const missing = p.run(['wait', '--pr', '7', '--timeout', '0.02'], { env: env([done('wf ci', 'success')]) });
-  assert.equal(missing.out.result, 'timeout', 'the required check unit has not appeared, so wf ci alone is not a pass');
+  assert.equal(missing.out.result, 'pending', 'the required check unit has not appeared, so wf ci alone is not a pass'); // MAINT-0020 P12: was 'timeout'
   assert.deepEqual(missing.out.waiting_for, ['unit']);
   const failed = p.run(['wait', '--pr', '7', '--merged', '--timeout', '1'], { env: env([done('wf ci', 'success'), done('unit', 'failure')]) });
   assert.equal(failed.status, 1);
@@ -178,7 +178,7 @@ else process.exit(1);`);
   // not end a --merged wait; a pass needs two polls that agree.
   const noGate = p.run(['wait', '--pr', '7', '--timeout', '0.02'], { env: env([done('unit', 'success')]) });
   assert.deepEqual(noGate.out.waiting_for, ['wf ci']);
-  assert.equal(p.run(['wait', '--pr', '7', '--merged', '--timeout', '0.02'], { env: env([done('wf ci', 'cancelled'), done('unit', 'success')]) }).out.result, 'timeout');
+  assert.equal(p.run(['wait', '--pr', '7', '--merged', '--timeout', '0.02'], { env: env([done('wf ci', 'cancelled'), done('unit', 'success')]) }).out.result, 'pending');
   const seq = path.join(p.temp, 'seq');
   fakeExecutable(path.join(bin, 'gh'), `const fs = require('fs'); const f = ${JSON.stringify(seq)};
 const a = process.argv.slice(2).join(' ');

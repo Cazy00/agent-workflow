@@ -31,10 +31,10 @@ export function project(t, { configEdit = c => c, baselineEdit = () => {} } = {}
   const initial = commit('initial');
   edit(taskPath, x => x.replaceAll('fixture-rev', initial));
   const baseline = commit('authorised baseline');
-  const run = (args, { evidence, env = {} } = {}) => {
+  const run = (args, { evidence, env = {}, cwd } = {}) => {
     const extra = [];
     if (evidence) { const file = path.join(temp, 'evidence.json'); fs.writeFileSync(file, JSON.stringify(evidence)); extra.push('--delivery-evidence', file); }
-    const r = spawnSync(process.execPath, [cli, ...args, '--repo', repo, '--json', ...extra], { encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync(process.execPath, [cli, ...args, '--repo', repo, '--json', ...extra], { encoding: 'utf8', env: { ...process.env, ...env }, cwd });
     let out = null; try { out = JSON.parse(r.stdout); } catch { /* left null */ }
     return { ...r, out };
   };

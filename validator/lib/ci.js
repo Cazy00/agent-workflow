@@ -1,10 +1,10 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
-import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list } from './records.js';
+import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list, namesIn } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths, deepChanges } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
-import { evaluateReadiness, OUTCOMES } from './readiness.js';
+import { evaluateReadiness, foundRoom, OUTCOMES } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
@@ -12,6 +12,7 @@ import { carriedFrom } from './carry.js';
 import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
+import { ACCEPTED, prunable } from './prune.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 // The records the owner approves, whatever a project's config classifies them as (owner-merge's `merge`, MAINT-0010).
@@ -57,8 +58,6 @@ function recordIds({ baseline, candidate, rd, changed }) {
 // stays, Done, until the last record naming it is removed (procedures/execute.md). A change fails when it removes a record
 // that a remaining task names, or when a task record newly names one that is not in the candidate. The candidate
 // contains the current baseline, so a removal and a planning branch meet in whichever merges second.
-const NAMED = ['prerequisites', 'governing'];
-const namesIn = data => NAMED.flatMap(field => list(data?.[field]).filter(v => /^T-\d{4}$/.test(v)).map(id => ({ field, id })));
 function recordReferences({ baseline, candidate, rd, changed }) {
   const errors = [];
   const dir = `${rd}/${DIRS.task}/`;
@@ -153,6 +152,11 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
+  // MAINT-0020 P8: an accepted milestone's Done task records stay on the trusted branch until `wf prune` removes them (execute.md).
+  for (const r of baselineRecords.milestones.values()) {
+    const left = r.data?.id && ACCEPTED.includes(r.data.status) ? prunable(baselineRecords, r.data.id).remove.filter(t => candidate.exists(t.path)) : [];
+    if (left.length) findings.push(`note: ${r.data.id} is ${r.data.status}, but the trusted branch still holds ${left.length} of its Done task records: wf prune --milestone ${r.data.id} removes them in one records-only commit`);
+  }
   let readiness = null;
   if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
   // The pull-request modes (enforced, owner-merge) hold the quality gates as manual mode does (MAINT-0010): a production
@@ -329,16 +333,57 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const accepted = (attested?.review?.findings ?? []).filter(f => f?.status === 'accepted');
     if (!defer) { if (accepted.length) ownerReasons.push(`review findings accepted rather than fixed: ${accepted.map(f => f.id).join(', ')}`); }
     else {
-      const blocking = accepted.filter(isBlocking).map(f => f.id), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
-      if (blocking.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${blocking.join(', ')}`);
+      // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
+      const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
+      const entry = f => listed.find(e => e.split('/').pop() === f.id);
+      // MAINT-0020 P11 (the owner's decision of 16 October 2026, § 10): in M-0005 a race from M-0004's T-0020, found in
+      // T-0031's review, made #91 the owner's merge though T-0032 fixed it. A blocking finding stays the agent's merge, carried to
+      // the acceptance, only when its code is outside this diff, the merge does not increase its exposure, another found task
+      // of the same milestone fixes it, and the task record lists it. Any other blocking finding, one the task introduced included, waits.
+      const milestoneId = candidateRecords.tasks.get(selected[0])?.data?.milestone;
+      const ms = candidateRecords.milestones.get(milestoneId)?.data;
+      const uncarried = f => {
+        if (!entry(f)) return 'not in the task record\'s accepted_findings';
+        const by = candidateRecords.tasks.get(f.carried_by)?.data;
+        // v2.8.0 review C2: the carrier is a found task with room in the milestone's allowance, counted as readiness counts it.
+        const room = by && ms ? foundRoom({ milestone: { ...ms, id: milestoneId }, id: f.carried_by, records: [baselineRecords, candidateRecords] }) : null;
+        if (selected.includes(f.carried_by) || by?.milestone !== milestoneId || !room) return `carried_by names no other found task of ${milestoneId}`;
+        if (!room.within) return `${f.carried_by} is beyond ${milestoneId}'s found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}`;
+        if (by.found_from !== entry(f)) return `${f.carried_by}'s found_from is not ${entry(f)}`;
+        if (!Array.isArray(f.paths) || !f.paths.length) return 'it names no paths';
+        const inside = f.paths.filter(p => changed.some(c => within(c, p)));
+        if (inside.length) return `this pull request changes ${inside.join(', ')}`;
+        return f.merge_increases_exposure === false ? null : 'merge_increases_exposure is not false';
+      };
+      const blocking = accepted.filter(isBlocking), minor = accepted.filter(f => !isBlocking(f)).map(f => f.id);
+      const held = blocking.filter(uncarried), carriedHere = blocking.filter(f => !uncarried(f));
+      if (held.length) ownerReasons.push(`blocking review findings accepted rather than fixed: ${held.map(f => `${f.id} (not carried: ${uncarried(f)})`).join(', ')}`);
+      if (carriedHere.length) deferred.push(`blocking review findings carried by found tasks, in code this pull request does not change: ${carriedHere.map(f => `${entry(f)} by ${f.carried_by}`).join(', ')}`);
       if (minor.length) {
         deferred.push(`review findings accepted rather than fixed: ${minor.join(', ')}`);
-        // Kept in the task record, which stays until the milestone is accepted, so the acceptance evidence can name each.
-        const listed = selected.flatMap(id => list(candidateRecords.tasks.get(id)?.data?.accepted_findings));
         const missing = minor.filter(id => !listed.some(e => e.split('/').pop() === id));
         if (missing.length) { findings.push(`accepted findings ${missing.join(', ')} are not in the task record's accepted_findings (as REVIEW/FINDING, for example R-0030/N1), so the milestone's acceptance would not list them`); fail = true; }
       }
     }
+    // v2.8.0 review C3: a milestone's acceptance lists the accepted findings of its task records (lib/acceptance-evidence.js),
+    // and P11 lets a blocking one wait for it there, so a change that drops an entry, or a Done task record, of a milestone not
+    // yet Accepted or Released is the owner's merge, even records-only. `wf prune` removes only an accepted milestone's records.
+    // v2.8.0 fix review: judged by the trusted branch's record, never the candidate's, which the change writes: removing a Done
+    // task's `milestone`, or setting it back to Draft, passed, and the next change then dropped its findings or record unseen. So
+    // any change to a record Done there is the owner's, and an entry moved off its milestone counts as dropped. A task in no
+    // milestone goes at once (execute.md); a task's own Done commit changes a record not yet Done there.
+    const dropped = [], removedDone = [], changedDone = [];
+    for (const { path: p, data: d } of baselineRecords.tasks.values()) {
+      if (!d?.id || !d.milestone || ACCEPTED.includes(baselineRecords.milestones.get(d.milestone)?.data?.status)) continue;
+      const now = candidateRecords.tasks.get(d.id)?.data;
+      if (d.status === 'Done' && !candidate.exists(p)) removedDone.push(d.id);
+      else if (d.status === 'Done' && candidate.read(p) !== baseline.read(p)) changedDone.push(d.id);
+      const gone = list(d.accepted_findings).filter(e => now?.milestone !== d.milestone || !list(now.accepted_findings).includes(e));
+      if (gone.length) dropped.push(`${d.id} (${gone.join(', ')})`);
+    }
+    if (dropped.length) ownerReasons.push(`it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${dropped.join(', ')}`);
+    if (removedDone.length) ownerReasons.push(`it removes Done task records of a milestone not yet accepted, which its acceptance reads: ${removedDone.join(', ')}`);
+    if (changedDone.length) ownerReasons.push(`it changes Done task records of a milestone not yet accepted, which its acceptance reads: ${changedDone.join(', ')}`);
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;

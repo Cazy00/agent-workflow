@@ -7,6 +7,7 @@ status: Draft
 owner:
 objective:
 milestone:
+found_from:
 feature:
 acceptance: []
 feature_readiness:
@@ -36,7 +37,7 @@ released:
 # T-0000 — title
 
 ## Objective and scope
-Optional exclusions / behaviour to preserve. Keep permitted change paths in `scope`; prose does not expand them.
+Optional exclusions / behaviour to preserve. Keep permitted change paths in `scope`; prose does not expand them. A found task (one its milestone's `tasks:` omits) names in `found_from` the review finding (`R-0073/F1`) or `trial` it fixes.
 
 ## Governing requirements and acceptance examples
 Optional references / starting read paths, with relevant versions. Distinguish approved requirements from reference material. Read paths guide discovery; they do not restrict relevant inspection or grant permission to edit.

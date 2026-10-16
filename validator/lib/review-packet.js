@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { gitSource } from './sources.js';
 import { safeEnv, workTreeRoot } from './git.js';
 import { loadAll, loadConfig, list, WfError } from './records.js';
+import { baselinePending } from './readiness.js';
 export function prepareReview({ repo, baseline, candidate, tasks, evidence = [] }) {
   if (!/^[0-9a-f]{40,64}$/.test(baseline ?? '') || !/^[0-9a-f]{40,64}$/.test(candidate ?? '')) throw new WfError('review-packet requires exact committed --baseline and --candidate SHAs');
   if (!Array.isArray(tasks) || !tasks.length || tasks.some(t => !/^T-\d{4}$/.test(t)) || new Set(tasks).size !== tasks.length) throw new WfError('review-packet requires --task T-NNNN');
@@ -37,6 +38,7 @@ export function prepareReview({ repo, baseline, candidate, tasks, evidence = [] 
   for (const id of tasks) {
     const task = c.tasks.get(id)?.data;
     if (!task) throw new WfError(`review task ${id} is missing`);
+    if (baselinePending(task)) throw new WfError(`review task ${id}: ${baselinePending(task)}`); // MAINT-0020 P2(b)
     const milestone = b.milestones.get(task.milestone);
     if (!milestone) throw new WfError(`review milestone ${task.milestone} is missing from the baseline`);
     canonical.push(source(head.name, `${rd}/tasks/${id}.md`), source(base.name, milestone.path));

@@ -141,3 +141,14 @@ A second session re-measured M-0005 from the same sources, with its own scripts 
 **Order of value, revised.** P1 and P12 (each about $40–60), then P2 and P3; P4 after P12, since they share the leads' writes. P7 is still the one that would have changed the owner's trial. P14 makes the next study a command. P5(b), P8, P9, P13 and P15 are small.
 
 **Limits.** Same transcripts, so no new source of error is removed. Roles come from each helper's description. The rebuild causes come from the command before each rebuild, matched by text. Output by role cannot be measured.
+
+## 10. The owner's decisions (16 October 2026)
+
+Asked in the session that wrote § 9, after #53 merged; each answer was the recommended option.
+- **Two releases.** v2.8.0: P2, P4 (with § 9's effort), P5, P6, P7(c), P8, P9, P10, P11, P12, P13. v2.9.0: P1, P3, P7(a) and (b), P14.
+- **P6, both parts.** (a) A failing check in tests the task does not change, which passes on a rerun of the same revision, is recorded as a flake with a found task and does not use the task's attempts. (b) Up to three found tasks that fix the milestone's own review or trial findings are allowed without asking and reported in the acceptance package.
+- **P11, yes.** A blocking finding in code the pull request does not change, whose exposure the merge does not increase, may be carried by a found task named in the delivery evidence; the pull request keeps the agent's merge. A blocking finding the task introduced still stops it.
+- **P15, withdrawn** by the session that proposed it. Skipping the product suite on a draft's pushes reopens the hole v2.4.1 closed: GitHub counts a skipped required check as passed (v2.7.0's *Not done, and why*).
+- **P2(b), yes (17 October 2026),** asked when v2.8.0's review found that POLICY's task readiness required the baseline result before a task begins: a task may begin with the trusted branch's run on its baseline pending, its result recorded before verification.
+- **P5(a)'s count of runs used** moves to v2.9.0 with P14: `wf next` does not read merged pull requests (v2.8.0's review X2). v2.8.0 prints the budget.
+- **Built:** the v2.8.0 part, as `CHANGELOG.md` v2.8.0 describes it; v2.9.0 follows.

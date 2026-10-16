@@ -10,6 +10,10 @@ export class WfError extends Error {}
 export const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [String(v)]);
 
 export const DIRS = { task: 'tasks', decision: 'decisions', feedback: 'feedback/inbox', milestone: 'milestones' };
+// MAINT-0020 P8: where a record names a task by ID. `wf ci` leaves no task record that a remaining task names (prerequisites,
+// governing), and `wf prune` keeps one any record names, a decision's `affects` and a feedback record's `task` included.
+const TASK_REFS = { task: ['prerequisites', 'governing'], decision: ['affects'], feedback: ['task'], milestone: ['tasks', 'prerequisites', 'governing'] };
+export const namesIn = (data, kind = 'task') => TASK_REFS[kind].flatMap(field => list(data?.[field]).filter(v => /^T-\d{4}$/.test(v)).map(id => ({ field, id })));
 // A task's branch: exactly its ID (the claim branch, procedures/execute.md), or the ID after an optional `codex/`
 // followed by `-` and a description.
 export const TASK_BRANCH = /^(?:(?:codex|claude)\/)?(T-\d{4})(?:-|$)/; // the tool prefixes Codex and Claude Code give branches
@@ -36,6 +40,7 @@ const ENUMS = {
 };
 const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
 export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|integrate|accept|release)$/;
+const FINDING = /^[\w.-]+\/[\w.-]+$/; // REVIEW/FINDING, as R-0030/N1
 
 // The client page's settings (`wf status --client`). A theme's values reach CSS, so each is checked to be only what it
 // says: a hex colour, a plain font name, a repository path, a number. Paths are read through the source, which refuses
@@ -93,6 +98,25 @@ function validateReviewConfig(r) {
   if (r.deep_paths !== undefined && (!Array.isArray(r.deep_paths) || r.deep_paths.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('review.deep_paths must be an array of glob strings');
 }
 
+// MAINT-0020 P4: a model and an effort for each role (procedures/execute.md). M-0005 ran 46 of 51 helpers at the session's xhigh
+// and every role on the coordinator's model. A model is the harness's own alias or ID, passed as given; null leaves it to the
+// session. An effort is one of EFFORTS, null for the session's own, or one per review level.
+export const ROLES = ['lead', 'implementer', 'paperwork', 'walker'];
+export const LEVELS = ['light', 'standard', 'deep'];
+const MODEL = /^[\w.@/:[\]-]{1,80}$/;
+function validateRolesConfig(r) {
+  only(r, ROLES, 'roles');
+  for (const [role, v] of Object.entries(r)) {
+    only(v, ['model', 'effort'], `roles.${role}`);
+    if (v.model != null && (typeof v.model !== 'string' || !MODEL.test(v.model))) throw new Error(`roles.${role}.model must be a plain model name, or null for the session's own`);
+    const e = v.effort;
+    if (plainObject(e)) {
+      only(e, LEVELS, `roles.${role}.effort`);
+      if (LEVELS.some(l => !EFFORTS.includes(e[l]))) throw new Error(`roles.${role}.effort by review level needs ${LEVELS.join(', ')}, each one of ${EFFORTS.join(', ')}`);
+    } else if (e != null && !EFFORTS.includes(e)) throw new Error(`roles.${role}.effort must be one of ${EFFORTS.join(', ')}, or null for the session's own`);
+  }
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
@@ -117,6 +141,7 @@ export function loadConfig(source) {
       if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone or plan, where the agent merges its own pull requests`);
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
+    if (config.roles !== undefined) validateRolesConfig(config.roles);
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
     // access or tool it names is there (for example ssh to the staging host). No gate runs them.
     if (config.preflight !== undefined && (!Array.isArray(config.preflight) || config.preflight.some(c => !plainObject(c) || typeof c.name !== 'string' || !c.name.trim() || typeof c.run !== 'string' || !c.run.trim() || Object.keys(c).some(k => !['name', 'run', 'why'].includes(k))))) throw new Error('preflight entries need a name and a run command (and optionally why)');
@@ -147,10 +172,15 @@ export function loadRecord(source, relPath, expected) {
   if (expected === 'task') {
     if (data.status === 'Blocked' && !data.resume_condition) errors.push('a Blocked task must record resume_condition');
     for (const d of list(data.deferred_inputs)) if (!DEFERRED_RE.test(d)) errors.push(`deferred input "${d}" must look like D-0001@verify`);
-    if (data.baseline_result != null && !/^(pass$|fail:)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass" or "fail: <summary>" (got "${data.baseline_result}")`);
+    // MAINT-0020 P2(b): `pending: <run reference>` until the trusted branch's run on the baseline finishes (readiness.js).
+    if (data.baseline_result != null && !/^(pass$|fail:|pending:\s*\S)/.test(data.baseline_result)) errors.push(`baseline_result must be "pass", "fail: <summary>" or "pending: <run reference>" (got "${data.baseline_result}")`);
     // MAINT-0016: the findings this task's reviews accepted rather than fixed, kept for the milestone's acceptance.
-    if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !/^[\w.-]+\/[\w.-]+$/.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
+    if (data.accepted_findings != null && (!Array.isArray(data.accepted_findings) || data.accepted_findings.some(f => !FINDING.test(f)))) errors.push('accepted_findings entries must look like R-0030/N1: the review, then the finding it accepted rather than fixed');
+    // MAINT-0020 P6(b): what a found task fixes, a review finding in accepted_findings' form or the owner's trial (readiness.js).
+    if (data.found_from != null && !(typeof data.found_from === 'string' && (data.found_from === 'trial' || FINDING.test(data.found_from)))) errors.push(`found_from must name what the task fixes: a review finding like R-0073/F1, or trial (got "${data.found_from}")`);
   }
+  // MAINT-0020 P6(b): up to three found tasks fix the milestone's own review or trial findings without asking (§ 10).
+  if (expected === 'milestone' && data.found_tasks != null && !(typeof data.found_tasks === 'string' && /^[0-3]$/.test(data.found_tasks))) errors.push(`found_tasks must be 0, 1, 2 or 3, the found tasks allowed without asking the owner (MAINT-0020 § 10); a further task goes in tasks: with the owner's approval (got "${data.found_tasks}")`);
   if (expected === 'decision') {
     for (const f of ['supersedes', 'superseded_by']) if (data[f] && !ID_RE.decision.test(data[f])) errors.push(`${f} must be a decision id`);
   }

@@ -32,10 +32,14 @@ const FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup
 // or auto-merge is turned on), only the required checks count, and a failure must also be seen twice (the fix review).
 const signature = checks => JSON.stringify(checks.map(c => [c.name, c.status, c.conclusion]).sort());
 // The target says what to follow: a pull request's current head (which may merge or close), or one fixed commit.
-// `ask(endpoint)` is `call` with a timeout that cannot carry a poll far past the ceiling; tests inject `call`, `now`, `pause`.
+// `ask(endpoint)` is `call` with a timeout that ends by the deadline; tests inject `call`, `now`, `pause`.
+// v2.8.0 review X4: a request's timeout was at least 5 s, so one started near the deadline ended the call at 275 s, past the
+// cache. Each now gets at most the time left, and with under MIN_REQUEST_MS left none starts and the call returns pending.
+const MIN_REQUEST_MS = 1000;
 function follow({ repository, target, merged = false, interval = 30, seconds = WAIT_CEILING_SECONDS, maxErrors = 10, required = [], call = api, now = Date.now, pause = sleep }) {
   const deadline = now() + seconds * 1000;
-  const ask = endpoint => call(endpoint, Math.min(30000, Math.max(5000, deadline - now())));
+  const late = { late: true };
+  const ask = endpoint => { const left = deadline - now(); if (left < MIN_REQUEST_MS) throw late; return call(endpoint, Math.min(30000, left)); };
   let errors = 0, last = null, seen = null, seenFailed = null;
   while (now() < deadline) {
     try {
@@ -59,6 +63,7 @@ function follow({ repository, target, merged = false, interval = 30, seconds = W
         seen = sig;
       } else seen = null;
     } catch (e) {
+      if (e === late) break;
       if (e.fatal) return { ok: false, result: 'error', detail: e.message };
       if (++errors >= maxErrors) return { ok: false, result: 'error', detail: `${errors} errors in a row; the last: ${e.message}`, ...(last ?? {}) };
     }

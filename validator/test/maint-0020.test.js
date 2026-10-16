@@ -838,3 +838,43 @@ test('v2.8.0 review X3, C notes: a scope reaches a deep glob nested below it, an
   assert.deepEqual(p.run(['next', '--baseline', sha]).out.second_model_budget, [{ milestone: 'M-0001', deep_tasks: 2, runs: 5 }]);
   assert.match(fs.readFileSync(path.join(root, 'validator/lib/next.js'), 'utf8'), /the runs already used are left to v2\.9\.0's `wf usage` \(P14\)/);
 });
+
+test('v2.8.0 review X4: every request of a wait ends by the ceiling, and none starts without time for it', () => {
+  // One request lasts `latency` seconds, or is killed at its timeout; old: a 5-second floor carried the call to 275 s.
+  const slow = (latency, interval) => {
+    const clock = fakeClock(), calls = [], api = fakeApi([run('unit', 'in_progress')]);
+    const call = (endpoint, timeout) => { calls.push({ at: clock.now(), timeout }); clock.pause(Math.min(latency * 1000, timeout) / 1000); if (latency * 1000 > timeout) throw new Error('timed out'); return api(endpoint, timeout); };
+    const r = waitForPullRequest({ repository: 'fixture/project', number: 7, interval, call, now: clock.now, pause: clock.pause });
+    assert.equal(r.result, 'pending');
+    assert.ok(clock.elapsed() <= WAIT_CEILING_SECONDS, `returned at ${clock.elapsed()} s`);
+    assert.ok(calls.every(c => c.at + c.timeout <= WAIT_CEILING_SECONDS * 1000 && WAIT_CEILING_SECONDS * 1000 - c.at >= 1000), JSON.stringify(calls));
+    return calls;
+  };
+  assert.ok(slow(5, 43).length > 5, 'a pull request and its checks at 265 s, and nothing at 270 s');
+  assert.ok(slow(60, 20).some(c => c.timeout < 30000), 'a hung request started at 250 s is cut at 270 s');
+});
+
+test('v2.8.0 review: wf prune never commits on the trusted branch, and undoes a commit that holds more than the removals', t => {
+  const refused = (p, pattern) => {
+    const head = p.git('rev-parse', 'HEAD'), before = p.tasks();
+    const r = p.prune();
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, pattern);
+    assert.deepEqual([p.git('rev-parse', 'HEAD'), p.tasks()], [head, before]);
+  };
+  const p = acceptedMilestone(t);
+  p.git('checkout', '-q', 'main');
+  refused(p, /main is the trusted branch: the prune rides in a pull request, so check out a branch for it first \(git switch -c prune-M-0001\)/);
+  assert.equal(p.prune('--dry-run').status, 0, 'a dry run commits nothing');
+  // The configured trusted branch, not a name the code assumes.
+  p.git('checkout', '-q', 'prune');
+  p.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), trusted_branch: 'prune' }));
+  p.commit('trusted_branch: prune');
+  refused(p, /prune is the trusted branch/);
+  // A hook that stages a file of its own into the commit: undone, the records back, the hook's file left in the work tree.
+  const hooked = acceptedMilestone(t);
+  fakeExecutable(path.join(hooked.repo, '.git/hooks/pre-commit'), 'require(\'fs\').writeFileSync(\'extra.txt\', \'from the hook\\n\'); require(\'child_process\').execFileSync(\'git\', [\'add\', \'extra.txt\']);');
+  refused(hooked, /the commit [0-9a-f]{12} changed docs\/workflow\/tasks\/T-0002\.md, docs\/workflow\/tasks\/T-0005\.md, docs\/workflow\/tasks\/T-0011\.md, extra\.txt, not only the removed records \(a commit hook\?\); it was undone, and the work tree kept as it was/);
+  assert.equal(hooked.git('status', '--porcelain'), '?? extra.txt');
+  assert.equal(fs.readFileSync(path.join(hooked.repo, 'extra.txt'), 'utf8'), 'from the hook\n');
+});

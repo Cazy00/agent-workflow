@@ -26,7 +26,7 @@ export function prunable(all, milestone) {
   return { remove: [...gone].map(([id, path]) => ({ id, path })).sort((a, b) => a.id.localeCompare(b.id)), kept: kept.sort((a, b) => a.task.localeCompare(b.task)) };
 }
 
-export function prune({ repo, rd, all, milestone, dryRun }) {
+export function prune({ repo, rd, all, milestone, dryRun, trustedBranch = 'main' }) {
   const m = all.milestones.get(milestone)?.data;
   if (!m) throw new WfError(`${milestone} has no record in ${rd}/${DIRS.milestone}`);
   if (!ACCEPTED.includes(m.status)) throw new WfError(`${milestone} is ${m.status}: prune takes only an Accepted or Released milestone, whose task records nothing reads any more (procedures/execute.md)`);
@@ -38,6 +38,8 @@ export function prune({ repo, rd, all, milestone, dryRun }) {
   const out = { ok: true, milestone, dry_run: dryRun, branch: branch || null, removed: remove.map(r => r.id), kept, commit: null };
   if (dryRun || !remove.length) return out;
   if (!branch) throw new WfError('HEAD is detached: check out the branch the commit belongs on first');
+  // v2.8.0 review: the prune rides in a pull request (execute.md), never a commit on the trusted branch itself.
+  if (branch === trustedBranch) throw new WfError(`${branch} is the trusted branch: the prune rides in a pull request, so check out a branch for it first (git switch -c prune-${milestone})`);
   const status = git('status', '--porcelain', '--untracked-files=no');
   if (status.status !== 0) throw new WfError(`git status failed: ${status.stderr.trim()}`);
   if (status.stdout.trim()) throw new WfError('the working tree has uncommitted changes: commit or discard them first, so the commit holds only the removals');
@@ -45,12 +47,23 @@ export function prune({ repo, rd, all, milestone, dryRun }) {
   const write = (...args) => { const r = spawnSync('git', ['--literal-pathspecs', '-C', repo, ...args], { encoding: 'utf8' }); if (r.status !== 0) throw new WfError(`git ${args[0]} failed: ${(r.stderr || r.error?.message || '').trim()}`); return r.stdout; };
   const paths = remove.map(r => r.path);
   const message = `Prune ${milestone}: remove its ${remove.length} Done task record${remove.length === 1 ? '' : 's'}\n\nRemoved: ${out.removed.join(', ')}${kept.length ? `\nKept, named by another record: ${kept.map(k => k.task).join(', ')}` : ''}\n`;
-  write('rm', '-q', '--', ...paths);
-  try { write('commit', '-q', '-m', message); } catch (e) {
-    spawnSync('git', ['--literal-pathspecs', '-C', repo, 'reset', '-q', '--', ...paths]);
+  const before = git('rev-parse', 'HEAD').stdout.trim();
+  const restore = (changed = paths) => {
+    spawnSync('git', ['--literal-pathspecs', '-C', repo, 'reset', '-q', before, '--', ...changed]);
     spawnSync('git', ['--literal-pathspecs', '-C', repo, 'checkout', '--', ...paths]);
-    throw e;
-  }
+  };
+  write('rm', '-q', '--', ...paths);
+  // v2.8.0 review: `--only` commits the named paths alone, whatever else is staged; a hook can still stage into that commit, so
+  // its changed paths are checked to be exactly the removals. If not, the branch goes back to `before` and the records return,
+  // and the work tree keeps whatever the hook wrote.
+  try { write('commit', '-q', '--only', '-m', message, '--', ...paths); } catch (e) { restore(); throw e; }
   out.commit = git('rev-parse', 'HEAD').stdout.trim();
+  const diff = git('diff-tree', '-r', '-z', '--no-renames', '--no-commit-id', '--name-status', out.commit).stdout ?? '';
+  const parts = diff.split('\0').filter(Boolean), changed = parts.filter((_, i) => i % 2), deleted = parts.filter((x, i) => !(i % 2) && x === 'D').length;
+  const parent = git('rev-parse', `${out.commit}^`).stdout?.trim();
+  if (parent !== before || deleted !== paths.length || changed.length !== paths.length || changed.some(p => !paths.includes(p))) {
+    if (parent === before) { write('reset', '-q', '--soft', before); restore([...new Set([...changed, ...paths])]); }
+    throw new WfError(`the commit ${out.commit.slice(0, 12)} changed ${changed.join(', ') || 'nothing'}, not only the removed records (a commit hook?)${parent === before ? '; it was undone, and the work tree kept as it was' : `; its parent is not ${before.slice(0, 12)}, so it was left for you to undo`}`);
+  }
   return out;
 }

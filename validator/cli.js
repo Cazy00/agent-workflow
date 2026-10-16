@@ -41,7 +41,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
-  prune --milestone M-0001 [--dry-run]: one commit on the current branch removing the Done task records of an Accepted or Released milestone, except those another record names
+  prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
@@ -313,7 +313,7 @@ async function main() {
   if (cmd === 'prune') {
     if (!/^M-\d{4}$/.test(o.milestone ?? '')) throw new WfError('prune needs --milestone M-0001');
     if (o.baseline || o.candidate || o.head) throw new WfError('prune reads the working tree and commits to the current branch: it takes no --baseline or --candidate');
-    console.log(JSON.stringify(prune({ repo, rd, all: loadAll(dirSource(repo), rd), milestone: o.milestone, dryRun: o.dryRun === true }), null, 2));
+    console.log(JSON.stringify(prune({ repo, rd, all: loadAll(dirSource(repo), rd), milestone: o.milestone, dryRun: o.dryRun === true, trustedBranch: config.trusted_branch ?? 'main' }), null, 2));
     return 0;
   }
   let trust = null, baseTrust = null;

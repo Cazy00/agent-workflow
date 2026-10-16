@@ -93,6 +93,25 @@ function validateReviewConfig(r) {
   if (r.deep_paths !== undefined && (!Array.isArray(r.deep_paths) || r.deep_paths.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('review.deep_paths must be an array of glob strings');
 }
 
+// MAINT-0020 P4: a model and an effort for each role (procedures/execute.md). M-0005 ran 46 of 51 helpers at the session's xhigh
+// and every role on the coordinator's model. A model is the harness's own alias or ID, passed as given; null leaves it to the
+// session. An effort is one of EFFORTS, null for the session's own, or one per review level.
+export const ROLES = ['lead', 'implementer', 'paperwork', 'walker'];
+export const LEVELS = ['light', 'standard', 'deep'];
+const MODEL = /^[\w.@/:[\]-]{1,80}$/;
+function validateRolesConfig(r) {
+  only(r, ROLES, 'roles');
+  for (const [role, v] of Object.entries(r)) {
+    only(v, ['model', 'effort'], `roles.${role}`);
+    if (v.model != null && (typeof v.model !== 'string' || !MODEL.test(v.model))) throw new Error(`roles.${role}.model must be a plain model name, or null for the session's own`);
+    const e = v.effort;
+    if (plainObject(e)) {
+      only(e, LEVELS, `roles.${role}.effort`);
+      if (LEVELS.some(l => !EFFORTS.includes(e[l]))) throw new Error(`roles.${role}.effort by review level needs ${LEVELS.join(', ')}, each one of ${EFFORTS.join(', ')}`);
+    } else if (e != null && !EFFORTS.includes(e)) throw new Error(`roles.${role}.effort must be one of ${EFFORTS.join(', ')}, or null for the session's own`);
+  }
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
@@ -117,6 +136,7 @@ export function loadConfig(source) {
       if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone or plan, where the agent merges its own pull requests`);
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
+    if (config.roles !== undefined) validateRolesConfig(config.roles);
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
     // access or tool it names is there (for example ssh to the staging host). No gate runs them.
     if (config.preflight !== undefined && (!Array.isArray(config.preflight) || config.preflight.some(c => !plainObject(c) || typeof c.name !== 'string' || !c.name.trim() || typeof c.run !== 'string' || !c.run.trim() || Object.keys(c).some(k => !['name', 'run', 'why'].includes(k))))) throw new Error('preflight entries need a name and a run command (and optionally why)');

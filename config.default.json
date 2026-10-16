@@ -79,5 +79,11 @@
       "evidence/**"
     ]
   },
+  "roles": {
+    "lead": { "model": "sonnet", "effort": "low" },
+    "implementer": { "model": null, "effort": { "light": "medium", "standard": "high", "deep": "xhigh" } },
+    "paperwork": { "model": "haiku", "effort": "low" },
+    "walker": { "model": "sonnet", "effort": "medium" }
+  },
   "repository": ""
 }

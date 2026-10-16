@@ -5,7 +5,7 @@ Before requesting owner acceptance, complete implementer verification, independe
 Then, in order:
 1. The milestone review of the whole milestone diff (`review.md`).
 2. The owner's trial environment, prepared with demo data so every trial step works as written.
-3. The trial walk, once the milestone review is back and its fixes are merged: a walk before them is walked again. Run it in the background and carry on meanwhile. Give the `trial-walker` agent, or a fresh context with browser automation, the trial steps, how to start the app with demo data, and the profile's languages and screen sizes, on a local build of the candidate. Fix what it finds, or correct the steps, and walk again, rerunning only the steps whose code or wording changed with the walker's kept scripts, until every step passes. Post its screenshots on the acceptance pull request.
+3. The trial walk, once the milestone review is back and its fixes are merged: a walk before them is walked again. Run it in the background and carry on meanwhile. Give the `trial-walker` agent (launched with `roles.walker`'s model and effort), or a fresh context with browser automation, the trial steps, how to start the app with demo data, and the profile's languages and screen sizes, on a local build of the candidate. Fix what it finds, or correct the steps, and walk again, rerunning only the steps whose code or wording changed with the walker's kept scripts, until every step passes. Post its screenshots on the acceptance pull request.
 
 A project without a user interface says so instead. An unavailable walk is a blocker.
 

@@ -21,6 +21,7 @@ import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext } from './lib/next.js';
 import { renderLeadBrief } from './lib/lead-brief.js';
+import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
@@ -478,7 +479,7 @@ async function main() {
     // MAINT-0018: an outcome that is not verified-complete reads no task evidence, so a session that ends on an acceptance
     // or planning pull request needs no task to name.
     if (!o.record) throw new WfError('--record is required');
-    result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins() });
+    result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config) });
   }
   else {
     const task = taskId();
@@ -505,7 +506,7 @@ async function main() {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
         if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins() });
+        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config), level: reviewLevel(record, config.review?.deep_paths).level ?? 'standard' });
       }
     }
   }

@@ -5,8 +5,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WAIT_CEILING_SECONDS, waitForCommit, waitForPullRequest } from '../lib/wait.js';
+import os from 'node:os';
+import { dirSource, loadConfig } from '../lib/index.js';
+import { DEFAULT_ROLES } from '../lib/roles.js';
 import { fakeExecutable } from './helpers.js';
-import { cli, project } from './helpers/maint-0018.js';
+import { cli, project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0020: what M-0005 of mateen-systems (14–16 October 2026) cost on v2.7.0, and the cuts v2.8.0 makes. Later slices of
 // the release append their tests here.
@@ -172,3 +175,132 @@ test('MAINT-0020 P13: friction starts empty in the lead\'s skeleton and the temp
   // The skeleton as the brief printed it is refused for its friction (and for the fields the lead has yet to write).
   assert.match(session({ ...skeleton, summary: 'T-0001 delivered', candidate: head, evidence: progress.evidence, next_action: 'next task' }).out.errors.join(' | '), /session requires friction/);
 });
+
+// P4. M-0005 ran 46 of 51 helpers at the session's xhigh effort and every role on the coordinator's model; execute.md said effort
+// follows the review level and no brief printed it.
+const configIn = (t, edit) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-roles-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const base = JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8'));
+  fs.mkdirSync(path.join(dir, 'docs/workflow'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs/workflow/config.json'), JSON.stringify(edit(base)));
+  return () => loadConfig(dirSource(dir));
+};
+const leadBrief = (p, ...edits) => {
+  for (const edit of edits) p.edit(taskPath, edit);
+  const sha = edits.length ? p.commit('the task\'s review') : p.baseline;
+  const r = spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', p.repo, '--baseline', sha], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  return r.stdout;
+};
+const reviewIs = text => x => x.replace(/^review: .*$/m, `review: ${text}`);
+
+test('MAINT-0020 P4: the config names a model and an effort for the four roles, and refuses any other role or effort', t => {
+  assert.deepEqual(configIn(t, c => c)().roles, DEFAULT_ROLES, 'config.default.json and the defaults of a project without roles are one');
+  const execute = fs.readFileSync(path.join(root, 'procedures/execute.md'), 'utf8');
+  const { light, standard, deep } = DEFAULT_ROLES.implementer.effort;
+  assert.ok(execute.includes(`light \`${light}\`, standard \`${standard}\`, deep \`${deep}\``), 'execute.md states the effort for each level the defaults give');
+  const roles = { lead: { model: 'opus[1m]', effort: 'max' }, implementer: { model: null, effort: null }, walker: { effort: { light: 'low', standard: 'medium', deep: 'high' } } };
+  assert.deepEqual(configIn(t, c => ({ ...c, roles }))().roles, roles, 'a partial config is valid, and null leaves it to the session');
+  for (const [bad, pattern] of [
+    [{ reviewer: { model: 'opus' } }, /roles may contain only lead, implementer, paperwork, walker/],
+    [{ lead: { effort: 'maximum' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
+    [{ lead: { effort: 'minimal' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
+    [{ implementer: { effort: { light: 'low', standard: 'high' } } }, /roles\.implementer\.effort by review level needs light, standard, deep/],
+    [{ implementer: { effort: { light: 'low', standard: 'high', deep: 'ultra' } } }, /roles\.implementer\.effort by review level needs/],
+    [{ implementer: { effort: { light: 'low', standard: 'high', deep: 'max', trivial: 'low' } } }, /roles\.implementer\.effort may contain only light, standard, deep/],
+    [{ paperwork: { model: 'haiku 5' } }, /roles\.paperwork\.model must be a plain model name/],
+    [{ paperwork: { model: 5 } }, /roles\.paperwork\.model must be a plain model name/],
+    [{ walker: { tool: 'x' } }, /roles\.walker may contain only model, effort/],
+    [['lead'], /roles may contain only/],
+  ]) assert.throws(configIn(t, c => ({ ...c, roles: bad })), pattern, JSON.stringify(bad));
+});
+
+test('MAINT-0020 P4: the lead\'s brief prints the model and effort for the lead, the implementer by review level, and the paperwork helper', t => {
+  const p = project(t);
+  const settings = text => text.match(/Launch with these settings[\s\S]*?\n\n/)[0];
+  const fresh = leadBrief(p); // "independent context required" names no level, and the scope reaches no deep path
+  assert.match(settings(fresh), /- you, the lead \(the coordinator launches you so\): model sonnet, effort low\n/);
+  assert.match(settings(fresh), /- the paperwork helper: model haiku, effort low\n/);
+  assert.match(settings(fresh), /- the implementer and each fix round: model inherit, effort high \(review level standard, not read: its review field names no level \(light, standard or deep\) and its scope reaches no review\.deep_paths; standard is the default\)\n/);
+  for (const [text, level, effort] of [['light: copy and styling', 'light', 'medium'], ['standard', 'standard', 'high'], ['deep: money paths', 'deep', 'xhigh'], ['Deep', 'deep', 'xhigh']]) {
+    assert.match(settings(leadBrief(p, reviewIs(text))), new RegExp(`- the implementer and each fix round: model inherit, effort ${effort} \\(review level ${level}: the task's review field starts with ${level}\\)\n`), text);
+  }
+  // 'deeper' is not a level; the deep-paths rule the brief prints reads the task's scope instead.
+  const deepPaths = project(t, { configEdit: c => ({ ...c, review: { deep_paths: ['src/**'] } }) });
+  assert.match(settings(leadBrief(deepPaths, reviewIs('deeper than it looks'))), /effort xhigh \(review level deep: its scope reaches review\.deep_paths \(src\)\)/);
+  assert.match(settings(leadBrief(deepPaths, reviewIs('light'))), /effort medium \(review level light:/, 'a named level wins over the paths');
+  // The project's own roles replace the defaults a field at a time.
+  const own = project(t, { configEdit: c => ({ ...c, roles: { lead: { effort: 'high' }, implementer: { model: 'opus', effort: { light: 'low', standard: 'medium', deep: 'high' } }, paperwork: { model: null } } }) });
+  const mine = settings(leadBrief(own, reviewIs('deep')));
+  assert.match(mine, /the lead[^\n]*: model sonnet, effort high\n/);
+  assert.match(mine, /implementer and each fix round: model opus, effort high \(review level deep/);
+  assert.match(mine, /paperwork helper: model inherit, effort low\n/);
+});
+
+test('MAINT-0020 P4: wf session notes a recorded model or effort that differs from the config, and refuses a malformed models', t => {
+  const p = project(t);
+  const head = p.git('rev-parse', 'HEAD');
+  const base = { outcome: 'progress', workflow: { version: 'v2.6.0', revision: 'a'.repeat(40) }, summary: 'T-0001 delivered', evidence: ['https://github.com/fixture/project/pull/1'], next_action: 'next task', friction: 'none' };
+  const session = (models, extra = []) => { const file = path.join(p.temp, 'session.json'); fs.writeFileSync(file, JSON.stringify({ ...base, models })); return p.run(['session', '--baseline', p.baseline, '--candidate', head, '--record', file, ...extra]); };
+  const same = session({ lead: { model: 'claude-sonnet-5-5', effort: 'low' }, paperwork: { model: 'HAIKU', effort: 'low' }, implementer: { model: 'opus', effort: 'high' }, reviewer: { model: 'gpt-6.1-sol', effort: 'max' } });
+  assert.equal(same.status, 0, same.stdout + same.stderr);
+  assert.equal(same.out.notes, undefined, 'an alias matches its ID, an inherit role has no model to differ from, and a role the config does not name is not compared');
+  const differ = session({ lead: { model: 'claude-opus-5-5', effort: 'xhigh' }, paperwork: { model: 'sonnet' } });
+  assert.equal(differ.status, 0, 'a note, not an error');
+  assert.deepEqual(differ.out.notes, ['lead ran on claude-opus-5-5; roles.lead.model says sonnet', 'lead ran at effort xhigh; roles.lead.effort says low', 'paperwork ran on sonnet; roles.paperwork.model says haiku']);
+  // The implementer's effort depends on the task's level; without a task any level's effort is the config's.
+  assert.equal(session({ implementer: { effort: 'xhigh' } }).out.notes, undefined);
+  assert.deepEqual(session({ implementer: { effort: 'max' } }).out.notes, ['implementer ran at effort max; roles.implementer.effort says medium or high or xhigh']);
+  const withTask = session({ implementer: { effort: 'xhigh' } }, ['--task', 'T-0001']);
+  assert.deepEqual(withTask.out.notes, ['implementer ran at effort xhigh; roles.implementer.effort says high for a standard task'], withTask.stdout);
+  for (const bad of ['sonnet', ['lead'], { lead: 'sonnet' }, { lead: { model: 5 } }]) {
+    const r = session(bad);
+    assert.equal(r.status, 1, JSON.stringify(bad));
+    assert.match(r.out.errors.join(' | '), /session models is an object of role: \{ model, effort \}/);
+  }
+  assert.equal(JSON.parse(leadBrief(p).match(/```json\n([\s\S]*?)\n```/)[1]).models.implementer.effort, '', 'the skeleton leaves what was launched for the lead to write');
+});
+
+// P5(a). In M-0005 Codex ran out at the milestone review, after 14 runs in 22 hours.
+test('MAINT-0020 P5(a): wf next prints the second-model budget of each live milestone: two runs per deep task and one for the milestone', t => {
+  const withSecondModel = { review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } } };
+  const p = project(t, { configEdit: c => ({ ...c, ...withSecondModel }) });
+  const task = fs.readFileSync(path.join(p.repo, taskPath), 'utf8');
+  p.edit(taskPath, reviewIs('deep: money'));
+  p.write('docs/workflow/tasks/T-0002.md', reviewIs('Deep (permissions)')(task.replaceAll('T-0001', 'T-0002')));
+  p.write('docs/workflow/tasks/T-0003.md', reviewIs('standard')(task.replaceAll('T-0001', 'T-0003')));
+  p.write('docs/workflow/tasks/T-0004.md', reviewIs('deeper than it looks')(task.replaceAll('T-0001', 'T-0004')));
+  const sha = p.commit('two deep tasks, a standard one and one that only starts with deep');
+  const next = () => spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', sha], { encoding: 'utf8' });
+  const r = next();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const line = 'M-0001: second-model budget: 5 runs (two per deep task, one for the milestone review); keep one for the milestone review';
+  assert.ok(r.stdout.split('\n').includes(line), r.stdout);
+  assert.deepEqual(p.run(['next', '--baseline', sha]).out.second_model_budget, [{ milestone: 'M-0001', deep_tasks: 2, runs: 5 }]);
+  // No deep task leaves the milestone's own run; no second model configured leaves no budget to keep.
+  p.edit(taskPath, reviewIs('light')); p.edit('docs/workflow/tasks/T-0002.md', reviewIs('light'));
+  p.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), review: { second_model: null } }));
+  const none = p.commit('no second model');
+  assert.deepEqual(p.run(['next', '--baseline', none]).out.second_model_budget, []);
+  assert.doesNotMatch(spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', none], { encoding: 'utf8' }).stdout, /second-model budget/);
+  p.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), ...withSecondModel }));
+  assert.match(spawnSync(process.execPath, [cli, 'next', '--repo', p.repo, '--baseline', p.commit('a second model again')], { encoding: 'utf8' }).stdout, /M-0001: second-model budget: 1 run \(two per deep task/);
+});
+
+// P5(b) and (c), P12. R-0067 re-reviewed a merge that `wf ci` would have carried; the first milestone-review run died with a
+// restarted session; helpers wrote 24 loops of their own and waited past the five-minute cache.
+test('MAINT-0020 P5(b), P12: the lead\'s brief says to run wf ci after a merge of the trusted branch, and how to wait', t => {
+  const brief = leadBrief(project(t));
+  assert.match(brief, /After merging the trusted branch into the task branch, run `wf ci` first and review only what it says does not carry over\./);
+  assert.match(brief, /- wf wait --pr N {2}\(returns within 270 s; pending, exit 4, means run it again; --merged waits for the merge\)\n/);
+  assert.match(brief, /- wf wait --commit SHA {2}\(the same for the trusted branch's checks on a commit\)\n/);
+  assert.match(brief, /No command waits longer than four and a half minutes, within the five-minute prompt cache: a test run longer than about four minutes starts in the background and is checked every four minutes\. Never wait in a loop of your own: use `wf wait`; tell each helper this\./);
+  assert.doesNotMatch(brief, /until its checks finish/, 'the wait that returned only when done is gone');
+  // Manual mode has no pull-request commands, so no `wf wait`; the rule against loops of the agent's own still stands.
+  const manual = leadBrief(project(t, { configEdit: c => ({ ...c, approval: { ...c.approval, label: 'manual', mechanism: 'manual', checkpoint: undefined } }), baselineEdit: q => q.edit('docs/workflow/profile.md', x => x.replace('approval_label: owner-merge', 'approval_label: manual')) }));
+  assert.match(manual, /No command waits longer than four and a half minutes[^\n]*Never wait in a loop of your own; tell each helper this\./);
+  assert.doesNotMatch(manual, /wf wait/);
+  assert.match(fs.readFileSync(path.join(root, 'procedures/review.md'), 'utf8'), /launched detached from the agent's process, its output to a file \(`setsid` or `nohup`\), so a restart of the session does not kill it/);
+});
+

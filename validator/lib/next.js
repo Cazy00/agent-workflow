@@ -160,12 +160,20 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   }
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'inbox')) add({ kind: 'triage', item: w.item, do: 'Triage the inbox', why: w.detail, read: [w.item, PROCEDURE.triage] });
 
+  // MAINT-0020 P5(a): the second model's runs a milestone can spend (review.md): two per deep task, one for the milestone review,
+  // which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. Only the budget is printed, not the runs
+  // used: the pull-request data (`gh pr list`, readPullRequests) holds the open pull requests with no description or comments,
+  // and a milestone's finished tasks are on merged ones, so the runs used are not in what `wf next` is given.
+  const secondModel = config.review?.second_model ? milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => {
+    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === m.id && /^deep\b/i.test(String(r.data.review ?? '').trim())).length;
+    return { milestone: m.id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
+  }) : [];
   const owner = status.waiting.filter(w => w.owner !== 'agent').map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
     ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease), next_ids: nextIds([baseline, candidate], rd),
-    next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held,
+    next, also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
 }
@@ -187,6 +195,7 @@ export function renderNext(n) {
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
+  if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`));
   if (n.next_ids) lines.push('', `Next free IDs here: ${Object.values(n.next_ids).join(', ')}; check the open pull requests too (wf status --pull-requests). Reviews are numbered on the pull requests.`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;

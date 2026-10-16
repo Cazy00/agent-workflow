@@ -368,16 +368,22 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // v2.8.0 review C3: a milestone's acceptance lists the accepted findings of its task records (lib/acceptance-evidence.js),
     // and P11 lets a blocking one wait for it there, so a change that drops an entry, or a Done task record, of a milestone not
     // yet Accepted or Released is the owner's merge, even records-only. `wf prune` removes only an accepted milestone's records.
-    const dropped = [], removedDone = [];
-    for (const { data: d } of baselineRecords.tasks.values()) {
+    // v2.8.0 fix review: judged by the trusted branch's record, never the candidate's, which the change writes: removing a Done
+    // task's `milestone`, or setting it back to Draft, passed, and the next change then dropped its findings or record unseen. So
+    // any change to a record Done there is the owner's, and an entry moved off its milestone counts as dropped. A task in no
+    // milestone goes at once (execute.md); a task's own Done commit changes a record not yet Done there.
+    const dropped = [], removedDone = [], changedDone = [];
+    for (const { path: p, data: d } of baselineRecords.tasks.values()) {
       if (!d?.id || !d.milestone || ACCEPTED.includes(baselineRecords.milestones.get(d.milestone)?.data?.status)) continue;
       const now = candidateRecords.tasks.get(d.id)?.data;
-      if (!now && d.status === 'Done') removedDone.push(d.id);
-      const gone = list(d.accepted_findings).filter(e => !list(now?.accepted_findings).includes(e));
+      if (d.status === 'Done' && !candidate.exists(p)) removedDone.push(d.id);
+      else if (d.status === 'Done' && candidate.read(p) !== baseline.read(p)) changedDone.push(d.id);
+      const gone = list(d.accepted_findings).filter(e => now?.milestone !== d.milestone || !list(now.accepted_findings).includes(e));
       if (gone.length) dropped.push(`${d.id} (${gone.join(', ')})`);
     }
     if (dropped.length) ownerReasons.push(`it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${dropped.join(', ')}`);
     if (removedDone.length) ownerReasons.push(`it removes Done task records of a milestone not yet accepted, which its acceptance reads: ${removedDone.join(', ')}`);
+    if (changedDone.length) ownerReasons.push(`it changes Done task records of a milestone not yet accepted, which its acceptance reads: ${changedDone.join(', ')}`);
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;

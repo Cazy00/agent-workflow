@@ -799,6 +799,37 @@ test('v2.8.0 review C3: a change that drops an accepted finding or a Done task r
   assert.deepEqual(ci(p.commit('records: one more accepted finding')), ['agent', []]);
 });
 
+test('v2.8.0 fix review: a task record Done on the trusted branch, of a milestone not yet accepted, is judged there: any change to it is the owner\'s merge', t => {
+  // The bypass: one change removed `milestone` (or set the record back to Draft) as the agent's merge; the next, judged by the
+  // record it then found, dropped the finding or the record unseen.
+  const p = project(t);
+  const t2 = 'docs/workflow/tasks/T-0002.md', t3 = 'docs/workflow/tasks/T-0003.md';
+  taskLike(p, 'T-0002', 'src/b', x => doneAs(x).replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1]'));
+  taskLike(p, 'T-0003', 'src/c', x => doneAs(x).replace('milestone: M-0001\n', '')); // in no milestone
+  p.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0002/N1]'));
+  const base = p.commit('records: T-0002 Done with an owed finding, T-0003 Done in no milestone, T-0001 Ready with one');
+  const ci = (head, args = [], options = {}) => { const r = p.run(['ci', '--baseline', base, '--candidate', head, ...args], options); assert.equal(r.status, 0, r.stdout + r.stderr); return [r.out.merge, r.out.owner_reasons]; };
+  const change = (message, fn) => { p.git('checkout', '-q', '--detach', base); fn(); return ci(p.commit(message)); };
+  const changes = id => `it changes Done task records of a milestone not yet accepted, which its acceptance reads: ${id}`;
+  const drops = what => `it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${what}`;
+  assert.deepEqual(change('records: T-0002 leaves M-0001', () => p.edit(t2, x => x.replace('milestone: M-0001\n', ''))), ['owner', [drops('T-0002 (R-0001/F1)'), changes('T-0002')]]);
+  assert.deepEqual(change('records: T-0002 back to Draft', () => p.edit(t2, x => x.replace('status: Done', 'status: Draft'))), ['owner', [changes('T-0002')]]);
+  assert.deepEqual(change('records: T-0002 rewords its finding', () => p.edit(t2, x => x.replace('[R-0001/F1]', '[R-0001/F2]'))), ['owner', [drops('T-0002 (R-0001/F1)'), changes('T-0002')]]);
+  assert.deepEqual(change('records: T-0002 gains a line', () => p.edit(t2, x => `${x}Note.\n`)), ['owner', [changes('T-0002')]]);
+  // A task not yet Done that moves off its milestone takes its entries with it.
+  assert.deepEqual(change('records: T-0001 leaves M-0001', () => p.edit(taskPath, x => x.replace('milestone: M-0001\n', 'milestone: M-0002\n'))), ['owner', [drops('T-0001 (R-0002/N1)')]]);
+  // A Done task in no milestone goes at once (execute.md), changed or removed.
+  assert.deepEqual(change('records: T-0003 edited', () => p.edit(t3, x => `${x}Note.\n`)), ['agent', []]);
+  assert.deepEqual(change('records: T-0003 removed', () => p.git('rm', '-q', t3)), ['agent', []]);
+  // A task's own pull request writes its Done record (wf done): the record is not Done on the trusted branch yet.
+  p.git('checkout', '-q', '--detach', base);
+  p.write('src/a.js', 'export const result = 1;\n');
+  const work = p.commit('T-0001: the work');
+  assert.equal(p.run(['done', '--task', 'T-0001', '--implemented', work]).status, 0);
+  const own = p.commit('T-0001: Done');
+  assert.deepEqual(ci(own, ['--task', 'T-0001'], { evidence: evidence(own) }), ['agent', []]);
+});
+
 test('v2.8.0 review C1: wf next starts the planned Drafts of an authorised milestone whose readiness passes, claimed on their branches', t => {
   const p = project(t);
   const draft = x => x.replace('status: Ready', 'status: Draft');

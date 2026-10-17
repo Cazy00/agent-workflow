@@ -110,7 +110,7 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
 export const REVIEW_LEVELS = ['none', 'light', 'standard', 'deep'];
 const BLOCKING = /^(?:blocking|critical|high)$/i;
 export const isBlocking = f => BLOCKING.test(String(f?.severity ?? '').trim());
-export function reviewLevelErrors({ review, deep = [], secondModel = null }) {
+export function reviewLevelErrors({ review, deep = [], secondModel = null, command = false }) {
   if (!isObject(review)) return [];
   const errors = [];
   if (review.level !== undefined && !REVIEW_LEVELS.includes(review.level)) errors.push(`review level must be one of ${REVIEW_LEVELS.join(', ')}`);
@@ -121,6 +121,28 @@ export function reviewLevelErrors({ review, deep = [], secondModel = null }) {
   // next model (review.md, MAINT-0021), never the usage the owner keeps for the one last check of everything built.
   const final = secondModel?.final_model;
   if (final && final !== secondModel.model && typeof review.model === 'string' && review.model.trim() === final) errors.push(`a task's review is never by ${final}, review.second_model's final_model, which the owner keeps for the milestone review, even as a fallback: it is by ${secondModel.model}, or, where that cannot run, by another vendor's next model, and review.fallback says why`);
-  else if (deep.length && review.level === 'deep' && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model${final ? `; its final_model, ${final}, is for the milestone review only` : ''}), or says in review.fallback why it could not be`);
+  // v2.10.0 review R4: with review.reviewer_command the command picks the deep reviewer, so second_model.model is not required.
+  else if (!command && deep.length && review.level === 'deep' && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model${final ? `; its final_model, ${final}, is for the milestone review only` : ''}), or says in review.fallback why it could not be`);
   return errors;
+}
+
+// MAINT-0021 (v2.10.0 review R2): the review of an earlier revision stands for the fixes after it (procedures/review.md *How
+// many*): review.fixes_after names the tests that failed without each blocking fix, and after a blocking finding at deep one
+// fix check of this candidate (review.fix_check) is required. Returns why it does not stand, or null. `isAncestor` and
+// `carries` come from ci.js, which holds the Git sources.
+export function fixedAfterError({ review, candidate, from, isAncestor, carries }) {
+  if (!isObject(review) || !isObject(review.fixes_after)) return null;
+  if (!/^[0-9a-f]{40,64}$/.test(from ?? '') || !isAncestor(from)) return `${String(from).slice(0, 12)} is not an earlier revision of this candidate`;
+  const tests = review.fixes_after.tests ?? [];
+  if (!Array.isArray(tests) || tests.some(x => typeof x !== 'string' || !x.trim())) return 'review.fixes_after.tests must list the tests that prove the fixes';
+  const blocking = Array.isArray(review.findings) && review.findings.some(isBlocking);
+  if (blocking && !tests.length) return 'a blocking finding was fixed after the review: review.fixes_after.tests names the test that failed without each fix';
+  if (blocking && review.level === 'deep') {
+    const fc = review.fix_check;
+    const named = isObject(fc) && ['reviewer', 'model'].every(k => typeof fc[k] === 'string' && fc[k].trim()) && reference(fc.report);
+    const current = isObject(fc) && (fc.candidate === candidate || (/^[0-9a-f]{40,64}$/.test(fc.candidate ?? '') && carries(fc.candidate)));
+    if (!named || !current) return 'after a blocking finding at deep, the fixes need review.fix_check of this candidate (candidate, reviewer, model, an https report)';
+    if (typeof fc.vendor === 'string' && typeof review.implementer_vendor === 'string' && fc.vendor.trim().toLowerCase() === review.implementer_vendor.trim().toLowerCase()) return 'the fix check\'s vendor must differ from the implementer\'s';
+  }
+  return null;
 }

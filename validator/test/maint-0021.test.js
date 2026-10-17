@@ -103,3 +103,55 @@ test('MAINT-0021: without reviewer_command the briefs and budget are unchanged',
   assert.match(lead.stdout, /codex exec -m m1 -c model_reasoning_effort=high/);
   assert.match(wf(p, 'next', '--baseline', sha).stdout, /M-0001: second-model budget: 3 runs \(two per deep task, one for the milestone review\)/);
 });
+
+// v2.10.0 review (Codex R1): a literal backslash in a file name is no test folder, whatever the normalised path says.
+test('MAINT-0021 review R1: a file name with a backslash is never test-only', t => {
+  const p = project(t);
+  p.write('src/tests\\pricing.js', 'export const price = 1;\n'); const head = p.commit('T-0001: a backslash name');
+  const r = ci(p, head, noReview(head));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.doesNotMatch(r.out.findings.join(' | '), /a test-only change/);
+});
+
+// v2.10.0 review (Codex R4): with reviewer_command the command picks the deep reviewer; second_model.model is not required.
+test('MAINT-0021 review R4: with reviewer_command a deep review need not name second_model.model', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { ...command, deep_paths: ['src/**'] } }) });
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
+  const e = evidence(head); e.review.level = 'deep'; e.review.model = 'gpt-6.1-sol';
+  const r = ci(p, head, e);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+// v2.10.0 review (Codex R2): the review of an earlier revision stands for its fixes, as procedures/review.md *How many* says.
+const fixed = (t, configEdit = c => c) => {
+  const p = project(t, { configEdit });
+  p.write('src/a.js', 'export const result = 1;\n'); const reviewed = p.commit('T-0001: the work');
+  p.write('src/a.js', 'export const result = 2;\n'); p.write('src/a.test.js', 'test("F1", () => {});\n'); const head = p.commit('T-0001: fix F1, with its test');
+  const e = (review = {}) => { const x = evidence(head); x.review = { ...x.review, context: { ...x.review.context, candidate: reviewed }, findings: [{ id: 'F1', severity: 'blocking', status: 'resolved', resolution: 'fixed in the head commit', exposure: 'a wrong total for every customer' }], ...review }; return x; };
+  return { p, reviewed, head, e, run: x => ci(p, head, x) };
+};
+
+test('MAINT-0021 review R2: a light or standard review stands for its fixes when a test proves each blocking fix', t => {
+  const f = fixed(t);
+  const ok = f.run(f.e({ level: 'light', fixes_after: { tests: ['src/a.test.js: F1'] } }));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.out.findings.join(' | '), /the review of [0-9a-f]{12} stands for the fixes after it/);
+  const none = f.run(f.e({ level: 'standard' }));
+  assert.equal(none.status, 1); assert.match(none.out.findings.join(' | '), /does not carry over/);
+  const untested = f.run(f.e({ level: 'standard', fixes_after: { tests: [] } }));
+  assert.equal(untested.status, 1); assert.match(untested.out.findings.join(' | '), /fixes_after\.tests names the test that failed without each fix/);
+  const notes = f.e({ level: 'standard', fixes_after: { tests: [] } }); notes.review.findings[0].severity = 'should fix';
+  assert.equal(f.run(notes).status, 0, 'should-fix fixes need no test');
+});
+
+test('MAINT-0021 review R2: after a blocking finding at deep the fixes need one fix check of this candidate', t => {
+  const f = fixed(t, c => ({ ...c, review: { deep_paths: ['src/**'] } }));
+  const base = { level: 'deep', fixes_after: { tests: ['src/a.test.js: F1'] } };
+  const missing = f.run(f.e(base));
+  assert.equal(missing.status, 1); assert.match(missing.out.findings.join(' | '), /review\.fix_check of this candidate/);
+  const check = { candidate: f.head, reviewer: 'fix-checker', model: 'deepseek-v4-pro', report: 'https://github.com/fixture/project/pull/1#issuecomment-3' };
+  const ok = f.run(f.e({ ...base, fix_check: check }));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const stale = f.run(f.e({ ...base, fix_check: { ...check, candidate: f.reviewed } }));
+  assert.equal(stale.status, 1);
+});

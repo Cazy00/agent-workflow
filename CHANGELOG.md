@@ -10,15 +10,15 @@ MAINT-0021: review what needs it, once, by another vendor (`docs/proposals/MAINT
   - There is no fallback to the implementer's own tool, in the procedure, the briefs or `wf doctor`: the next model of another vendor, or the review is missing and the gate stops.
   - The evidence may name `review.vendor` and `review.implementer_vendor`, and `wf ci` refuses them equal.
 - **One review, on the final code.**
-  - Light and standard changes get nothing after the fixes; each blocking fix comes with a test that failed first.
-  - Deep changes and the milestone get one fix check, only after a blocking finding, covering only the findings and the fix diff (fixed, half-fixed or fix broke).
+  - Light and standard changes get nothing after the fixes; each blocking fix comes with a test that failed first. The evidence keeps the earlier review and lists those tests in `review.fixes_after.tests`, and `wf ci` lets that review stand for the fixes.
+  - Deep changes and the milestone get one fix check, only after a blocking finding, covering only the findings and the fix diff (fixed, half-fixed or fix broke); for a deep task it is recorded as `review.fix_check` of the candidate.
   - There is no round three.
 - **`review.reviewer_command`** (optional) names one command for every level, with `{role}` (`cheap`, `standard`, `strong`, `fixcheck`, `milestone`) and `{level}` filled in.
   - `wf brief --lead` and `--acceptance` print it in place of the second model's launch.
   - `wf next` prints a review budget: one run per light or standard task, two per deep task, none for a test-only task, and two for the milestone.
   - Without it, `review.second_model` works as before.
 - **Severity** (blocking, should fix, note) is defined in the procedure and the reviewer templates. Notes never start a round. A review reports at most ten findings, and "no findings" is a valid answer.
-- **Reviews:** deep, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) with a Gemini 4 Argon shadow review; the PR lists the findings and fixes.
+- **Reviews:** deep, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) with a Gemini 4 Argon shadow review. Codex found two blocking problems: a backslash in a file name passed as a test path, and fixes after a light or standard review could never merge. It also raised three should-fix items: manual mode, `second_model` still required beside a command, and a sentence still asking semantic review of every test change. All five are fixed, each with a test; the PR lists them and the fix check.
 
 Words: `SCHEMA.md` 9,107 → 9,272, `review.md` 1,509 → 1,821, `POLICY.md` 6,160 → 6,172, `templates/review.md` 253 → 336, `independent-reviewer.md` 772 → 870.
 

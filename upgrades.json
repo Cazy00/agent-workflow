@@ -128,6 +128,7 @@
       "Every review level is by another vendor's model; there is no fallback to the implementer's own tool. Add review.vendor and review.implementer_vendor to the delivery evidence; wf ci refuses them equal.",
       "Optional: set review.reviewer_command (one line with {role}, optionally {level}) to review every level through one command; wf brief prints it, and wf next prints the review budget. Without it, review.second_model works as before.",
       ".claude/agents/independent-reviewer.md is refreshed where unchanged: the three severities, at most ten findings, and the fix-check mode. A customised copy: merge it by hand.",
+      "When the code changes after a review, keep that review in the delivery evidence and add review.fixes_after.tests (the tests that failed without each blocking fix); after a blocking finding at deep, add review.fix_check of the candidate.",
       "An older pin refuses review.reviewer_command and the review level none."
     ]
   }

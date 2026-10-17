@@ -85,15 +85,17 @@ function validateClientConfig(c) {
 
 // MAINT-0016: the project's review policy (procedures/review.md). An optional reviewer from another model family, used for
 // deep reviews and the milestone review at no more than max_effort, and the paths whose changes always need a deep review.
+// MAINT-0020 (the owner, 17 October 2026): final_model and final_effort, at most max_effort, for the milestone review only (roles.js).
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PLAIN = /^[\w.@/:-]{1,80}$/;
 function validateReviewConfig(r) {
   only(r, ['second_model', 'deep_paths'], 'review');
   const m = r.second_model;
   if (m != null) {
-    only(m, ['tool', 'model', 'max_effort'], 'review.second_model');
-    for (const k of ['tool', 'model']) if (typeof m[k] !== 'string' || !PLAIN.test(m[k])) throw new Error(`review.second_model.${k} must be a plain name`);
-    if (m.max_effort !== undefined && !EFFORTS.includes(m.max_effort)) throw new Error(`review.second_model.max_effort must be one of ${EFFORTS.join(', ')}`);
+    only(m, ['tool', 'model', 'max_effort', 'final_model', 'final_effort'], 'review.second_model');
+    for (const k of ['tool', 'model', 'final_model']) if ((k !== 'final_model' || m[k] !== undefined) && (typeof m[k] !== 'string' || !PLAIN.test(m[k]))) throw new Error(`review.second_model.${k} must be a plain name`);
+    for (const k of ['max_effort', 'final_effort']) if (m[k] !== undefined && !EFFORTS.includes(m[k])) throw new Error(`review.second_model.${k} must be one of ${EFFORTS.join(', ')}`);
+    if (m.final_effort !== undefined && m.max_effort !== undefined && EFFORTS.indexOf(m.final_effort) > EFFORTS.indexOf(m.max_effort)) throw new Error(`review.second_model.final_effort ${m.final_effort} is above max_effort ${m.max_effort}`);
   }
   if (r.deep_paths !== undefined && (!Array.isArray(r.deep_paths) || r.deep_paths.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('review.deep_paths must be an array of glob strings');
 }
@@ -101,7 +103,7 @@ function validateReviewConfig(r) {
 // MAINT-0020 P4: a model and an effort for each role (procedures/execute.md). M-0005 ran 46 of 51 helpers at the session's xhigh
 // and every role on the coordinator's model. A model is the harness's own alias or ID, passed as given; null leaves it to the
 // session. An effort is one of EFFORTS, null for the session's own, or one per review level.
-export const ROLES = ['lead', 'implementer', 'paperwork', 'walker'];
+export const ROLES = ['lead', 'implementer', 'paperwork', 'walker', 'acceptance'];
 export const LEVELS = ['light', 'standard', 'deep'];
 const MODEL = /^[\w.@/:[\]-]{1,80}$/;
 function validateRolesConfig(r) {
@@ -114,6 +116,23 @@ function validateRolesConfig(r) {
       only(e, LEVELS, `roles.${role}.effort`);
       if (LEVELS.some(l => !EFFORTS.includes(e[l]))) throw new Error(`roles.${role}.effort by review level needs ${LEVELS.join(', ')}, each one of ${EFFORTS.join(', ')}`);
     } else if (e != null && !EFFORTS.includes(e)) throw new Error(`roles.${role}.effort must be one of ${EFFORTS.join(', ')}, or null for the session's own`);
+  }
+}
+
+// MAINT-0020 P14: optional list prices for `wf usage`'s estimate, per million tokens, keyed by a model ID prefix. Without them it
+// prints tokens only (templates/pilot.md: no dollar conversion without account evidence). No gate reads them.
+export const PRICE_KEYS = ['input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'];
+// v2.9.0 final review S1: optional `folders`, the names (or globs of a name, such as mateen-review-*) of the folders besides the
+// repository and its worktrees where this project's second-model runs work, so wf usage counts those runs as its own.
+function validateUsageConfig(u) {
+  only(u, ['prices', 'folders'], 'usage');
+  if (u.folders !== undefined && (!Array.isArray(u.folders) || !u.folders.length || u.folders.some(f => typeof f !== 'string' || !f.trim() || f !== f.trim() || /[/\\\0]/.test(f) || ['.', '..'].includes(f) || /^[*?]+$/.test(f)))) throw new Error('usage.folders lists folder names, or globs of one (mateen-review-*), where this project\'s second-model runs work besides the repository and its worktrees: no slash, and not only wildcards');
+  if (u.prices === undefined) return;
+  if (!plainObject(u.prices) || !Object.keys(u.prices).length) throw new Error('usage.prices maps a model ID prefix to its prices per million tokens');
+  for (const [model, p] of Object.entries(u.prices)) {
+    if (!MODEL.test(model)) throw new Error(`usage.prices key "${model}" must be a plain model ID prefix`);
+    only(p, PRICE_KEYS, `usage.prices.${model}`);
+    for (const k of PRICE_KEYS) if (typeof p[k] !== 'number' || !Number.isFinite(p[k]) || p[k] < 0) throw new Error(`usage.prices.${model}.${k} must be a price per million tokens: a number, 0 or more`);
   }
 }
 
@@ -142,6 +161,7 @@ export function loadConfig(source) {
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
     if (config.roles !== undefined) validateRolesConfig(config.roles);
+    if (config.usage !== undefined) validateUsageConfig(config.usage);
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
     // access or tool it names is there (for example ssh to the staging host). No gate runs them.
     if (config.preflight !== undefined && (!Array.isArray(config.preflight) || config.preflight.some(c => !plainObject(c) || typeof c.name !== 'string' || !c.name.trim() || typeof c.run !== 'string' || !c.run.trim() || Object.keys(c).some(k => !['name', 'run', 'why'].includes(k))))) throw new Error('preflight entries need a name and a run command (and optionally why)');

@@ -73,6 +73,20 @@ export function nextIds(sources, rd) {
   return ids;
 }
 
+// MAINT-0020 P5(a): the second model's runs a milestone can spend (review.md): two per deep task, one for the milestone review,
+// which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. A task is deep as the lead's brief reads
+// it (roles.js reviewLevel: its review field, else its scope against review.deep_paths; v2.8.0 review). `wf next` prints only the
+// budget: the runs already used are left to v2.9.0's `wf usage` (P14), since the pull-request data `wf next` is given holds
+// only the open pull requests, without their descriptions or comments. `wf usage --milestone` counts them against this.
+export function secondModelBudget(config, records, milestoneIds) {
+  if (!config.review?.second_model) return [];
+  const deepPaths = config.review?.deep_paths ?? [];
+  return milestoneIds.map(id => {
+    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === id && reviewLevel(r.data, deepPaths).level === 'deep').length;
+    return { milestone: id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
+  });
+}
+
 export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -134,8 +148,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const ownersDecision = t => (t.reasons ?? []).length > 0 && (t.reasons ?? []).every(r => /^(decision|deferred input) D-\d{4}/.test(r));
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
-  // to start (Ready, or a Draft claimed on its own branch) or continues there.
-  const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
+  // to start (Ready, or a Draft claimed on its own branch) or continues there. v2.9.0 review S4-6: the brief reads the task from
+  // the selected candidate, as the other commands do (a task claimed on its own branch is there, not on the baseline).
+  const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}${chosen}  (the task lead's brief)`];
   // MAINT-0020 P10: a claim does not wait for the trusted branch's checks on its baseline (P2(b)); the lead waits with this.
   const baselineWait = kind => kind === 'start' && !manual ? [`wf wait --commit ${base}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`] : [];
   const taskAction = (t, kind, verb, why) => {
@@ -200,21 +215,14 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   drafts.forEach((m, i) => add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)', ...(i === 0 ? prune : [])] }));
   for (const d of status.open_for_agent) add({ kind: 'decide', item: d.id, do: `Resolve ${d.id} within delegated authority, or propose it to its owner`, why: d.question ?? 'open decision', read: [`${rd}/decisions/${d.id}.md`, PROCEDURE.plan] });
   for (const m of milestones.filter(m => ['Authorised', 'Active'].includes(m.status) && m.tasks.length && m.tasks.every(t => t.status === 'Done') && !m.plan.uncovered.length && !m.plan.missing.length)) {
-    add({ kind: 'present', item: m.id, do: `Prepare ${m.id} for the owner's acceptance`, why: 'every planned task is Done', read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.present, ...(manual ? [PROCEDURE.round] : [])] });
+    // MAINT-0020 P3: its closing work goes to fresh helpers with this brief; M-0005's coordinator did it itself and reached 708 K.
+    // v2.9.0 review S3-4: with the selected candidate, which may be where its tasks are Done.
+    add({ kind: 'present', item: m.id, do: `Prepare ${m.id} for the owner's acceptance`, why: 'every planned task is Done', read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.present, ...(manual ? [PROCEDURE.round] : [])], run: [`wf brief --acceptance --milestone ${m.id} --baseline ${base}${chosen}  (the brief for the fresh helpers that close it; post their results)`] });
   }
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'inbox')) add({ kind: 'triage', item: w.item, do: 'Triage the inbox', why: w.detail, read: [w.item, PROCEDURE.triage] });
   if (!drafts.length && stale.length) add({ kind: 'prune', item: stale.map(m => m.id).join(', '), do: `Remove the Done task records of ${stale.map(m => m.id).join(', ')}`, why: 'the milestone is accepted; its Done task records are read by every wf next and readiness run', read: [PROCEDURE.pr], run: prune });
 
-  // MAINT-0020 P5(a): the second model's runs a milestone can spend (review.md): two per deep task, one for the milestone review,
-  // which the deep tasks must leave. F5: M-0005's Codex ran out at the milestone review. A task is deep as the lead's brief reads
-  // it (roles.js reviewLevel: its review field, else its scope against review.deep_paths; v2.8.0 review). Only the budget is
-  // printed: the runs already used are left to v2.9.0's `wf usage` (P14), since the pull-request data `wf next` is given holds
-  // only the open pull requests, without their descriptions or comments.
-  const deepPaths = config.review?.deep_paths ?? [];
-  const secondModel = config.review?.second_model ? milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => {
-    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === m.id && reviewLevel(r.data, deepPaths).level === 'deep').length;
-    return { milestone: m.id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
-  }) : [];
+  const secondModel = secondModelBudget(config, records, milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => m.id));
   const owner = status.waiting.filter(w => w.owner !== 'agent').map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };

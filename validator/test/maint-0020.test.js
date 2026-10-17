@@ -205,7 +205,7 @@ test('MAINT-0020 P4: the config names a model and an effort for the four roles, 
   const roles = { lead: { model: 'opus[1m]', effort: 'max' }, implementer: { model: null, effort: null }, walker: { effort: { light: 'low', standard: 'medium', deep: 'high' } } };
   assert.deepEqual(configIn(t, c => ({ ...c, roles }))().roles, roles, 'a partial config is valid, and null leaves it to the session');
   for (const [bad, pattern] of [
-    [{ reviewer: { model: 'opus' } }, /roles may contain only lead, implementer, paperwork, walker/],
+    [{ reviewer: { model: 'opus' } }, /roles may contain only lead, implementer, paperwork, walker, acceptance/],
     [{ lead: { effort: 'maximum' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
     [{ lead: { effort: 'minimal' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
     [{ implementer: { effort: { light: 'low', standard: 'high' } } }, /roles\.implementer\.effort by review level needs light, standard, deep/],
@@ -935,4 +935,55 @@ test('v2.8.0 review: wf prune never commits on the trusted branch, and undoes a 
   refused(hooked, /the commit [0-9a-f]{12} changed docs\/workflow\/tasks\/T-0002\.md, docs\/workflow\/tasks\/T-0005\.md, docs\/workflow\/tasks\/T-0011\.md, extra\.txt, not only the removed records \(a commit hook\?\); it was undone, and the work tree kept as it was/);
   assert.equal(hooked.git('status', '--porcelain'), '?? extra.txt');
   assert.equal(fs.readFileSync(path.join(hooked.repo, 'extra.txt'), 'utf8'), 'from the hook\n');
+});
+
+// The final review of v2.8.0 + v2.9.0 (a fresh Claude reviewer, of ca76ba5).
+test('v2.9.0 final review S3: a Draft found task a merged carry relies on takes its place in found_tasks, so the next carry beyond it is the owner\'s merge', t => {
+  const p = carrying(t, { plan: 'tasks: [T-0001, T-0003]\nfound_tasks: 1\n', records: q => q.edit('docs/workflow/tasks/T-0004.md', x => x.replace('found_from: R-0001/F2', 'found_from: R-0002/F1')) });
+  // Pull request 1: T-0001 carries R-0001/F1 by the Draft T-0002, the agent's merge; it merges, and T-0002 is still a Draft.
+  const first = p.ci([race()]);
+  assert.deepEqual([first.status, first.out.merge, first.out.owner_reasons], [0, 'agent', []], first.stdout + first.stderr);
+  // Pull request 2: T-0003 carries R-0002/F1 by the Draft T-0004. The one place is T-0002's, which the first merge relies on.
+  p.edit('docs/workflow/tasks/T-0003.md', x => x.replace('status: Draft', 'status: Ready').replace('subset: []', 'subset: []\naccepted_findings: [R-0002/F1]'));
+  p.write('src/c/x.js', 'export const x = 1;\n');
+  const second = p.commit('T-0003: the work; R-0002/F1 accepted, T-0004 fixes it');
+  const e = evidence(second); e.tasks = e.review.tasks = ['T-0003'];
+  e.review.findings = [race({ resolution: 'carried by T-0004', carried_by: 'T-0004', paths: ['src/d.js'] })];
+  const r = p.run(['ci', '--baseline', p.head, '--candidate', second, '--task', 'T-0003'], { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([r.out.merge, r.out.owner_reasons], ['owner', ['blocking review findings accepted rather than fixed: F1 (not carried: T-0004 is beyond M-0001\'s found_tasks allowance of 1 (begun: T-0002))']]);
+  // Readiness on the trusted branch counts it so too: T-0004 would be found task 2; the carrier is not counted against itself.
+  const ready = (base, id) => p.run(['readiness', '--baseline', base, '--candidate', base, '--task', id]).out;
+  assert.deepEqual(ready(p.head, 'T-0004').reasons, [`T-0004 would be found task 2 of M-0001, beyond its found_tasks allowance of 1 (begun: T-0002): ${ask}`]);
+  assert.equal(ready(p.head, 'T-0002').outcome, 'Ready');
+  // Before the first merge no record relies on T-0002, a Draft, so it takes no place.
+  assert.equal(ready(p.base, 'T-0004').outcome, 'Ready');
+});
+
+// The final check of v2.8.0 + v2.9.0 (Astra, of 057ca07).
+test('v2.9.0 final check A1: a found task a merged carry relies on stays while its milestone is not accepted: removing it, or changing its milestone or found_from, is the owner\'s merge', t => {
+  // The repro: M-0001 allows one found task; Done T-0001 lists R-0001/F1, carried by the Draft T-0002. Removing T-0002 alone was
+  // the agent's merge, and freed its place in found_tasks for another carry.
+  const p = carrying(t, { plan: 'tasks: [T-0001, T-0003]\nfound_tasks: 1\n' });
+  p.edit(taskPath, doneAs);
+  const trusted = p.commit('T-0001: Done');
+  const t2 = 'docs/workflow/tasks/T-0002.md';
+  const ci = (head, args = [], options = {}) => { const r = p.run(['ci', '--baseline', trusted, '--candidate', head, ...args], options); assert.equal(r.status, 0, r.stdout + r.stderr); return [r.out.merge, r.out.owner_reasons]; };
+  const change = (message, fn) => { p.git('checkout', '-q', '--detach', trusted); fn(); return ci(p.commit(message)); };
+  const carrier = what => `it removes, or changes the milestone or found_from of, found tasks that carry accepted findings of a milestone not yet accepted: ${what}`;
+  assert.deepEqual(change('records: remove T-0002', () => p.git('rm', '-q', t2)), ['owner', [carrier('T-0002 (removed)')]]);
+  assert.deepEqual(change('records: T-0002 fixes another finding', () => p.edit(t2, x => x.replace('found_from: R-0001/F1', 'found_from: R-0001/F9'))), ['owner', [carrier('T-0002 (found_from)')]]);
+  assert.deepEqual(change('records: T-0002 moves to M-0002', () => p.edit(t2, x => x.replace('milestone: M-0001', 'milestone: M-0002'))), ['owner', [carrier('T-0002 (milestone)')]]);
+  // A found Draft no carry relies on still goes as the agent's merge.
+  assert.deepEqual(change('records: remove T-0004', () => p.git('rm', '-q', 'docs/workflow/tasks/T-0004.md')), ['agent', []]);
+  // The carrier's own progress stays the agent's: its claim, its work and its Done commit.
+  p.git('checkout', '-q', '--detach', trusted);
+  p.edit(t2, x => x.replace('status: Draft', 'status: Ready'));
+  assert.deepEqual(ci(p.commit('T-0002: claim')), ['agent', []]);
+  p.write('src/b/fix.js', 'export const fixed = true;\n');
+  const work = p.commit('T-0002: the fix');
+  assert.equal(p.run(['done', '--task', 'T-0002', '--implemented', work]).status, 0);
+  const own = p.commit('T-0002: Done');
+  const e = evidence(own); e.tasks = e.review.tasks = ['T-0002'];
+  assert.deepEqual(ci(own, ['--task', 'T-0002'], { evidence: e }), ['agent', []]);
 });

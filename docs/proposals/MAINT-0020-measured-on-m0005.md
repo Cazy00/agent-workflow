@@ -152,3 +152,5 @@ Asked in the session that wrote § 9, after #53 merged; each answer was the reco
 - **P2(b), yes (17 October 2026),** asked when v2.8.0's review found that POLICY's task readiness required the baseline result before a task begins: a task may begin with the trusted branch's run on its baseline pending, its result recorded before verification.
 - **P5(a)'s count of runs used** moves to v2.9.0 with P14: `wf next` does not read merged pull requests (v2.8.0's review X2). v2.8.0 prints the budget.
 - **Built:** the v2.8.0 part, as `CHANGELOG.md` v2.8.0 describes it; v2.9.0 follows.
+- **The owner's rule for the second model (17 October 2026):** small reviews and reviews alongside development use `gpt-6.1-sol` at high effort; only the one last check of everything built may use Astra, to conserve its usage. Built in v2.9.0 as `review.second_model.final_model`.
+- **Built:** the v2.9.0 part, as `CHANGELOG.md` v2.9.0 describes it.

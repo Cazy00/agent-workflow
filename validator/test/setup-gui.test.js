@@ -255,6 +255,32 @@ test('MAINT-0016: settings save auto-merge, approvals at acceptance, the second 
   assert.throws(() => saveSettings({ project: dir, form: form({ dir, approval, review: { second_model: { tool: 'codex', model: 'bad model' } } }) }), /plain name/);
 });
 
+// v2.9.0 review S3-2: with only the highest effort shown, lowering it below a hidden final_effort failed every save, and the page
+// had no field to fix it. The milestone review's model and effort now have fields; the page's own review line is run here.
+test('v2.9.0 review S3-2: the page shows the milestone review\'s model and effort, so an effort above a lowered highest can be fixed there', t => {
+  const page = read(root, 'adapters/setup-page.html');
+  assert.match(page, /<input type="text" name="second_model_final" value="\$\{esc\(s\.review\.second_model\?\.final_model \?\? ''\)\}"/);
+  assert.match(page, /<select name="second_model_final_effort">\$\{\[\.\.\.new Set\(\['', 'low', 'medium', 'high', 'xhigh', s\.review\.second_model\?\.final_effort \?\? ''\]\)\]/);
+  const line = page.match(/^\s*(review: \{.*\}),$/m)[1];
+  // What the page sends from its fields, through JSON as fetch sends it.
+  const sends = (fields, saved) => JSON.parse(JSON.stringify(new Function('s', 'ticked', 'value', `return { ${line} };`)({ review: { deep_paths: [], second_model: saved } }, () => true, n => fields[n] ?? '')));
+  const dir = project(t);
+  const approval = { label: 'owner-merge', checkpoint: 'milestone', approver: 'owner', agent_identity: '' };
+  const save = (fields, saved = loadConfig(dirSource(dir)).review?.second_model ?? null) => saveSettings({ project: dir, form: form({ dir, approval, ...sends(fields, saved) }) });
+  const fields = { second_model_name: 'gpt-6.1-sol', second_model_effort: 'xhigh', second_model_final: ' gpt-6.1-astra ', second_model_final_effort: 'xhigh' };
+  save(fields);
+  assert.deepEqual(loadConfig(dirSource(dir)).review.second_model, { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'xhigh', final_model: 'gpt-6.1-astra', final_effort: 'xhigh' });
+  // The owner lowers the highest effort: the check refuses the milestone review's, writes nothing, and the field to lower it is there.
+  const before = read(dir, 'docs/workflow/config.json');
+  assert.throws(() => save({ ...fields, second_model_effort: 'high' }), /review\.second_model\.final_effort xhigh is above max_effort high/);
+  assert.equal(read(dir, 'docs/workflow/config.json'), before);
+  save({ ...fields, second_model_effort: 'high', second_model_final_effort: 'high' });
+  assert.deepEqual(loadConfig(dirSource(dir)).review.second_model, { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high', final_model: 'gpt-6.1-astra', final_effort: 'high' });
+  // Emptied, they are left out: the milestone review is then by model, at a deep review's effort.
+  save({ ...fields, second_model_effort: 'high', second_model_final: ' ', second_model_final_effort: '' });
+  assert.deepEqual(loadConfig(dirSource(dir)).review.second_model, { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' });
+});
+
 test('MAINT-0016: setup finds whether Codex is installed and signed in', () => {
   const run = (cmd, args) => (args[0] === '--version' ? { status: 0, stdout: 'codex-cli 1.4.0\n' } : { status: 1, stdout: '' });
   assert.deepEqual(detectReviewers({ run }), { codex: { installed: true, version: 'codex-cli 1.4.0', signed_in: false } });

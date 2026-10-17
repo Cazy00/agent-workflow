@@ -22,10 +22,15 @@ export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?
 // branches meet at integrate, where the first is on the trusted branch; `wf next` lists no more to start than the places left
 // (next.js, v2.8.0 fix review). A milestone with no `tasks:` field has no found task
 // (null); an explicit `tasks: []` makes every task naming it one. Shared with P11's carrier (ci.js, review C2).
+// v2.9.0 final review S3: a Draft takes its place too once a merged carry relies on it, when any task record's accepted_findings
+// names the finding its found_from names; counting begun ones only let each pull request carry a finding by another Draft.
+// v2.9.0 final check A1: ci.js keeps such a carrier, relied on by the same test, while its milestone is not accepted.
+export const reliedOn = records => new Set(records.flatMap(r => [...r.tasks.values()].flatMap(x => list(x.data?.accepted_findings))));
 export function foundRoom({ milestone, id, records }) {
   if (milestone?.tasks == null || list(milestone.tasks).includes(id)) return null;
-  const planned = list(milestone.tasks);
-  const begun = [...new Set(records.flatMap(r => [...r.tasks.values()].map(x => x.data)).filter(d => /^T-\d{4}$/.test(d?.id ?? '') && d.id !== id && d.milestone === milestone.id && !planned.includes(d.id) && d.found_from && d.status !== 'Draft').map(d => d.id))].sort();
+  const planned = list(milestone.tasks), all = records.flatMap(r => [...r.tasks.values()].map(x => x.data));
+  const relied = reliedOn(records);
+  const begun = [...new Set(all.filter(d => /^T-\d{4}$/.test(d?.id ?? '') && d.id !== id && d.milestone === milestone.id && !planned.includes(d.id) && d.found_from && (d.status !== 'Draft' || relied.has(d.found_from))).map(d => d.id))].sort();
   const allowed = Number(milestone.found_tasks ?? 0) || 0;
   return { allowed, begun, within: begun.length < allowed };
 }

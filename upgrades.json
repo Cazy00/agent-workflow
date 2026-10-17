@@ -109,5 +109,17 @@
       "Delivery evidence refuses a malformed paths, carried_by or merge_increases_exposure on any finding. A change that edits or removes a task record Done on the trusted branch, in a milestone not yet accepted, is now the owner's merge: put such corrections in the acceptance pull request, and remove Done records after acceptance with wf prune.",
       "New helpers, which grant nothing: wf prune --milestone M (records-only removal of an accepted milestone's Done records), the startable set and the second-model budget in wf next, and wf doctor's check that the session started in the repository root."
     ]
+  },
+  "v2.9.0": {
+    "notes": [
+      ".claude/agents/trial-walker.md is refreshed where unchanged: the walker walks the address and build the owner is given, never a development server, with its own demo accounts, records the first load, and tries each scenario from its outcome alone first. A customised copy keeps starting the app itself: merge it by hand.",
+      "Acceptance evidence from this pin: the walkthrough needs trial_environment { address, build }, the address and build it walked, walk_data (separate or reset), first_load_seconds and unguided; a stuck scenario or a first load over 5 s is listed in deferred; the milestone review names its model or a fallback. Finish an acceptance in progress before moving to this pin: its walk would need redoing.",
+      "Edit the profile's trial-walk line by hand to name the address and build the owner is given (templates/profile.md); the upgrade does not touch the profile.",
+      "Optional review.second_model.final_model and final_effort serve the milestone review only (the owner's rule of 17 October: Astra for the one final check); the settings page sets them. Pass the second model's effort explicitly: Codex defaults to low.",
+      "roles.acceptance (sonnet, medium) sets the acceptance helper; a project that tuned roles.paperwork for it sets roles.acceptance. An older pin refuses the key.",
+      "wf usage counts a second-model run as the project's by its folder only (the repository, a worktree, or a usage.folders entry). A project whose reviews run in clones outside the repository (for example ~/dev/.review-T-NNNN) adds those folders to usage.folders; a worktree removed before wf usage runs is not remembered, so name review folders there too.",
+      "An older pin refuses review.second_model.final_model, final_effort and usage.folders, and a final_effort above max_effort fails the config.",
+      "New helpers, which grant nothing: wf usage (from a full installation such as scripts/wf, not bin/wf), wf brief --acceptance --milestone M, and slices with launch names in wf brief --lead."
+    ]
   }
 }

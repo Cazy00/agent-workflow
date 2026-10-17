@@ -4,20 +4,29 @@
   "candidate": "<full commit hash of the code being accepted; only records may change after it>",
   "review": {
     "reviewer": "<the milestone reviewer: tool and context, e.g. codex exec in a fresh context>",
-    "model": "<its model, e.g. the configured review.second_model>",
+    "model": "<its model: review.second_model's final_model, else its model>",
+    "fallback": "<only when the milestone review could not use review.second_model: why; otherwise leave this field out>",
     "revision": "<full commit hash it reviewed (the whole milestone diff)>",
     "report": "<https link to the posted review report (templates/review.md)>"
   },
   "walkthrough": {
     "revision": "<full commit hash walked>",
-    "environment": "<how the app ran: local build, demo data seed, browser>",
+    "trial_environment": { "address": "<the address the owner is given, as the acceptance package names it: a URL, or how a desktop or local production build is opened>", "build": "<the build the owner is given: its version, tag or commit>" },
+    "address": "<the address walked: trial_environment's, never a development server>",
+    "build": "<the build walked: trial_environment's>",
+    "environment": "<anything else about where it ran: the browser and its version, the automation>",
+    "walk_data": "<separate (the walker's own demo accounts and business, a fresh one for each unguided pass) | reset (one shared dataset, reset or reseeded after the last walk, before the owner is told)>",
+    "first_load_seconds": "<the first page's load time the walker measured, a number; over 5 is a finding, listed in deferred>",
     "walker": "<the trial-walker agent and its context identifier>",
     "languages": ["<each language walked>"],
     "viewports": ["<each screen size walked, e.g. 1366x900, 390x844>"],
+    "unguided": [
+      { "scenario": "<each scenario, tried before the steps>", "outcome": "<its outcome sentence, all the walker read>", "result": "<reached | stuck, from a fresh sign-in>", "note": "<where it got stuck: a finding to fix, or to list in deferred; optional when reached>" }
+    ],
     "steps": [
-      { "step": "<the trial step, as the owner will read it>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
+      { "step": "<the trial step, as the owner will read it>", "scenario": "<the scenario it walks, which unguided then lists>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
     ]
   },
-  "deferred": ["<each item wf ci deferred to this acceptance, and every accepted_findings entry of the milestone's tasks, in plain words>"],
+  "deferred": ["<each item wf ci deferred to this acceptance, every accepted_findings entry of the milestone's tasks, each scenario still stuck (by its name) and a first load over 5 s (naming the first load), in plain words>"],
   "tests_changed": ["<each acceptance test changed in this milestone>"]
 }

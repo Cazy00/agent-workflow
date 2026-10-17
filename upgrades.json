@@ -121,5 +121,14 @@
       "An older pin refuses review.second_model.final_model, final_effort and usage.folders, and a final_effort above max_effort fails the config.",
       "New helpers, which grant nothing: wf usage (from a full installation such as scripts/wf, not bin/wf), wf brief --acceptance --milestone M, and slices with launch names in wf brief --lead."
     ]
+  },
+  "v2.10.0": {
+    "notes": [
+      "A test-only change (every production path a test path, none an acceptance test, none deep) needs no review: leave review out of the delivery evidence or set review.level to none. Verification and integration evidence still apply.",
+      "Every review level is by another vendor's model; there is no fallback to the implementer's own tool. Add review.vendor and review.implementer_vendor to the delivery evidence; wf ci refuses them equal.",
+      "Optional: set review.reviewer_command (one line with {role}, optionally {level}) to review every level through one command; wf brief prints it, and wf next prints the review budget. Without it, review.second_model works as before.",
+      ".claude/agents/independent-reviewer.md is refreshed where unchanged: the three severities, at most ten findings, and the fix-check mode. A customised copy: merge it by hand.",
+      "An older pin refuses review.reviewer_command and the review level none."
+    ]
   }
 }

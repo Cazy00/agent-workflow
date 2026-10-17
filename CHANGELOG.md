@@ -2,6 +2,28 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.10.0
+
+MAINT-0021: review what needs it, once, by another vendor (`docs/proposals/MAINT-0021-review-policy.md`; the owner's review policy of 18 October 2026).
+- **A test-only change needs no review** (level `none`). It applies when every production path is in a `test/`, `tests/` or `__tests__/` folder or is a test file, none is an acceptance test and none is deep. `wf ci` notes it, and still needs verification and integration evidence. `none` on any other change is refused.
+- **Every level is reviewed by another vendor's model.**
+  - There is no fallback to the implementer's own tool, in the procedure, the briefs or `wf doctor`: the next model of another vendor, or the review is missing and the gate stops.
+  - The evidence may name `review.vendor` and `review.implementer_vendor`, and `wf ci` refuses them equal.
+- **One review, on the final code.**
+  - Light and standard changes get nothing after the fixes; each blocking fix comes with a test that failed first.
+  - Deep changes and the milestone get one fix check, only after a blocking finding, covering only the findings and the fix diff (fixed, half-fixed or fix broke).
+  - There is no round three.
+- **`review.reviewer_command`** (optional) names one command for every level, with `{role}` (`cheap`, `standard`, `strong`, `fixcheck`, `milestone`) and `{level}` filled in.
+  - `wf brief --lead` and `--acceptance` print it in place of the second model's launch.
+  - `wf next` prints a review budget: one run per light or standard task, two per deep task, none for a test-only task, and two for the milestone.
+  - Without it, `review.second_model` works as before.
+- **Severity** (blocking, should fix, note) is defined in the procedure and the reviewer templates. Notes never start a round. A review reports at most ten findings, and "no findings" is a valid answer.
+- **Reviews:** deep, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) with a Gemini 4 Argon shadow review; the PR lists the findings and fixes.
+
+Words: `SCHEMA.md` 9,107 → 9,272, `review.md` 1,509 → 1,821, `POLICY.md` 6,160 → 6,172, `templates/review.md` 253 → 336, `independent-reviewer.md` 772 → 870.
+
+Moving a project to this pin: `upgrades.json`. Nothing changes until the project sets `review.reviewer_command`; a test-only change stops needing a review at once.
+
 ## v2.9.0
 
 MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (record §§ 1–9), as the owner chose it (§ 10), with the owner's rule of 17 October for the second model.

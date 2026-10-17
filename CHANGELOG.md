@@ -7,7 +7,7 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (record §§ 1–9), as the owner chose it (§ 10), with the owner's rule of 17 October for the second model.
 - **`wf usage`** (P14). It reads the harnesses' own records, Claude Code's session transcript with its helpers and Codex's session logs. It prints, per agent, task and role: calls, cache reads, cache writes, writes after a wait with the call before each, peak context, model and effort.
   - With `usage.prices`, it adds an estimated list-price cost.
-  - With `--milestone`, it adds the second-model runs used against the budget, warning before the milestone review's reserve. This is P5(a)'s count, moved from v2.8.0. A run counts as this project's only by its folder (the repository, a worktree, or a `usage.folders` name) or a prompt naming the repository; a run that names only a task ID, as other projects' can, is reported apart.
+  - With `--milestone`, it adds the second-model runs used against the budget, warning before the milestone review's reserve. This is P5(a)'s count, moved from v2.8.0. A run counts as this project's by its folder: the repository, a worktree, or a `usage.folders` name. A run elsewhere is not counted, whatever its prompt names; the prompt is read only for a run with no folder.
   - `--outcome` prints a session outcome's `usage` block.
   - One reader per harness sits behind one contract (`usage-reader@1`, aggregated as `usage@1`). Launch names (`T-NNNN implementer`, `M-NNNN walker`, …) attribute each helper.
   - Run on M-0005's session, it reproduces the record's figures: 1,177 M cache reads, and 19.4 M helper writes after a wait. M-0005's two studies were made by hand.
@@ -21,10 +21,10 @@ MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (rec
   - The comparison is a consistency check. What keeps the walk off a development server is the profile's trial line and the walker's instructions.
   - A local production build counts when that is what the owner is given. No environment for the owner is a blocker for the plan's question.
   - In M-0005 the owner, starting cold, found what the guided walk could not (T-0037), on a development server that took 30 s to open.
-- **Smaller:** `wf next`'s `wf brief --lead` and `--acceptance` keep the selected `--candidate`. A Draft found task takes a place in the allowance once a merged carry relies on it, so P11's carriers stay within `found_tasks`.
+- **Smaller:** `wf next`'s `wf brief --lead` and `--acceptance` keep the selected `--candidate`. A Draft found task takes a place in the allowance once a merged carry relies on it, so P11's carriers stay within `found_tasks`; removing such a carrier, or changing its `milestone` or `found_from`, is the owner's merge until its milestone is accepted (the final check's A1).
 - **Reviews:** each slice was reviewed as it landed, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) or, out of quota, by a fresh Claude reviewer; FINAL_REVIEW.
 
-Corpus: 42,979 → 44,744 words; `SCHEMA.md` 8,102 → 9,036 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,509, `execute.md` 2,286 → 2,317 `readiness.md` unchanged. MAINT-0020 in all added 2,797 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
+Corpus: 42,979 → 44,815 words; `SCHEMA.md` 8,102 → 9,107 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,509, `execute.md` 2,286 → 2,317 `readiness.md` unchanged. MAINT-0020 in all added 2,868 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
 
 Moving a project to this pin: `upgrades.json`. Finish an acceptance in progress first: its walk would need redoing.
 

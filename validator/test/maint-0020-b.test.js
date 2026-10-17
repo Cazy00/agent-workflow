@@ -559,7 +559,8 @@ test('MAINT-0020 P3: the acceptance brief names its three helpers with their mod
   const { out, sha } = closing(t);
   const [reviewer, acceptance, walker] = [1, 2, 3].map(n => helperLine(out, n));
   assert.ok(reviewer.startsWith('1. `M-0001 reviewer`: the milestone review of the whole milestone diff (procedures/review.md), by the second model (review.second_model, its final_model): model gpt-6.1-astra, effort xhigh: `setsid nohup codex exec -m gpt-6.1-astra -c model_reasoning_effort=xhigh "M-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`.'), reviewer);
-  assert.match(reviewer, /Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review\.fallback says why\.$/);
+  // MAINT-0021: the fallback is another vendor's next model, never the implementer's own tool.
+  assert.match(reviewer, /Where it cannot run, the next reviewer of another vendor \(procedures\/review\.md \*Who reviews\*\), and review\.fallback says why; with none, the review is missing: stop at the gate\.$/);
   assert.equal(acceptance, '2. `M-0001 acceptance`: the owner\'s trial environment with demo data, and the walker\'s own demo accounts and demo business (or tenant), never those the owner will use (a local production build counts when that is what the owner is given: it starts it and keeps it running for the walker; with no environment the owner can be given, the walk is unavailable, a blocker for the plan\'s question from `wf doctor`); and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps. Once the review and the walk are back, a fresh one completes the package and its evidence (templates/acceptance-evidence.json) from their results, fixing or listing for the owner what the walk found (each scenario still stuck, and a slow first load, in `deferred`), with the usage table the `wf usage` command below prints, and resets or reseeds a shared dataset after the last walk, before the owner is told the trial is ready: model sonnet, effort medium (roles.acceptance).');
   assert.equal(walker, '3. `M-0001 walker`: the trial walk on that environment, the address and build the owner will be given, never a development server, in its own demo accounts and business, a fresh one for each unguided pass: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page\'s load time, and over 5 s is a finding to report. Once the review\'s fixes are merged, in the background (procedures/accept-release.md): model opus, effort high (roles.walker).');
   assert.ok(out.includes('The next milestone\'s draft goes to a fresh helper, `M-0002 plan`, following procedures/readiness.md; it returns the draft\'s pull request.'), out);
@@ -584,14 +585,14 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone reviewer falls back
   assert.match(helperLine(closing(t, { second: { ...SECOND, max_effort: 'medium' } }).out, 1), /model gpt-6\.1-sol, effort medium: .*-c model_reasoning_effort=medium /, 'high is capped at max_effort');
   // A tool whose command the brief does not know: one line says the effort must be passed.
   assert.match(helperLine(closing(t, { second: { tool: 'gemini', model: 'gemini-3-pro' } }).out, 1), /model gemini-3-pro, effort high: pass the effort explicitly when you launch gemini: the config names no command for it, and its default effort may be lower\. Where it cannot run/);
-  assert.match(helperLine(closing(t, { second: null, roles: {} }).out, 1), /by a fresh reviewer of your own tool \(no review\.second_model\): model inherit, effort max\.$/);
+  assert.match(helperLine(closing(t, { second: null, roles: {} }).out, 1), /by another vendor's model \(neither review\.reviewer_command nor review\.second_model is set: procedures\/review\.md \*Who reviews\*\), at its highest effort\.$/);
   assert.match(helperLine(closing(t, { second: null, roles: {} }).out, 3), /model sonnet, effort medium \(roles\.walker\)\.$/, 'the default walker');
   // The lead's brief keeps model for a task's deep review, at high, with the effort in the command.
   const lead = sha => spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', sha.p.repo, '--baseline', sha.sha], { encoding: 'utf8' }).stdout;
   const both = closing(t);
-  // v2.9.0 final review S2: its fallback is the lead's own tool, and final_model is named only as the milestone review's.
-  assert.ok(lead(both).split('\n').includes('- a deep review and its fix review, by the second model (review.second_model): model gpt-6.1-sol, effort high: `setsid nohup codex exec -m gpt-6.1-sol -c model_reasoning_effort=high "T-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`. Where it cannot run, a fresh reviewer of your own tool at its highest effort, with a security focus, and review.fallback says why; never gpt-6.1-astra, its final_model, which is the milestone review\'s alone'), lead(both));
-  assert.match(lead(closing(t, { second: SECOND })), /^- a deep review and its fix review, by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: .*, and review\.fallback says why$/m);
+  // v2.9.0 final review S2: final_model is named only as the milestone review's. MAINT-0021: the fallback is another vendor's next model.
+  assert.ok(lead(both).split('\n').includes('- a deep review and its fix review, by the second model (review.second_model): model gpt-6.1-sol, effort high: `setsid nohup codex exec -m gpt-6.1-sol -c model_reasoning_effort=high "T-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`. Where it cannot run, the next reviewer of another vendor (procedures/review.md *Who reviews*), and review.fallback says why; with none, the review is missing: stop at the gate; never gpt-6.1-astra, its final_model, which is the milestone review\'s alone'), lead(both));
+  assert.match(lead(closing(t, { second: SECOND })), /^- a deep review and its fix review, by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: .*, and review\.fallback says why; with none, the review is missing: stop at the gate$/m);
   assert.doesNotMatch(lead(closing(t, { second: null })), /second model/);
   assert.ok(fs.readFileSync(path.join(root, 'procedures/review.md'), 'utf8').includes('By the owner\'s decision of 17 October 2026, a task\'s review uses its `model` at high effort (at most `max_effort`), and only the milestone review, the one last check of everything built, may use `final_model` at `final_effort`'));
 });
@@ -643,7 +644,7 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted 
   assert.match(accept({ model: 'claude-opus-5-5' }).out.findings.join(' | '), /acceptance evidence: the milestone review is by gpt-6\.1-astra or gpt-6\.1-sol \(review\.second_model\), or says in fallback why it could not be/);
   assert.equal(accept({ model: 'claude-opus-5-5', fallback: 'codex refused at its usage limit' }).status, 0);
   assert.match(accept({ model: 'claude-opus-5-5', fallback: ' ' }).out.findings.join(' | '), /the milestone review's fallback must be a non-empty text when given/);
-  // A task's deep review: model, or a fallback by the implementer's own tool; final_model is refused there.
+  // A task's deep review: model, or a fallback by another vendor's next model (MAINT-0021); final_model is refused there.
   const d = project(t, { configEdit: c => ({ ...c, review: { second_model: second, deep_paths: ['src/**'] } }) });
   d.write('src/a.js', 'export const result = 1;\n');
   const head = d.commit('T-0001: the work');
@@ -653,7 +654,7 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted 
   assert.match(other.out.findings.join(' | '), /delivery evidence: a deep review is by gpt-6\.1-sol \(review\.second_model; its final_model, gpt-6\.1-astra, is for the milestone review only\), or says in review\.fallback why it could not be/);
   for (const review of [{ model: 'gpt-6.1-sol' }, { model: 'claude-opus-5-5', fallback: 'gpt-6.1-sol is out of quota here' }]) { const r = deep(review); assert.equal(r.status, 0, `${JSON.stringify(review)}: ${r.stdout}${r.stderr}`); }
   // v2.9.0 final review S2: final_model on a task's review is refused at any level, with a fallback too (it was accepted with one).
-  const never = 'delivery evidence: a task\'s review is never by gpt-6.1-astra, review.second_model\'s final_model, which the owner keeps for the milestone review, even as a fallback: it is by gpt-6.1-sol, or, where that cannot run, by a fresh reviewer of the implementer\'s own tool, and review.fallback says why';
+  const never = 'delivery evidence: a task\'s review is never by gpt-6.1-astra, review.second_model\'s final_model, which the owner keeps for the milestone review, even as a fallback: it is by gpt-6.1-sol, or, where that cannot run, by another vendor\'s next model, and review.fallback says why';
   for (const review of [{ model: 'gpt-6.1-astra' }, { model: ' gpt-6.1-astra ', fallback: 'gpt-6.1-sol is out of quota here' }]) {
     const r = deep(review);
     assert.equal(r.status, 1, JSON.stringify(review));

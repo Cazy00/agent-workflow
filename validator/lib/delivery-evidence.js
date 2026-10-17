@@ -117,10 +117,10 @@ export function reviewLevelErrors({ review, deep = [], secondModel = null }) {
   for (const k of ['model', 'fallback']) if (review[k] !== undefined && (typeof review[k] !== 'string' || !review[k].trim())) errors.push(`review ${k} must be a non-empty text when given`);
   if (deep.length && review.level !== 'deep') errors.push(`it changes paths that need a deep review (review.deep_paths): ${deep.join(', ')}; this review's level is ${review.level ?? 'standard'}`);
   // MAINT-0020 (the owner, 17 October 2026): a task's review stays on `model`; final_model is the milestone review's alone.
-  // v2.9.0 final review S2: at any level and with a fallback too, which accepted it: a task review's fallback is the implementer's
-  // own tool (review.md), never the usage the owner keeps for the one last check of everything built.
+  // v2.9.0 final review S2: at any level and with a fallback too, which accepted it: a task review's fallback is another vendor's
+  // next model (review.md, MAINT-0021), never the usage the owner keeps for the one last check of everything built.
   const final = secondModel?.final_model;
-  if (final && final !== secondModel.model && typeof review.model === 'string' && review.model.trim() === final) errors.push(`a task's review is never by ${final}, review.second_model's final_model, which the owner keeps for the milestone review, even as a fallback: it is by ${secondModel.model}, or, where that cannot run, by a fresh reviewer of the implementer's own tool, and review.fallback says why`);
+  if (final && final !== secondModel.model && typeof review.model === 'string' && review.model.trim() === final) errors.push(`a task's review is never by ${final}, review.second_model's final_model, which the owner keeps for the milestone review, even as a fallback: it is by ${secondModel.model}, or, where that cannot run, by another vendor's next model, and review.fallback says why`);
   else if (deep.length && review.level === 'deep' && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model${final ? `; its final_model, ${final}, is for the milestone review only` : ''}), or says in review.fallback why it could not be`);
   return errors;
 }

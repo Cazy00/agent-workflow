@@ -52,7 +52,8 @@ test('the client page workflow names every job, so none can answer for a project
 
 // The minor findings of MAINT-0016's independent review (M2–M5), closed in v2.4.2.
 test('the review template has a slot for the level, and the carry-over, accepted-findings and setup-page texts say what the checks do', () => {
-  assert.match(read('templates/review.md'), /^Review level \(light, standard or deep; `procedures\/review\.md`\) and why:$/m, 'M2');
+  // MAINT-0021: the slot also names a fix check, and the next line asks for both vendors.
+  assert.match(read('templates/review.md'), /^Review level \(light, standard or deep, or a fix check; `procedures\/review\.md`\) and why:\nImplementer's vendor and reviewer's vendor \(they differ\):$/m, 'M2');
   for (const [name, text] of [['procedures/review.md', read('procedures/review.md')], ['SCHEMA.md', read('SCHEMA.md')]]) assert.match(text, /a planning record, or one the pull request had not touched/, `M3: ${name}`);
   assert.match(read('SCHEMA.md'), /Only the part after `\/` is matched/, 'M5');
   assert.match(read('adapters/setup-page.html'), /Require the trial walk and the milestone review before you accept/, 'M4');

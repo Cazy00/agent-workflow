@@ -64,11 +64,11 @@ ${bullets([
     `you, the lead (the coordinator launches you so): ${setting(roles.lead)}`,
     `the implementer and each fix round: ${setting(roles.implementer, level)} (review level ${level ?? 'standard, not read'}: ${why})`,
     `the paperwork helper: ${setting(roles.paperwork)}`,
-    // v2.9.0 final review S2: the fallback of a task's review is the lead's own tool; final_model is named only as the milestone's.
+    // v2.9.0 final review S2: final_model is named only as the milestone's. MAINT-0021: the fallback is another vendor's next model, never the lead's own tool.
     // MAINT-0021: with review.reviewer_command, every level is reviewed by another vendor's model through that command, with no
     // fallback to the lead's own tool; it replaces the second model's line.
     ...(reviewerCommand(config, level) && level !== 'none' ? [`the task's review (level ${level ?? 'standard'}, procedures/review.md), by another vendor's model: \`${reviewerCommand(config, level)}\`; after a blocking finding at deep, one fix check: \`${reviewerCommand(config, 'fixcheck')}\`. If no reviewer can run, the review is missing: stop at the gate`] : []),
-    ...(second && !reviewerCommand(config, level) ? [`a deep review and its fix review, by the second model (review.second_model): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}. Where it cannot run, a fresh reviewer of your own tool at its highest effort, with a security focus, and review.fallback says why${final && final !== second.model ? `; never ${final}, its final_model, which is the milestone review's alone` : ''}`] : []),
+    ...(second && !reviewerCommand(config, level) ? [`a deep review and its fix review, by the second model (review.second_model): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}. Where it cannot run, the next reviewer of another vendor (procedures/review.md *Who reviews*), and review.fallback says why; with none, the review is missing: stop at the gate${final && final !== second.model ? `; never ${final}, its final_model, which is the milestone review's alone` : ''}`] : []),
   ])}
 
 Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.

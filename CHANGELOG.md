@@ -24,7 +24,7 @@ MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (rec
 - **Smaller:** `wf next`'s `wf brief --lead` and `--acceptance` keep the selected `--candidate`. A Draft found task takes a place in the allowance once a merged carry relies on it, so P11's carriers stay within `found_tasks`.
 - **Reviews:** each slice was reviewed as it landed, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) or, out of quota, by a fresh Claude reviewer; FINAL_REVIEW.
 
-Corpus: 42,979 → 44,511 words; `SCHEMA.md` 8,102 → 8,822 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,494, `execute.md` 2,286 → 2,317, `readiness.md` unchanged. MAINT-0020 in all added 2,564 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
+Corpus: 42,979 → 44,744 words; `SCHEMA.md` 8,102 → 9,036 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,509, `execute.md` 2,286 → 2,317 `readiness.md` unchanged. MAINT-0020 in all added 2,797 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
 
 Moving a project to this pin: `upgrades.json`. Finish an acceptance in progress first: its walk would need redoing.
 

@@ -10,11 +10,15 @@
 //     calls: [{ id, at, model, effort, input, cache_read, cache_write_5m, cache_write_1h, output, after: { tool, description } | null }]
 //       one per model call in order (input is the uncached part; after is the tool call whose result preceded it, null after a
 //       message), or null for a run (a second-model process), which gives instead
+//     cwd (the folder it ran in, a path, or null), prompt_names (those of the names it was given that its first prompt names),
 //     ids: { cwd: [ID], prompt: [ID] } (the T-, M- and R- IDs its folder and first prompt name), model, effort, refused (stopped
 //       at the harness's usage limit), started, total: { input, cache_read, cache_write_5m, cache_write_1h, output } }
-// A reader passes no message text: only launch descriptions and Bash descriptions.
+// A reader is called as read(paths, { since, until, names }), names being the repository's (cli.js). It passes no message text:
+// only launch descriptions and Bash descriptions, and of a run's first prompt the IDs and given names it names.
+import path from 'node:path';
 import { list } from './records.js';
 import { parseLaunchName } from './roles.js';
+import { matchGlob } from './glob.js';
 
 export const READER = 'agent-workflow/usage-reader@1';
 export const SCHEMA = 'agent-workflow/usage@1';
@@ -111,6 +115,7 @@ const group = (agents, key, name, priced) => [...new Set(agents.map(key))].map(k
 // The project's IDs a second-model run can name: its records' tasks and milestones, and the reviews their findings cite; `reviews`
 // maps each such review to the tasks citing it (accepted_findings, found_from), so a run naming only a review reaches a milestone
 // through them (v2.9.0 review S1-2); with --milestone, the milestone's tasks (null without records: every matched run then counts).
+// cli.js adds where the project is: `folders` (the repository and its worktrees), `folder_names` (usage.folders) and `names`.
 export function usageProject(records, milestone = null) {
   if (!records) return { ids: new Set(), tasksOf: null, reviews: new Map() };
   const ids = new Set([...records.tasks.keys(), ...records.milestones.keys()].filter(id => ID.test(id))), reviews = new Map();
@@ -126,18 +131,29 @@ export function usageWindow(readings, since = null, until = null) {
   return { since: since ?? ats[0] ?? null, until: until ?? ats.at(-1) ?? null };
 }
 
+// v2.9.0 final review S1: a run is this project's when it ran in the repository or one of its worktrees, or in or below a folder
+// whose name usage.folders allows, or when its first prompt names the repository. Codex keeps every project's runs in one folder,
+// and IDs alone (T-0001, M-0001) are any project's: another project's runs used this one's budget.
+const inside = (dir, root) => { const rel = path.relative(root, dir); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
+export function projectOf(run, { folders = [], folder_names = [], names = [] } = {}) {
+  const cwd = typeof run.cwd === 'string' && path.isAbsolute(run.cwd) ? path.resolve(run.cwd) : null;
+  if (cwd && (folders.some(f => inside(cwd, path.resolve(f))) || cwd.split(path.sep).filter(Boolean).some(seg => folder_names.some(g => matchGlob(g, seg))))) return 'folder';
+  return (run.prompt_names ?? []).some(n => names.includes(n)) ? 'prompt' : null;
+}
+
 function secondModel(runs, { window, project, milestone, budget, prices }) {
   const inWindow = at => at && (!window.since || time(at) >= time(window.since)) && (!window.until || time(at) <= time(window.until));
   const out = runs.filter(r => inWindow(r.started)).map(r => {
-    // The run's ID: from its folder first, a task before a milestone before a review, else from its first prompt.
+    // The run's ID, once it is this project's: from its folder first, a task before a milestone before a review, else from its
+    // first prompt. A run naming the project's IDs and nothing else of it is another project's (ids_only).
     const pick = ids => { const mine = ids.filter(id => project.ids.has(id)); return mine.find(i => i[0] === 'T') ?? mine.find(i => i[0] === 'M') ?? mine[0] ?? null; };
-    const fromCwd = pick(r.ids?.cwd ?? []), named = fromCwd ?? pick(r.ids?.prompt ?? []);
+    const by = projectOf(r, project), fromCwd = pick(r.ids?.cwd ?? []), id = fromCwd ?? pick(r.ids?.prompt ?? []), named = by ? id : null;
     const price = priceOf(prices, r.model);
-    return { harness: r.harness, id: r.id, started: r.started, model: r.model, effort: r.effort, named, named_in: named ? (fromCwd ? 'cwd' : 'prompt') : null, task: named && named[0] !== 'R' ? named : null, matched: !!named, refused: !!r.refused, ...r.total, cost: prices ? (price ? cents(costOf(price, r.total)) : null) : null };
+    return { harness: r.harness, id: r.id, started: r.started, model: r.model, effort: r.effort, matched_by: by, named, named_in: named ? (fromCwd ? 'cwd' : 'prompt') : null, task: named && named[0] !== 'R' ? named : null, matched: !!by, ids_only: !by && !!id, refused: !!r.refused, ...r.total, cost: prices ? (price ? cents(costOf(price, r.total)) : null) : null };
   });
   const counted = out.filter(r => r.matched && !r.refused);
   const by_task = {};
-  for (const r of counted) by_task[r.named] = (by_task[r.named] ?? 0) + 1;
+  for (const r of counted) if (r.named) by_task[r.named] = (by_task[r.named] ?? 0) + 1;
   let m = null;
   if (milestone) {
     // A run is the milestone's when it names the milestone, one of its tasks, or a review one of those tasks cites.
@@ -147,7 +163,7 @@ function secondModel(runs, { window, project, milestone, budget, prices }) {
     const warning = !budget ? null : used.length >= budget.runs ? `the budget is spent: ${used.length} of ${budget.runs} runs used` : !review && taskRuns + 1 >= budget.runs ? `one more task run would use the milestone review's reserve (${taskRuns} of ${budget.runs - 1} task runs used)` : null;
     m = { id: milestone, budget: budget?.runs ?? null, deep_tasks: budget?.deep_tasks ?? null, used: used.length, task_runs: taskRuns, review_runs: review, refused: mine.length - used.length, warning };
   }
-  return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, by_task, milestone: m };
+  return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, ids_only: out.filter(r => r.ids_only).length, by_task, milestone: m };
 }
 
 export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null, reviews: new Map() }, budget = null, notes = [] }) {
@@ -176,6 +192,8 @@ export function evaluateUsage({ readings, since = null, until = null, task = nul
   if (priced && unpriced) notesOut.push(`${unpriced} call(s) of models usage.prices does not name are left out of the estimate`);
   if (task && !agents.length) notesOut.push(`no agent of ${task} has a call in the window`);
   if (milestone && !budget) notesOut.push(`no second-model budget for ${milestone}: the config here sets no review.second_model, or there is no project config`);
+  if (second.ids_only) notesOut.push(`${second.ids_only} second-model run(s) name this project's IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (${(project.names ?? []).join(', ') || 'no name here'}): counted as other projects', not here`);
+  if (second.runs.length && !(project.folders ?? []).length && !(project.names ?? []).length) notesOut.push('no Git repository and no config repository here: no second-model run can be this project\'s');
   return {
     schema: SCHEMA, window, filter: { task, milestone }, priced, agents, by_role: byRole, by_task: byTask, totals,
     writes_after_wait: { calls: totals.after_wait.calls, tokens: totals.after_wait.tokens, by_tool: tally(w => w.tool, false), by_call: tally(w => `${w.tool}\u0000${w.description}`, true) },
@@ -211,7 +229,7 @@ export function renderUsage(u) {
   lines.push('', `Writes after a wait longer than the cache's lifetime (over 20 K written): ${w.calls} call(s), ${tok(w.tokens)}; helpers ${tok(w.tokens - c.tokens)} in ${w.calls - c.calls}, the coordinator ${tok(c.tokens)} in ${c.calls}.`);
   if (w.calls) lines.push(`  by the tool call before them: ${w.by_tool.map(e => `${e.tool ?? 'a message'} ${tok(e.tokens)}`).join(', ')}`, ...w.by_call.filter(e => e.description).slice(0, 5).map(e => `  ${e.tool} "${e.description}": ${e.calls} call(s), ${tok(e.tokens)}`));
   const s = u.second_model;
-  lines.push('', `Second-model runs in the window: ${s.matched} named this project's IDs${s.refused ? `, ${s.refused} of them refused at the usage limit` : ''}; ${s.unmatched} named none of them.`);
+  lines.push('', `Second-model runs in the window: ${s.matched} of this project (run in its folders, or naming it in their first prompt)${s.refused ? `, ${s.refused} of them refused at the usage limit` : ''}; ${s.unmatched} of other projects${s.ids_only ? `, ${s.ids_only} of them naming this project's IDs` : ''}.`);
   if (Object.keys(s.by_task).length) lines.push(`  run: ${Object.entries(s.by_task).sort().map(([k, n]) => `${k} ${n}`).join(', ')}`);
   if (s.refused) lines.push(`  refused: ${s.runs.filter(r => r.matched && r.refused).map(r => `${r.named} at ${r.started}`).join(', ')}`);
   const m = s.milestone;

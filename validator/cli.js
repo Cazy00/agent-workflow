@@ -236,9 +236,17 @@ async function main() {
     if (o.outcome && !o.task) throw new WfError('usage --outcome needs --task T-0001: the block is that task\'s');
     if (!o['claude-session'] && !o.since) throw new WfError('usage needs --claude-session SESSION.jsonl, or --since ISO to count the second model\'s runs alone');
     // The project's config and records, from the working tree, when there is a project here: prices, IDs and the budget.
-    const here = dirSource(path.resolve(o.repo ?? process.cwd()));
+    const dir = path.resolve(o.repo ?? process.cwd()), here = dirSource(dir);
     const config = here.read('docs/workflow/config.json') == null ? null : loadConfig(here);
     const records = config ? loadAll(here, config.records_dir ?? 'docs/workflow') : null;
+    // v2.9.0 final review S1: where this project is, so a second-model run is its own only when it ran there or its first prompt
+    // names it (lib/usage.js projectOf): the repository and its worktrees (each as Git gives it and as its real path), the folder
+    // names usage.folders allows, and the names config repository and the main worktree's folder give it. Outside Git, no folder.
+    const listed = gitRunner(dir)('worktree', 'list', '--porcelain');
+    const trees = listed.status === 0 ? listed.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9)) : [];
+    const real = p => { try { return fs.realpathSync(p); } catch { return p; } };
+    const repository = typeof config?.repository === 'string' ? config.repository.trim() : '';
+    const where = { folders: [...new Set(trees.flatMap(p => [p, real(p)]))], folder_names: config?.usage?.folders ?? [], names: [...new Set([repository, repository.split('/').pop(), trees.length ? path.basename(trees[0]) : ''].filter(Boolean))] };
     const readers = [['claude-session', 'claude-code.mjs', null], ['codex-dir', 'codex.mjs', path.join(os.homedir(), '.codex', 'sessions')]];
     const readings = [];
     for (const [option, file, fallback] of readers) {
@@ -246,9 +254,9 @@ async function main() {
       if (!paths.length) continue;
       let reader;
       try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation (run it from a full one: the project's scripts/wf, or node validator/cli.js in a workflow checkout; bin/wf extracts only validator/): ${e.message}`); }
-      try { readings.push(reader.read(paths, usageWindow(readings, o.since, o.until))); } catch (e) { throw new WfError(e.message); }
+      try { readings.push(reader.read(paths, { ...usageWindow(readings, o.since, o.until), names: where.names })); } catch (e) { throw new WfError(e.message); }
     }
-    const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: usageProject(records, o.milestone), budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and runs are matched to the IDs the transcripts name'] });
+    const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: { ...usageProject(records, o.milestone), ...where }, budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and this project\'s runs are attributed to the IDs the transcripts name'] });
     if (o.outcome) console.log(JSON.stringify(outcomeUsage(result), null, 2));
     else if (o.json) console.log(JSON.stringify(result, null, 2));
     else process.stdout.write(renderUsage(result));

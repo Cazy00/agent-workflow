@@ -65,14 +65,15 @@ function claudeSession(dir) {
   return path.join(dir, `${id}.jsonl`);
 }
 
-// Codex logs: matched by folder and by prompt, unmatched, refused, and outside the window.
+// Codex logs: this project's by folder and by prompt, another project's, refused, and outside the window. The harness's wrapping
+// names the fixtures' repositories too (repo, fixture/project), which is not the first prompt (v2.9.0 final review S1).
 function codexLogs(dir, runs) {
   for (const [i, r] of runs.entries()) {
     const day = r.started.slice(0, 10).split('-').join('/');
     jsonl(path.join(dir, day, `rollout-${i}.jsonl`), [
       { type: 'session_meta', timestamp: r.started, payload: { id: `run-${i}`, timestamp: r.started, cwd: r.cwd, originator: 'codex_exec' } },
       { type: 'turn_context', payload: { model: 'gpt-6.1-sol', effort: 'high', cwd: r.cwd } },
-      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `# AGENTS.md instructions for ${r.cwd} T-0099` }, { type: 'input_text', text: '<environment_context>T-0098</environment_context>' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `# AGENTS.md instructions for ${r.cwd} T-0099` }, { type: 'input_text', text: '<environment_context>T-0098 of repo, fixture/project</environment_context>' }] } },
       { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `${r.prompt} ${SECRET}` }] } },
       // The same words in what a tool printed are not a refusal.
       { type: 'response_item', payload: { type: 'custom_tool_call_output', output: `2 refused at Codex's usage limit ${SECRET}` } },
@@ -82,13 +83,15 @@ function codexLogs(dir, runs) {
   }
   return dir;
 }
-const RUNS = [
-  { started: at(20), cwd: '/work/.review-T-0007', prompt: 'Review T-0007 against M-0001', tokens: true },
-  { started: at(25), cwd: '/tmp/a', prompt: 'A second look at R-0012', tokens: true },
+const RUNS = repo => [
+  { started: at(20), cwd: path.join(repo, '.review-T-0007'), prompt: 'Review T-0007 against M-0001', tokens: true },
+  { started: at(25), cwd: '/tmp/a', prompt: 'A second look at R-0012 of repo', tokens: true },
   { started: at(26), cwd: '/tmp/b', prompt: 'Review T-0099', tokens: true },
-  { started: at(27), cwd: '/work/.review-T-0008', prompt: 'Review it', refused: true },
-  { started: '2026-10-10T08:00:00.000Z', cwd: '/work/.review-T-0007', prompt: 'an earlier milestone', tokens: true },
-  { started: at(200), cwd: '/work/.review-T-0007', prompt: 'after the window', tokens: true },
+  { started: at(27), cwd: path.join(repo, '.review-T-0008'), prompt: 'Review it', refused: true },
+  // Another project's review of its own T-0007, in its worktree: this project's ID, not its run (v2.9.0 final review S1).
+  { started: at(28), cwd: '/home/someone/dev/other-repo/.claude/worktrees/T-0007-b', prompt: 'Review T-0007 of other-repo', tokens: true },
+  { started: '2026-10-10T08:00:00.000Z', cwd: path.join(repo, '.review-T-0007'), prompt: 'an earlier milestone', tokens: true },
+  { started: at(200), cwd: path.join(repo, '.review-T-0007'), prompt: 'after the window', tokens: true },
 ];
 
 const PRICES = {
@@ -99,12 +102,13 @@ const PRICES = {
 function setup(t, { prices = null } = {}) {
   const dir = tempDir(t), repo = path.join(dir, 'repo');
   fs.mkdirSync(repo);
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
   if (prices) {
     const config = JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8'));
     fs.mkdirSync(path.join(repo, 'docs/workflow'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'docs/workflow/config.json'), JSON.stringify({ ...config, usage: { prices } }));
   }
-  const sessionFile = claudeSession(path.join(dir, 'claude')), codex = codexLogs(path.join(dir, 'codex'), RUNS);
+  const sessionFile = claudeSession(path.join(dir, 'claude')), codex = codexLogs(path.join(dir, 'codex'), RUNS(repo));
   // HOME points into the fixture, so no default path reads the machine's own transcripts.
   const usageRun = (...args) => spawnSync(process.execPath, [cli, 'usage', '--repo', repo, '--claude-session', sessionFile, '--codex-dir', codex, ...args], { encoding: 'utf8', env: { ...process.env, HOME: dir } });
   const json = (...args) => { const r = usageRun('--json', ...args); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
@@ -224,17 +228,19 @@ test('MAINT-0020 P14: with usage.prices, an estimated list-price cost by the lon
   ]) assert.throws(configAt(t, bad), pattern, JSON.stringify(bad));
 });
 
-test('MAINT-0020 P14: Codex runs in the window are matched by their folder or first prompt, unmatched, or refused at the usage limit', t => {
+test('MAINT-0020 P14: Codex runs in the window are this project\'s by their folder or first prompt, another\'s, or refused at the usage limit', t => {
   const { usageRun, json, codex } = setup(t);
-  const s = json().second_model;
+  const u = json(), s = u.second_model;
   assert.deepEqual(s.window, { since: at(0), until: at(160) }, 'the Claude sessions\' span');
-  assert.deepEqual(s.runs.map(r => [r.named, r.named_in, r.task, r.matched, r.refused]), [
-    ['T-0007', 'cwd', 'T-0007', true, false], ['R-0012', 'prompt', null, true, false], [null, null, null, false, false], ['T-0008', 'cwd', 'T-0008', true, true],
-  ], 'the wrapper\'s IDs (AGENTS.md, environment) are not the prompt; a tool output saying "usage limit" is not a refusal');
-  assert.deepEqual([s.matched, s.refused, s.unmatched, s.by_task], [3, 1, 1, { 'T-0007': 1, 'R-0012': 1 }]);
+  assert.deepEqual(s.runs.map(r => [r.matched_by, r.named, r.named_in, r.task, r.matched, r.ids_only, r.refused]), [
+    ['folder', 'T-0007', 'cwd', 'T-0007', true, false, false], ['prompt', 'R-0012', 'prompt', null, true, false, false], [null, null, null, null, false, false, false], ['folder', 'T-0008', 'cwd', 'T-0008', true, false, true],
+    [null, null, null, null, false, true, false],
+  ], 'the wrapper\'s IDs and names (AGENTS.md, environment) are not the prompt; a tool output saying "usage limit" is not a refusal');
+  assert.deepEqual([s.matched, s.refused, s.unmatched, s.ids_only, s.by_task], [3, 1, 2, 1, { 'T-0007': 1, 'R-0012': 1 }]);
   assert.deepEqual(['input', 'cache_read', 'output', 'model', 'effort'].map(k => s.runs[0][k]), [200, 800, 50, 'gpt-6.1-sol', 'high'], 'Codex\'s input_tokens holds the cached ones');
+  assert.ok(u.notes.includes('1 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (repo): counted as other projects\', not here'), u.notes.join(' | '));
   const text = usageRun().stdout;
-  assert.match(text, /Second-model runs in the window: 3 named this project's IDs, 1 of them refused at the usage limit; 1 named none of them\.\n {2}run: R-0012 1, T-0007 1\n {2}refused: T-0008 at /);
+  assert.match(text, /Second-model runs in the window: 3 of this project \(run in its folders, or naming it in their first prompt\), 1 of them refused at the usage limit; 2 of other projects, 1 of them naming this project's IDs\.\n {2}run: R-0012 1, T-0007 1\n {2}refused: T-0008 at /);
   // A window given explicitly; without a Claude session the runs alone, which need --since.
   const alone = spawnSync(process.execPath, [cli, 'usage', '--codex-dir', codex], { encoding: 'utf8' });
   assert.equal(alone.status, 2);
@@ -244,11 +250,14 @@ test('MAINT-0020 P14: Codex runs in the window are matched by their folder or fi
   const home = tempDir(t);
   fs.cpSync(codex, path.join(home, '.codex', 'sessions'), { recursive: true });
   const byDefault = spawnSync(process.execPath, [cli, 'usage', '--json', '--since', at(0), '--until', at(160)], { encoding: 'utf8', env: { ...process.env, HOME: home }, cwd: home });
-  assert.equal(JSON.parse(byDefault.stdout).second_model.runs.length, 4, byDefault.stderr);
+  const outside = JSON.parse(byDefault.stdout);
+  assert.deepEqual([outside.second_model.runs.length, outside.second_model.matched], [5, 0], byDefault.stderr);
+  assert.ok(outside.notes.includes('no Git repository and no config repository here: no second-model run can be this project\'s'), outside.notes.join(' | '));
 });
 
 test('MAINT-0020 P5(a), P14: wf usage --milestone counts the runs used against the budget wf next computes, and warns before the reserve', t => {
-  const withSecondModel = { review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } } };
+  // The review checkouts (/work/.review-T-0001) are this project's by the folder names usage.folders allows.
+  const withSecondModel = { review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } }, usage: { folders: ['.review-*'] } };
   const p = project(t, { configEdit: c => ({ ...c, ...withSecondModel }) });
   const task = fs.readFileSync(path.join(p.repo, taskPath), 'utf8');
   const deep = x => x.replace(/^review: .*$/m, 'review: deep');
@@ -289,19 +298,52 @@ test('MAINT-0020 P5(a), P14 (v2.9.0 review S1-2): a run naming only a review cou
   p.write('docs/workflow/tasks/T-0003.md', task.replaceAll('T-0001', 'T-0003').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0003/F1'));
   const codex = path.join(p.temp, 'codex');
   codexLogs(codex, [
-    { started: at(0), cwd: '/tmp/a', prompt: 'A second look at R-0001', tokens: true },
-    { started: at(1), cwd: '/tmp/b', prompt: 'A second look at R-0002', tokens: true },
-    { started: at(2), cwd: '/tmp/c', prompt: 'A second look at R-0003', tokens: true },
-    { started: at(3), cwd: '/work/.review-T-0001', prompt: 'Review', tokens: true },
-    { started: at(4), cwd: '/tmp/d', prompt: 'A second look at R-0004', tokens: true },
-    { started: at(5), cwd: '/tmp/e', prompt: 'A second look at R-0001', refused: true },
+    { started: at(0), cwd: '/tmp/a', prompt: 'A second look at R-0001 of fixture/project', tokens: true },
+    { started: at(1), cwd: '/tmp/b', prompt: 'A second look at R-0002 of fixture/project', tokens: true },
+    { started: at(2), cwd: '/tmp/c', prompt: 'A second look at R-0003 of Project.', tokens: true },
+    { started: at(3), cwd: p.repo, prompt: 'T-0001 reviewer: review', tokens: true },
+    { started: at(4), cwd: '/tmp/d', prompt: 'A second look at R-0004 of fixture/project', tokens: true },
+    { started: at(5), cwd: '/tmp/e', prompt: 'A second look at R-0001 of fixture/project', refused: true },
   ]);
   const r = p.run(['usage', '--since', at(-1), '--until', at(60), '--codex-dir', codex, '--milestone', 'M-0001']);
   assert.equal(r.status, 0, r.stderr);
   const s = r.out.second_model;
-  assert.deepEqual([s.matched, s.unmatched, s.by_task], [5, 1, { 'R-0001': 1, 'R-0002': 1, 'R-0003': 1, 'T-0001': 1 }], 'R-0004 is cited by no record: unmatched');
+  assert.deepEqual([s.matched, s.unmatched, s.by_task], [6, 0, { 'R-0001': 1, 'R-0002': 1, 'R-0003': 1, 'T-0001': 1 }], 'R-0004 is cited by no record: this project\'s run, of no task');
+  assert.deepEqual(s.runs.map(r => r.named), ['R-0001', 'R-0002', 'R-0003', 'T-0001', null, 'R-0001']);
   // R-0001 (T-0001's) and R-0003 (T-0003's) reach M-0001 with the run of T-0001; R-0002 is another milestone's; the refused one is not counted.
   assert.deepEqual([s.milestone.used, s.milestone.task_runs, s.milestone.review_runs, s.milestone.refused], [3, 3, 0, 1]);
+});
+
+// The final review of v2.8.0 + v2.9.0 (a fresh Claude reviewer, of ca76ba5).
+test('v2.9.0 final review S1: another project\'s runs naming the same IDs use none of the budget; this project\'s runs are its folders\' and those naming it', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } }, usage: { folders: ['project-review-*'] } }) });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep'));
+  const sha = p.commit('one deep task');
+  assert.deepEqual(p.run(['next', '--baseline', sha]).out.second_model_budget, [{ milestone: 'M-0001', deep_tasks: 1, runs: 3 }]);
+  const worktree = path.join(p.temp, 'wt-T-0001'), other = path.join(p.temp, 'other-project'), codex = path.join(p.temp, 'codex');
+  p.git('worktree', 'add', '-q', '-b', 'T-0001-review', worktree);
+  const usage = runs => {
+    fs.rmSync(codex, { recursive: true, force: true });
+    codexLogs(codex, runs.map(([cwd, prompt], i) => ({ started: at(i), cwd, prompt, tokens: true })));
+    const r = p.run(['usage', '--since', at(-1), '--until', at(60), '--codex-dir', codex, '--milestone', 'M-0001']);
+    assert.equal(r.status, 0, r.stderr);
+    return r.out;
+  };
+  // The repro: this project's run, in its worktree, and three of other-project's, in its worktree or naming its own T-0001 and M-0001.
+  const others = [[path.join(other, '.claude/worktrees/T-0001-b'), 'Review'], [other, 'Review T-0001 of other-project'], [other, 'Milestone review of M-0001 for other-project'], [`${p.repo}-old/T-0001`, 'Review']];
+  const u = usage([[worktree, 'T-0001 reviewer: review'], ...others]);
+  assert.deepEqual(u.second_model.milestone, { id: 'M-0001', budget: 3, deep_tasks: 1, used: 1, task_runs: 1, review_runs: 0, refused: 0, warning: null });
+  assert.deepEqual(u.second_model.runs.map(r => [r.matched_by, r.named, r.ids_only]), [['folder', 'T-0001', false], [null, null, true], [null, null, true], [null, null, true], [null, null, true]]);
+  assert.ok(u.notes.includes('4 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (fixture/project, project): counted as other projects\', not here'), u.notes.join(' | '));
+  // This project's own: in the repository (naming no ID: of no task), in a folder usage.folders allows, or naming the repository.
+  const ours = usage([[worktree, 'T-0001 reviewer: review'], [p.repo, 'A look around'], ['/tmp/project-review-T-0001/src', 'Review'], ['/tmp/x', 'Milestone review of M-0001 for Fixture/Project'], ...others]);
+  assert.deepEqual(ours.second_model.runs.slice(0, 4).map(r => [r.matched_by, r.named]), [['folder', 'T-0001'], ['folder', null], ['folder', 'T-0001'], ['prompt', 'M-0001']]);
+  assert.deepEqual([ours.second_model.milestone.used, ours.second_model.milestone.task_runs, ours.second_model.milestone.review_runs, ours.second_model.milestone.warning], [3, 2, 1, 'the budget is spent: 3 of 3 runs used']);
+  assert.deepEqual([ours.second_model.matched, ours.second_model.unmatched, ours.second_model.ids_only], [4, 4, 4]);
+  // usage.folders is folder names: no slash, not only wildcards.
+  const folders = f => () => loadConfig(dirSource((() => { const d = tempDir(t); fs.mkdirSync(path.join(d, 'docs/workflow'), { recursive: true }); fs.writeFileSync(path.join(d, 'docs/workflow/config.json'), JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8')), usage: { folders: f } })); return d; })())).usage.folders;
+  assert.deepEqual(folders(['project-review-*'])(), ['project-review-*']);
+  for (const bad of [[], 'x', ['a/b'], ['*'], ['**'], [' x'], ['..'], [7]]) assert.throws(folders(bad), /usage\.folders lists folder names, or globs of one/, JSON.stringify(bad));
 });
 
 test('MAINT-0020 P14: --outcome prints the selected task\'s usage block for its session outcome', t => {

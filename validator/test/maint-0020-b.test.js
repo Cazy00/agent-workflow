@@ -547,8 +547,9 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone reviewer falls back
   // The lead's brief keeps model for a task's deep review, at high, with the effort in the command.
   const lead = sha => spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', sha.p.repo, '--baseline', sha.sha], { encoding: 'utf8' }).stdout;
   const both = closing(t);
-  assert.ok(lead(both).split('\n').includes('- a deep review and its fix review, by the second model (review.second_model; its final_model is the milestone review\'s): model gpt-6.1-sol, effort high: `setsid nohup codex exec -m gpt-6.1-sol -c model_reasoning_effort=high "T-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`'), lead(both));
-  assert.match(lead(closing(t, { second: SECOND })), /^- a deep review and its fix review, by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: /m);
+  // v2.9.0 final review S2: its fallback is the lead's own tool, and final_model is named only as the milestone review's.
+  assert.ok(lead(both).split('\n').includes('- a deep review and its fix review, by the second model (review.second_model): model gpt-6.1-sol, effort high: `setsid nohup codex exec -m gpt-6.1-sol -c model_reasoning_effort=high "T-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`. Where it cannot run, a fresh reviewer of your own tool at its highest effort, with a security focus, and review.fallback says why; never gpt-6.1-astra, its final_model, which is the milestone review\'s alone'), lead(both));
+  assert.match(lead(closing(t, { second: SECOND })), /^- a deep review and its fix review, by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: .*, and review\.fallback says why$/m);
   assert.doesNotMatch(lead(closing(t, { second: null })), /second model/);
   assert.ok(fs.readFileSync(path.join(root, 'procedures/review.md'), 'utf8').includes('By the owner\'s decision of 17 October 2026, a task\'s review uses its `model` at high effort (at most `max_effort`), and only the milestone review, the one last check of everything built, may use `final_model` at `final_effort`'));
 });
@@ -600,15 +601,38 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted 
   assert.match(accept({ model: 'claude-opus-5-5' }).out.findings.join(' | '), /acceptance evidence: the milestone review is by gpt-6\.1-astra or gpt-6\.1-sol \(review\.second_model\), or says in fallback why it could not be/);
   assert.equal(accept({ model: 'claude-opus-5-5', fallback: 'codex refused at its usage limit' }).status, 0);
   assert.match(accept({ model: 'claude-opus-5-5', fallback: ' ' }).out.findings.join(' | '), /the milestone review's fallback must be a non-empty text when given/);
-  // A task's deep review: model, or a fallback; final_model is refused there.
+  // A task's deep review: model, or a fallback by the implementer's own tool; final_model is refused there.
   const d = project(t, { configEdit: c => ({ ...c, review: { second_model: second, deep_paths: ['src/**'] } }) });
   d.write('src/a.js', 'export const result = 1;\n');
   const head = d.commit('T-0001: the work');
   const deep = review => { const e = evidence(head); return d.run(['ci', '--baseline', d.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: { ...e, review: { ...e.review, level: 'deep', ...review } } }); };
-  const refused = deep({ model: 'gpt-6.1-astra' });
-  assert.equal(refused.status, 1);
-  assert.match(refused.out.findings.join(' | '), /delivery evidence: a deep review is by gpt-6\.1-sol \(review\.second_model; its final_model, gpt-6\.1-astra, is for the milestone review only\), or says in review\.fallback why it could not be/);
-  for (const review of [{ model: 'gpt-6.1-sol' }, { model: 'gpt-6.1-astra', fallback: 'gpt-6.1-sol is out of quota here' }]) { const r = deep(review); assert.equal(r.status, 0, `${JSON.stringify(review)}: ${r.stdout}${r.stderr}`); }
+  const other = deep({ model: 'claude-opus-5-5' });
+  assert.equal(other.status, 1);
+  assert.match(other.out.findings.join(' | '), /delivery evidence: a deep review is by gpt-6\.1-sol \(review\.second_model; its final_model, gpt-6\.1-astra, is for the milestone review only\), or says in review\.fallback why it could not be/);
+  for (const review of [{ model: 'gpt-6.1-sol' }, { model: 'claude-opus-5-5', fallback: 'gpt-6.1-sol is out of quota here' }]) { const r = deep(review); assert.equal(r.status, 0, `${JSON.stringify(review)}: ${r.stdout}${r.stderr}`); }
+  // v2.9.0 final review S2: final_model on a task's review is refused at any level, with a fallback too (it was accepted with one).
+  const never = 'delivery evidence: a task\'s review is never by gpt-6.1-astra, review.second_model\'s final_model, which the owner keeps for the milestone review, even as a fallback: it is by gpt-6.1-sol, or, where that cannot run, by a fresh reviewer of the implementer\'s own tool, and review.fallback says why';
+  for (const review of [{ model: 'gpt-6.1-astra' }, { model: ' gpt-6.1-astra ', fallback: 'gpt-6.1-sol is out of quota here' }]) {
+    const r = deep(review);
+    assert.equal(r.status, 1, JSON.stringify(review));
+    assert.deepEqual(r.out.findings.filter(f => f.startsWith('delivery evidence:')), [never], JSON.stringify(review));
+  }
+  const s = project(t, { configEdit: c => ({ ...c, review: { second_model: second } }) });
+  s.write('src/a.js', 'export const result = 1;\n');
+  const plain = s.commit('T-0001: the work');
+  const standard = review => { const e = evidence(plain); return s.run(['ci', '--baseline', s.baseline, '--candidate', plain, '--task', 'T-0001'], { evidence: { ...e, review: { ...e.review, ...review } } }); };
+  for (const level of ['light', 'standard']) for (const fallback of [undefined, 'a second look']) {
+    const r = standard({ level, model: 'gpt-6.1-astra', ...(fallback ? { fallback } : {}) });
+    assert.equal(r.status, 1, `${level} ${fallback}`);
+    assert.ok(r.out.findings.includes(never), `${level} ${fallback}: ${r.out.findings.join(' | ')}`);
+  }
+  assert.equal(standard({ level: 'standard', model: 'gpt-6.1-sol' }).status, 0);
+  // final_model equal to model is that model, and allowed.
+  const same = project(t, { configEdit: c => ({ ...c, review: { second_model: { ...second, final_model: 'gpt-6.1-sol' } } }) });
+  same.write('src/a.js', 'export const result = 1;\n');
+  const sameHead = same.commit('T-0001: the work');
+  const e = evidence(sameHead);
+  assert.equal(same.run(['ci', '--baseline', same.baseline, '--candidate', sameHead, '--task', 'T-0001'], { evidence: { ...e, review: { ...e.review, model: 'gpt-6.1-sol' } } }).status, 0);
 });
 
 // P7. M-0005's walk ran on a development server, which the profile's trial-walk line started, and followed the steps. The owner's
@@ -647,8 +671,14 @@ test('MAINT-0020 P7(b): before the steps, each scenario they name is tried from 
   const second = w => ({ ...w, steps: [...w.steps, { ...w.steps[0], step: '2. Add a product', scenario: 'AC-001-2' }] });
   assert.deepEqual(walkErrors(second), ['the walkthrough\'s steps name AC-001-2, with no unguided entry: try each from its outcome sentence alone first']);
   assert.deepEqual(walkErrors(w => ({ ...second(w), unguided: [...w.unguided, { scenario: ' AC-001-2 ', outcome: 'A product is added', result: 'reached' }] })), []);
-  // Steps that name no scenario: one entry is all the check can ask (SCHEMA.md).
-  assert.deepEqual(walkErrors(w => ({ ...w, steps: w.steps.map(({ scenario, ...s }) => s), unguided: [{ scenario: 'a new shop', outcome: 'The owner sets up a new shop', result: 'reached' }] })), []);
+  // v2.9.0 final review S4: every step names its scenario, so one unguided entry cannot stand for steps that name none.
+  const unnamed = 'walkthrough step 2 names no scenario: each step names the scenario it walks, which unguided then lists';
+  for (const scenario of [undefined, ' ', 7]) assert.deepEqual(walkErrors(w => ({ ...second(w), steps: [w.steps[0], { ...second(w).steps[1], scenario }] })), [unnamed], String(scenario));
+  assert.deepEqual(walkErrors(w => ({ ...w, steps: w.steps.map(({ scenario, ...s }) => s), unguided: [{ scenario: 'a new shop', outcome: 'The owner sets up a new shop', result: 'reached' }] })), ['walkthrough step 1 names no scenario: each step names the scenario it walks, which unguided then lists']);
+  // Two steps of one scenario need its one entry; a third scenario needs its own.
+  const two = w => ({ ...w, steps: [w.steps[0], { ...w.steps[0], step: '2. Finish the setup' }] });
+  assert.deepEqual(walkErrors(two), []);
+  assert.deepEqual(walkErrors(w => ({ ...two(w), steps: [...two(w).steps, { ...w.steps[0], step: '3. Invite a person', scenario: 'AC-002-1' }] })), ['the walkthrough\'s steps name AC-002-1, with no unguided entry: try each from its outcome sentence alone first']);
   const stuck = extra => w => ({ ...w, unguided: [{ ...w.unguided[0], result: 'stuck', ...extra }] });
   const listed = { deferred: ['AC-001-1: a new shop\'s Today never leads to the setup'] };
   for (const note of [{}, { note: ' ' }]) assert.deepEqual(walkErrors(stuck(note), listed), ['unguided entry 1 got stuck: its note says where'], JSON.stringify(note));
@@ -657,7 +687,6 @@ test('MAINT-0020 P7(b): before the steps, each scenario they name is tried from 
   for (const bad of [{ scenario: 'AC-001-1', outcome: 'x', result: 'passed' }, { scenario: 'AC-001-1', result: 'reached' }, { scenario: 'AC-001-1', outcome: ' ', result: 'stuck', note: 'x' }]) {
     assert.deepEqual(walkErrors(w => ({ ...w, unguided: [bad] }), listed), ['unguided entry 1 needs scenario, outcome and a result, reached or stuck'], JSON.stringify(bad));
   }
-  assert.deepEqual(walkErrors(w => ({ ...w, steps: [{ ...w.steps[0], scenario: ' ' }] })), ['walkthrough step 1\'s scenario must be a non-empty text when given']);
 });
 
 test('MAINT-0020 P7: the walker, the procedure and the brief walk the owner\'s address and build, record the first load, and try each scenario without the steps first', t => {
@@ -671,6 +700,9 @@ test('MAINT-0020 P7: the walker, the procedure and the brief walk the owner\'s a
   assert.deepEqual(Object.keys(w), ['revision', 'trial_environment', 'address', 'build', 'environment', 'walk_data', 'first_load_seconds', 'walker', 'languages', 'viewports', 'unguided', 'steps']);
   assert.deepEqual(Object.keys(w.trial_environment), ['address', 'build']);
   assert.deepEqual([Object.keys(w.unguided[0]), Object.keys(w.steps[0])], [['scenario', 'outcome', 'result', 'note'], ['step', 'scenario', 'expected', 'observed', 'result', 'screenshot']]);
+  // v2.9.0 final review S4: each step names the scenario it walks, in the template and in what the walker records.
+  assert.equal(w.steps[0].scenario, '<the scenario it walks, which unguided then lists>');
+  assert.match(walker, /For each step record the step as written, the scenario it walks,/);
   // bin/wf-upgrade refreshes the walker where a project left it as its pinned release's copy, as for v2.7.0 (adapters/upgrade.mjs).
   assert.ok(INSTALLED.some(i => i.path === '.claude/agents/trial-walker.md' && i.template === 'templates/claude/agents/trial-walker.md'));
   const old = spawnSync('git', ['-C', root, 'show', 'v2.8.0:templates/claude/agents/trial-walker.md'], { encoding: 'utf8' });

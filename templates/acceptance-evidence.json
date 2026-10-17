@@ -24,7 +24,7 @@
       { "scenario": "<each scenario, tried before the steps>", "outcome": "<its outcome sentence, all the walker read>", "result": "<reached | stuck, from a fresh sign-in>", "note": "<where it got stuck: a finding to fix, or to list in deferred; optional when reached>" }
     ],
     "steps": [
-      { "step": "<the trial step, as the owner will read it>", "scenario": "<optional: the scenario it serves, which unguided then lists>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
+      { "step": "<the trial step, as the owner will read it>", "scenario": "<the scenario it walks, which unguided then lists>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
     ]
   },
   "deferred": ["<each item wf ci deferred to this acceptance, every accepted_findings entry of the milestone's tasks, each scenario still stuck (by its name) and a first load over 5 s (naming the first load), in plain words>"],

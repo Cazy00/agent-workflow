@@ -43,7 +43,7 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const roles = resolveRoles(config);
   const { level, why } = reviewLevel(t, deep);
   const setting = (role, at) => `model ${role.model ?? 'inherit'}, effort ${effortOf(role, at) ?? 'inherit'}`;
-  const second = secondModelOf(config); // a task's deep review keeps review.second_model.model (roles.js)
+  const second = secondModelOf(config), final = config.review?.second_model?.final_model; // a task's deep review keeps review.second_model.model (roles.js)
   // MAINT-0020 P14: each helper's launch name (roles.js), which `wf usage` reads to attribute its cost to the task and role.
   const name = (role, slice) => `\`${launchName(task, role, slice)}\``;
   // MAINT-0020 P1: slice 1 gets the record; a later slice also the earlier checkpoints and the work so far, never a conversation.
@@ -64,7 +64,8 @@ ${bullets([
     `you, the lead (the coordinator launches you so): ${setting(roles.lead)}`,
     `the implementer and each fix round: ${setting(roles.implementer, level)} (review level ${level ?? 'standard, not read'}: ${why})`,
     `the paperwork helper: ${setting(roles.paperwork)}`,
-    ...(second ? [`a deep review and its fix review, by the second model (review.second_model${config.review.second_model.final_model ? '; its final_model is the milestone review\'s' : ''}): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}`] : []),
+    // v2.9.0 final review S2: the fallback of a task's review is the lead's own tool; final_model is named only as the milestone's.
+    ...(second ? [`a deep review and its fix review, by the second model (review.second_model): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}. Where it cannot run, a fresh reviewer of your own tool at its highest effort, with a security focus, and review.fallback says why${final && final !== second.model ? `; never ${final}, its final_model, which is the milestone review's alone` : ''}`] : []),
   ])}
 
 Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.

@@ -936,3 +936,26 @@ test('v2.8.0 review: wf prune never commits on the trusted branch, and undoes a 
   assert.equal(hooked.git('status', '--porcelain'), '?? extra.txt');
   assert.equal(fs.readFileSync(path.join(hooked.repo, 'extra.txt'), 'utf8'), 'from the hook\n');
 });
+
+// The final review of v2.8.0 + v2.9.0 (a fresh Claude reviewer, of ca76ba5).
+test('v2.9.0 final review S3: a Draft found task a merged carry relies on takes its place in found_tasks, so the next carry beyond it is the owner\'s merge', t => {
+  const p = carrying(t, { plan: 'tasks: [T-0001, T-0003]\nfound_tasks: 1\n', records: q => q.edit('docs/workflow/tasks/T-0004.md', x => x.replace('found_from: R-0001/F2', 'found_from: R-0002/F1')) });
+  // Pull request 1: T-0001 carries R-0001/F1 by the Draft T-0002, the agent's merge; it merges, and T-0002 is still a Draft.
+  const first = p.ci([race()]);
+  assert.deepEqual([first.status, first.out.merge, first.out.owner_reasons], [0, 'agent', []], first.stdout + first.stderr);
+  // Pull request 2: T-0003 carries R-0002/F1 by the Draft T-0004. The one place is T-0002's, which the first merge relies on.
+  p.edit('docs/workflow/tasks/T-0003.md', x => x.replace('status: Draft', 'status: Ready').replace('subset: []', 'subset: []\naccepted_findings: [R-0002/F1]'));
+  p.write('src/c/x.js', 'export const x = 1;\n');
+  const second = p.commit('T-0003: the work; R-0002/F1 accepted, T-0004 fixes it');
+  const e = evidence(second); e.tasks = e.review.tasks = ['T-0003'];
+  e.review.findings = [race({ resolution: 'carried by T-0004', carried_by: 'T-0004', paths: ['src/d.js'] })];
+  const r = p.run(['ci', '--baseline', p.head, '--candidate', second, '--task', 'T-0003'], { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([r.out.merge, r.out.owner_reasons], ['owner', ['blocking review findings accepted rather than fixed: F1 (not carried: T-0004 is beyond M-0001\'s found_tasks allowance of 1 (begun: T-0002))']]);
+  // Readiness on the trusted branch counts it so too: T-0004 would be found task 2; the carrier is not counted against itself.
+  const ready = (base, id) => p.run(['readiness', '--baseline', base, '--candidate', base, '--task', id]).out;
+  assert.deepEqual(ready(p.head, 'T-0004').reasons, [`T-0004 would be found task 2 of M-0001, beyond its found_tasks allowance of 1 (begun: T-0002): ${ask}`]);
+  assert.equal(ready(p.head, 'T-0002').outcome, 'Ready');
+  // Before the first merge no record relies on T-0002, a Draft, so it takes no place.
+  assert.equal(ready(p.base, 'T-0004').outcome, 'Ready');
+});

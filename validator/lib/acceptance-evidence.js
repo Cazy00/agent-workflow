@@ -86,9 +86,11 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     if (!Array.isArray(w.steps) || !w.steps.length) errors.push('the walkthrough lists no steps');
     else w.steps.forEach((s, i) => {
       if (!isObject(s) || !['step', 'expected', 'observed'].every(k => text(s[k]))) errors.push(`walkthrough step ${i + 1} needs step, expected and observed`);
+      // v2.9.0 final review S4: every step names its scenario, so each scenario walked has its unguided entry below; with the
+      // scenario optional, one unguided entry stood for every scenario the steps walked.
+      else if (!text(s.scenario)) errors.push(`walkthrough step ${i + 1} names no scenario: each step names the scenario it walks, which unguided then lists`);
       else if (s.result !== 'passed') errors.push(`walkthrough step ${i + 1} did not pass: fix it, or correct the step, and walk it again`);
       else if (!https(s.screenshot)) errors.push(`walkthrough step ${i + 1} needs an https screenshot reference`);
-      else if (s.scenario !== undefined && !text(s.scenario)) errors.push(`walkthrough step ${i + 1}'s scenario must be a non-empty text when given`);
     });
     // MAINT-0020 P7(b): each scenario first from its outcome sentence alone, from a fresh sign-in. In M-0005 the owner, starting
     // cold, found that a new shop's Today never led to setup (T-0037); the walk followed the steps and could not. A stuck entry is a

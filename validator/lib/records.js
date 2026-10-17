@@ -85,15 +85,17 @@ function validateClientConfig(c) {
 
 // MAINT-0016: the project's review policy (procedures/review.md). An optional reviewer from another model family, used for
 // deep reviews and the milestone review at no more than max_effort, and the paths whose changes always need a deep review.
+// MAINT-0020 (the owner, 17 October 2026): final_model and final_effort, at most max_effort, for the milestone review only (roles.js).
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PLAIN = /^[\w.@/:-]{1,80}$/;
 function validateReviewConfig(r) {
   only(r, ['second_model', 'deep_paths'], 'review');
   const m = r.second_model;
   if (m != null) {
-    only(m, ['tool', 'model', 'max_effort'], 'review.second_model');
-    for (const k of ['tool', 'model']) if (typeof m[k] !== 'string' || !PLAIN.test(m[k])) throw new Error(`review.second_model.${k} must be a plain name`);
-    if (m.max_effort !== undefined && !EFFORTS.includes(m.max_effort)) throw new Error(`review.second_model.max_effort must be one of ${EFFORTS.join(', ')}`);
+    only(m, ['tool', 'model', 'max_effort', 'final_model', 'final_effort'], 'review.second_model');
+    for (const k of ['tool', 'model', 'final_model']) if ((k !== 'final_model' || m[k] !== undefined) && (typeof m[k] !== 'string' || !PLAIN.test(m[k]))) throw new Error(`review.second_model.${k} must be a plain name`);
+    for (const k of ['max_effort', 'final_effort']) if (m[k] !== undefined && !EFFORTS.includes(m[k])) throw new Error(`review.second_model.${k} must be one of ${EFFORTS.join(', ')}`);
+    if (m.final_effort !== undefined && m.max_effort !== undefined && EFFORTS.indexOf(m.final_effort) > EFFORTS.indexOf(m.max_effort)) throw new Error(`review.second_model.final_effort ${m.final_effort} is above max_effort ${m.max_effort}`);
   }
   if (r.deep_paths !== undefined && (!Array.isArray(r.deep_paths) || r.deep_paths.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('review.deep_paths must be an array of glob strings');
 }

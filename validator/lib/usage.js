@@ -27,7 +27,7 @@ const LIFETIME = { cache_write_5m: 300, cache_write_1h: 3600 }, REBUILD = 20000;
 // MAINT-0020 P1: the peak context an implementing helper (implementer or fix) should stay under; M-0005's four largest reached
 // 571–814 K. Slices (wf brief --lead) are the cut; this flags a recurrence, since no gate can read a harness's token counts.
 export const HELPER_PEAK = 350000;
-const ROLES = ['coordinator', 'lead', 'implementer', 'fix', 'reviewer', 'paperwork', 'walker', 'acceptance', 'other'];
+const ROLES = ['coordinator', 'lead', 'implementer', 'fix', 'reviewer', 'paperwork', 'walker', 'acceptance', 'plan', 'other'];
 // Descriptions older than the launch-name convention (roles.js), as M-0005's read, in this order: "Task lead for T-0029" is a
 // lead, "Implement T-0035 review fixes" a fix.
 const KEYWORDS = [['lead', /\btask lead\b/i], ['paperwork', /paperwork/i], ['walker', /walk/i], ['fix', /\bfix/i], ['implementer', /\bimplement/i], ['reviewer', /review/i]];

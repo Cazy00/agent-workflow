@@ -6,7 +6,7 @@
 // and spent 37 % of the cache reads, a quarter to a half of their reading a re-read of a file they had read (record §§ 1, 9).
 import { list, loadAll, loadConfig } from './records.js';
 import { ACCEPTANCE } from './acceptance-files.js';
-import { effortOf, launchName, resolveRoles, reviewLevel } from './roles.js';
+import { effortOf, launchName, resolveRoles, reviewLevel, secondModelLaunch, secondModelOf } from './roles.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 // The slices of a task: its acceptance entries (else its scope entries), one slice each, at most MAX_SLICES, the entries beyond
@@ -17,6 +17,10 @@ export function sliceTask(items, level) {
   let at = 0;
   return Array.from({ length: k }, (_, i) => items.slice(at, at += Math.floor(items.length / k) + (i < items.length % k ? 1 : 0)));
 }
+// The waiting and reading lines, which the acceptance brief shares (acceptance-brief.js) so they are written once.
+export const WAIT_COMMANDS = ['wf wait --pr N  (returns within 270 s; pending, exit 4, means run it again; --merged waits for the merge)', 'wf wait --commit SHA  (the same for the trusted branch\'s checks on a commit)'];
+export const waitLine = prMode => `No command waits longer than four and a half minutes, within the five-minute prompt cache: a test run longer than about four minutes starts in the background and is checked every four minutes. Never wait in a loop of your own${prMode ? ': use \`wf wait\`' : ''}; tell each helper this.`;
+export const READ_ONCE = 'read a file once, by range (find with `grep -n`, read with `sed -n a,bp`); do not re-read what is in your context';
 export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -39,6 +43,7 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const roles = resolveRoles(config);
   const { level, why } = reviewLevel(t, deep);
   const setting = (role, at) => `model ${role.model ?? 'inherit'}, effort ${effortOf(role, at) ?? 'inherit'}`;
+  const second = secondModelOf(config); // a task's deep review keeps review.second_model.model (roles.js)
   // MAINT-0020 P14: each helper's launch name (roles.js), which `wf usage` reads to attribute its cost to the task and role.
   const name = (role, slice) => `\`${launchName(task, role, slice)}\``;
   // MAINT-0020 P1: slice 1 gets the record; a later slice also the earlier checkpoints and the work so far, never a conversation.
@@ -59,6 +64,7 @@ ${bullets([
     `you, the lead (the coordinator launches you so): ${setting(roles.lead)}`,
     `the implementer and each fix round: ${setting(roles.implementer, level)} (review level ${level ?? 'standard, not read'}: ${why})`,
     `the paperwork helper: ${setting(roles.paperwork)}`,
+    ...(second ? [`a deep review and its fix review, by the second model (review.second_model${config.review.second_model.final_model ? '; its final_model is the milestone review\'s' : ''}): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}`] : []),
   ])}
 
 Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.
@@ -67,7 +73,7 @@ Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours
 Give each slice to its own fresh implementing helper, in order, ending at a checkpoint commit (its message starts \`${task}\`); a helper gets what its slice lists, never an earlier helper's conversation.
 ${slices.map((s, i) => `${i + 1}. ${name('implementer', [i + 1, slices.length])}, given ${given(i + 1)}\n${bullets(s.length ? s : ['the whole task']).replace(/^/gm, '   ')}`).join('\n')}
 
-Tell each implementing helper, a fix round's too: read a file once, by range (find with \`grep -n\`, read with \`sed -n a,bp\`); do not re-read what is in your context; put the files and ranges you relied on in your checkpoint commit's message, so the next slice starts from them.
+Tell each implementing helper, a fix round's too: ${READ_ONCE}; put the files and ranges you relied on in your checkpoint commit's message, so the next slice starts from them.
 
 ## The task's records
 - Task record: ${rd}/tasks/${task}.md (status ${t.status ?? '?'}; scope ${list(t.scope).join(', ') || '—'})
@@ -89,11 +95,11 @@ ${bullets([
     `wf ci --baseline ${base} --candidate HEAD --task ${task}${prMode ? ' --delivery-evidence PR_DESCRIPTION_FILE' : `${trust} --unsigned-receipts ROUND_FILE`}`,
     ...(prMode ? [`wf evidence --baseline ${base} --candidate HEAD --task ${task}  (starts the delivery evidence)`] : []),
     `wf done --task ${task} --implemented SHA  (the Done record, as ${prMode ? 'the pull request\'s last commit' : 'the task branch\'s last commit'})`,
-    ...(prMode ? ['wf wait --pr N  (returns within 270 s; pending, exit 4, means run it again; --merged waits for the merge)', 'wf wait --commit SHA  (the same for the trusted branch\'s checks on a commit)'] : []),
+    ...(prMode ? WAIT_COMMANDS : []),
     `wf session --baseline ${base} --candidate HEAD --task ${task}${trust} --record FILE`,
   ])}
 
-No command waits longer than four and a half minutes, within the five-minute prompt cache: a test run longer than about four minutes starts in the background and is checked every four minutes. Never wait in a loop of your own${prMode ? ': use \`wf wait\`' : ''}; tell each helper this.
+${waitLine(prMode)}
 
 ## Session outcome to return
 \`\`\`json

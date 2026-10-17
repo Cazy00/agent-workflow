@@ -23,6 +23,7 @@ import { runAttest } from './lib/attest.js';
 import { evaluateNext, renderNext, secondModelBudget } from './lib/next.js';
 import { evaluateUsage, outcomeUsage, renderUsage, usageProject, usageWindow } from './lib/usage.js';
 import { renderLeadBrief } from './lib/lead-brief.js';
+import { renderAcceptanceBrief } from './lib/acceptance-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { prune } from './lib/prune.js';
@@ -39,6 +40,7 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
   brief --lead --task T-0001 [--baseline REV]: the task lead's brief, from the records (MAINT-0018)
+  brief --acceptance --milestone M-0001 [--baseline REV]: the brief for the fresh helpers that close a milestone, from the records (MAINT-0020 P3)
   doctor: what this machine can do for the project's work (tools, access, the config's preflight checks); every gap goes in the next question to the owner (the plan's, when planning)
   wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
@@ -77,6 +79,7 @@ async function main() {
     if (a === '--client') { o.client = true; continue; }
     if (a === '--live') { o.live = true; continue; }
     if (a === '--lead') { o.lead = true; continue; }
+    if (a === '--acceptance') { o.acceptance = true; continue; }
     if (a === '--merged') { o.merged = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a === '--outcome') { o.outcome = true; continue; }
@@ -94,7 +97,8 @@ async function main() {
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
-  if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage)');
+  if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd) && !(cmd === 'brief' && o.acceptance))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage and brief --acceptance)');
+  if (o.acceptance && (cmd !== 'brief' || o.lead)) throw new WfError('--acceptance is only for brief, without --lead');
   if ((o.outcome || ['claude-session', 'codex-dir', 'since', 'until'].some(k => o[k] !== undefined)) && cmd !== 'usage') throw new WfError('--claude-session, --codex-dir, --since, --until and --outcome are only for usage');
   if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
@@ -103,7 +107,7 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
     return 0;
   }
-  if (cmd === 'brief' && !o.lead) {
+  if (cmd === 'brief' && !o.lead && !o.acceptance) {
     if (!o.payloads) throw new WfError('--payloads FILE is required');
     const file = path.resolve(o.payloads);
     const raw = fs.readFileSync(file, 'utf8');
@@ -283,6 +287,11 @@ async function main() {
   if (process.env.WF_VALIDATOR_REV && config.workflow?.revision !== process.env.WF_VALIDATOR_REV) throw new WfError('running validator revision differs from the baseline adoption pin');
   // MAINT-0018 Part B: helpers that grant nothing and no gate reads. The lead's brief (B1), the start-of-session check
   // (B5), waiting on a pull request and the Done record (B6).
+  if (cmd === 'brief' && o.acceptance) {
+    if (!/^M-\d{4}$/.test(o.milestone ?? '')) throw new WfError('brief --acceptance needs --milestone M-0001');
+    process.stdout.write(renderAcceptanceBrief({ baseline, candidate, milestone: o.milestone }));
+    return 0;
+  }
   if (cmd === 'brief') {
     if (!o.task || !/^T-\d{4}$/.test(o.task)) throw new WfError('brief --lead needs --task T-0001');
     process.stdout.write(renderLeadBrief({ baseline, candidate, task: o.task }));

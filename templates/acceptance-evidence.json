@@ -4,7 +4,8 @@
   "candidate": "<full commit hash of the code being accepted; only records may change after it>",
   "review": {
     "reviewer": "<the milestone reviewer: tool and context, e.g. codex exec in a fresh context>",
-    "model": "<its model, e.g. the configured review.second_model>",
+    "model": "<its model: review.second_model's final_model, else its model>",
+    "fallback": "<only when the milestone review could not use review.second_model: why; otherwise leave this field out>",
     "revision": "<full commit hash it reviewed (the whole milestone diff)>",
     "report": "<https link to the posted review report (templates/review.md)>"
   },

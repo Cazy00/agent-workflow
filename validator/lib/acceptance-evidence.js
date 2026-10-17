@@ -44,6 +44,11 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   if (!isObject(r)) errors.push('the milestone review is missing');
   else {
     for (const k of ['reviewer', 'model']) if (!text(r[k])) errors.push(`the milestone review needs its ${k}`);
+    // MAINT-0020 (the owner, 17 October 2026): the milestone review, the one last check of everything built, is by the second
+    // model's final_model or its model (review.md), or says in fallback why neither could run, as a deep task review does.
+    const second = config.review?.second_model, by = [second?.final_model, second?.model].filter(Boolean);
+    if (r.fallback !== undefined && !text(r.fallback)) errors.push('the milestone review\'s fallback must be a non-empty text when given');
+    else if (second && text(r.model) && !by.includes(r.model) && r.fallback === undefined) errors.push(`the milestone review is by ${by.join(' or ')} (review.second_model), or says in fallback why it could not be`);
     if (!https(r.report)) errors.push('the milestone review needs an https reference to its report');
     errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline));
   }

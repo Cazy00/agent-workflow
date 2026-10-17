@@ -7,9 +7,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig } from '../lib/index.js';
 import { LAUNCH_ROLES, launchName, parseLaunchName } from '../lib/roles.js';
-import { MAX_SLICES, sliceTask } from '../lib/lead-brief.js';
+import { MAX_SLICES, READ_ONCE, WAIT_COMMANDS, sliceTask, waitLine } from '../lib/lead-brief.js';
 import { HELPER_PEAK, READER, evaluateUsage } from '../lib/usage.js';
-import { cli, project, taskPath } from './helpers/maint-0018.js';
+import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0020, v2.9.0: what M-0005 of mateen-systems measured on v2.7.0, the second part. Later slices append their tests here.
 const root = fileURLToPath(new URL('../..', import.meta.url));
@@ -468,4 +468,140 @@ test('MAINT-0020 P1: wf usage flags an implementer or fix whose peak context pas
   const flaggedFor = task => JSON.parse(run('--json', '--task', task).stdout).notes.filter(n => /peaked at/.test(n)).length;
   assert.deepEqual([flaggedFor('T-0007'), flaggedFor('T-0008')], [2, 0], 'the filter leaves other tasks out, and a helper exactly at the line is not over it');
   assert.ok(fs.readFileSync(path.join(root, 'SCHEMA.md'), 'utf8').includes(`over ${HELPER_PEAK / 1000} K, \`HELPER_PEAK\``), 'SCHEMA.md documents the threshold');
+});
+
+// P3. M-0005's coordinator drafted M-0006, set up the trial server and wrote the acceptance package itself, and grew to 708 K,
+// rebuilt thirteen times. `wf brief --acceptance` hands that work to fresh helpers, so the coordinator holds their results only.
+// The owner's rule (17 October 2026): reviews alongside development use review.second_model.model at high effort; only the
+// milestone review, the one last check of everything built, may use final_model.
+const SECOND = { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'xhigh' };
+const closing = (t, { second = { ...SECOND, final_model: 'gpt-6.1-astra', final_effort: 'xhigh' }, roles = { walker: { model: 'opus', effort: 'high' } } } = {}) => {
+  const p = project(t, { configEdit: c => ({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true }, roles, ...(second ? { review: { second_model: second } } : {}) }) });
+  const task = fs.readFileSync(path.join(p.repo, taskPath), 'utf8');
+  // T-0001 planned and Done, accepting two findings; T-0003 a found task carrying one of them (P11); T-0004 planned with no
+  // record; T-0002 is another milestone's, and its finding is not owed here.
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active\ntasks: [T-0001, T-0004]\nmeasure: The owner imports a list'));
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace('deferred_inputs: []', 'deferred_inputs: []\naccepted_findings: [R-0001/N1, R-0003/F1]'));
+  p.write('docs/workflow/tasks/T-0003.md', task.replaceAll('T-0001', 'T-0003').replace('status: Ready', 'status: Done').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0003/F1'));
+  p.write('docs/workflow/tasks/T-0002.md', task.replaceAll('T-0001', 'T-0002').replace('milestone: M-0001', 'milestone: M-0002').replace('deferred_inputs: []', 'deferred_inputs: []\naccepted_findings: [R-0009/X1]'));
+  const sha = p.commit('the milestone\'s records');
+  const brief = (...args) => spawnSync(process.execPath, [cli, 'brief', '--acceptance', '--repo', p.repo, '--baseline', sha, ...args], { encoding: 'utf8' });
+  const r = brief('--milestone', 'M-0001');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  return { p, sha, out: r.stdout, brief };
+};
+const helperLine = (out, n) => out.split('\n').find(l => l.startsWith(`${n}. `));
+
+test('MAINT-0020 P3: the acceptance brief prints the milestone, its planned and found tasks, and the findings owed at acceptance', t => {
+  const { out } = closing(t);
+  assert.match(out, /^# M-0001 acceptance\n\nDemonstrate the fixture task\n/);
+  for (const line of [
+    '- Measure: The owner imports a list',
+    '- Acceptance: AC-001-1',
+    '- Planned tasks: T-0001 (Done), T-0004 (no record)',
+    '- Found tasks: T-0003 (Done), found from R-0003/F1',
+    '- Accepted findings owed at acceptance, each in the package\'s *Decided for your acceptance* and the evidence\'s `deferred`: R-0001/N1 (T-0001), R-0003/F1 (T-0001; carried by T-0003)',
+    '- Left for the owner by approval.defer_to_acceptance: those findings, and each task pull request\'s `deferred` from `wf ci` (acceptance tests changed, scenarios that waited on found work), in the evidence\'s `deferred` and `tests_changed`',
+  ]) assert.ok(out.split('\n').includes(line), `${line}\n---\n${out}`);
+  assert.doesNotMatch(out, /R-0009|T-0002/, 'another milestone\'s task and finding are not this one\'s');
+  assert.match(out, /you post their results on the acceptance pull request; do not write the package or walk the trial yourself, so your context grows by their results only/);
+  assert.match(out, /Each helper returns text and links \(its posted comment, its commits, the screenshots\), not the files it read;/);
+});
+
+test('MAINT-0020 P3: the acceptance brief names its three helpers with their models and efforts, the next milestone\'s and the commands', t => {
+  const { out, sha } = closing(t);
+  const [reviewer, acceptance, walker] = [1, 2, 3].map(n => helperLine(out, n));
+  assert.ok(reviewer.startsWith('1. `M-0001 reviewer`: the milestone review of the whole milestone diff (procedures/review.md), by the second model (review.second_model, its final_model): model gpt-6.1-astra, effort xhigh: `setsid nohup codex exec -m gpt-6.1-astra -c model_reasoning_effort=xhigh "M-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`.'), reviewer);
+  assert.match(reviewer, /Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review\.fallback says why\.$/);
+  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, with the table `wf usage --milestone M-0001` prints: model haiku, effort low \(roles\.paperwork\)\.$/);
+  assert.match(walker, /^3\. `M-0001 walker`: the trial walk, on that environment with those steps, once the review's fixes are merged, in the background \(procedures\/accept-release\.md\): model opus, effort high \(roles\.walker\)\.$/);
+  assert.ok(out.includes('The next milestone\'s draft goes to a fresh helper, `M-0002 plan`, following procedures/readiness.md; it returns the draft\'s pull request.'), out);
+  // Every name is the convention wf usage reads, the next milestone's plan helper included.
+  assert.deepEqual([reviewer, acceptance, walker].map(l => parseLaunchName(l.match(/`(M-\d{4} [a-z]+)`/)[1]).role), ['reviewer', 'acceptance', 'walker']);
+  assert.deepEqual(parseLaunchName('M-0002 plan drafts the next milestone'), { id: 'M-0002', role: 'plan' });
+  const commands = out.slice(out.indexOf('## Commands'));
+  assert.ok(commands.includes('- wf usage --milestone M-0001  (the milestone\'s usage table, which the acceptance package carries: MAINT-0020 P14)\n'), commands);
+  assert.ok(commands.includes(`- wf ci --baseline ${sha} --candidate HEAD --delivery-evidence PR_DESCRIPTION_FILE  (checks the acceptance evidence in the pull request description, as the wf ci check does)\n`), commands);
+  // The waiting and reading lines are the lead brief's own, written once.
+  for (const line of [...WAIT_COMMANDS.map(c => `- ${c}`), waitLine(true)]) assert.ok(commands.split('\n').includes(line), line);
+  assert.ok(out.includes(`tell each: ${READ_ONCE}.`));
+  const missing = closing(t).brief('--milestone', 'M-0009');
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /milestone M-0009 not found/);
+  assert.match(closing(t).brief().stderr, /brief --acceptance needs --milestone M-0001/);
+});
+
+test('MAINT-0020 (the owner, 17 October 2026): the milestone reviewer falls back to model, a task\'s deep review keeps it at high, and each command carries its effort', t => {
+  // final_model unset: the milestone review is by model; final_effort unset: high, under max_effort xhigh.
+  assert.match(helperLine(closing(t, { second: SECOND }).out, 1), /by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: `setsid nohup codex exec -m gpt-6\.1-sol -c model_reasoning_effort=high "M-0001 reviewer: …"/);
+  assert.match(helperLine(closing(t, { second: { ...SECOND, max_effort: 'medium' } }).out, 1), /model gpt-6\.1-sol, effort medium: .*-c model_reasoning_effort=medium /, 'high is capped at max_effort');
+  // A tool whose command the brief does not know: one line says the effort must be passed.
+  assert.match(helperLine(closing(t, { second: { tool: 'gemini', model: 'gemini-3-pro' } }).out, 1), /model gemini-3-pro, effort high: pass the effort explicitly when you launch gemini: the config names no command for it, and its default effort may be lower\. Where it cannot run/);
+  assert.match(helperLine(closing(t, { second: null, roles: {} }).out, 1), /by a fresh reviewer of your own tool \(no review\.second_model\): model inherit, effort max\.$/);
+  assert.match(helperLine(closing(t, { second: null, roles: {} }).out, 3), /model sonnet, effort medium \(roles\.walker\)\.$/, 'the default walker');
+  // The lead's brief keeps model for a task's deep review, at high, with the effort in the command.
+  const lead = sha => spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', sha.p.repo, '--baseline', sha.sha], { encoding: 'utf8' }).stdout;
+  const both = closing(t);
+  assert.ok(lead(both).split('\n').includes('- a deep review and its fix review, by the second model (review.second_model; its final_model is the milestone review\'s): model gpt-6.1-sol, effort high: `setsid nohup codex exec -m gpt-6.1-sol -c model_reasoning_effort=high "T-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`'), lead(both));
+  assert.match(lead(closing(t, { second: SECOND })), /^- a deep review and its fix review, by the second model \(review\.second_model\): model gpt-6\.1-sol, effort high: /m);
+  assert.doesNotMatch(lead(closing(t, { second: null })), /second model/);
+  assert.ok(fs.readFileSync(path.join(root, 'procedures/review.md'), 'utf8').includes('By the owner\'s decision of 17 October 2026, a task\'s review uses its `model` at high effort (at most `max_effort`), and only the milestone review, the one last check of everything built, may use `final_model` at `final_effort`'));
+});
+
+test('MAINT-0020 P3: wf next\'s action that prepares a milestone for acceptance runs the acceptance brief', t => {
+  const p = project(t);
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active\ntasks: [T-0001]'));
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done'));
+  const sha = p.commit('the last task is Done');
+  const n = p.run(['next', '--baseline', sha]).out;
+  assert.equal(n.next.kind, 'present', JSON.stringify(n.next));
+  assert.deepEqual(n.next.run, [`wf brief --acceptance --milestone M-0001 --baseline ${sha}  (the brief for the fresh helpers that close it; post their results)`]);
+  for (const [file, text] of [['procedures/accept-release.md', 'Then give each job below and the package to a fresh helper with the brief `wf brief --acceptance --milestone M-NNNN` prints, and post their results; do not write the package yourself.'], ['procedures/execute.md', 'When a milestone\'s last task merges, give its closing work to fresh helpers with `wf brief --acceptance`, post their results and stop']]) assert.ok(fs.readFileSync(path.join(root, file), 'utf8').includes(text), file);
+});
+
+test('MAINT-0020: review.second_model takes final_model and final_effort, at most max_effort, and refuses other keys', t => {
+  const configWith = second => {
+    const dir = tempDir(t);
+    const base = JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8'));
+    fs.mkdirSync(path.join(dir, 'docs/workflow'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs/workflow/config.json'), JSON.stringify({ ...base, review: { second_model: second } }));
+    return () => loadConfig(dirSource(dir)).review.second_model;
+  };
+  for (const good of [{ ...SECOND, final_model: 'gpt-6.1-astra', final_effort: 'xhigh' }, { ...SECOND, final_model: 'gpt-6.1-astra' }, { tool: 'codex', model: 'gpt-6.1-sol', final_effort: 'max' }]) assert.deepEqual(configWith(good)(), good);
+  for (const [bad, pattern] of [
+    [{ ...SECOND, max_effort: 'high', final_effort: 'xhigh' }, /review\.second_model\.final_effort xhigh is above max_effort high/],
+    [{ ...SECOND, final_effort: 'ultra' }, /review\.second_model\.final_effort must be one of low, medium, high, xhigh, max/],
+    [{ ...SECOND, final_model: 'gpt 6 astra' }, /review\.second_model\.final_model must be a plain name/],
+    [{ ...SECOND, final_model: 6 }, /review\.second_model\.final_model must be a plain name/],
+    [{ ...SECOND, final_reviewer: 'codex' }, /review\.second_model may contain only tool, model, max_effort, final_model, final_effort/],
+  ]) assert.throws(configWith(bad), pattern, JSON.stringify(bad));
+  // The settings page keeps them when it saves the second model's other fields.
+  assert.match(fs.readFileSync(path.join(root, 'adapters/setup-page.html'), 'utf8'), /second_model: ticked\('second_model'\) \? \{ \.\.\.\(s\.review\.second_model \?\? \{\}\), tool: 'codex'/);
+  assert.match(fs.readFileSync(path.join(root, 'SCHEMA.md'), 'utf8'), /`final_model` and `final_effort`, at most `max_effort`, for the milestone review alone/);
+});
+
+test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted on final_model or model; a task\'s deep review on model only', t => {
+  const second = { ...SECOND, final_model: 'gpt-6.1-astra' };
+  // The acceptance pull request: the milestone review's model is final_model or model, or it says why in fallback.
+  const a = project(t, { configEdit: c => ({ ...c, acceptance_evidence: true, review: { second_model: second } }) });
+  a.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted'));
+  const accepting = a.commit('Accept M-0001');
+  const accept = review => a.run(['ci', '--baseline', a.baseline, '--candidate', accepting, '--task', 'T-0001'], { evidence: {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: a.baseline,
+    review: { reviewer: 'codex exec, fresh context', revision: a.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1', ...review },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred: [], tests_changed: [],
+  } });
+  for (const model of ['gpt-6.1-astra', 'gpt-6.1-sol']) { const r = accept({ model }); assert.equal(r.status, 0, `${model}: ${r.stdout}${r.stderr}`); }
+  assert.match(accept({ model: 'claude-opus-5-5' }).out.findings.join(' | '), /acceptance evidence: the milestone review is by gpt-6\.1-astra or gpt-6\.1-sol \(review\.second_model\), or says in fallback why it could not be/);
+  assert.equal(accept({ model: 'claude-opus-5-5', fallback: 'codex refused at its usage limit' }).status, 0);
+  assert.match(accept({ model: 'claude-opus-5-5', fallback: ' ' }).out.findings.join(' | '), /the milestone review's fallback must be a non-empty text when given/);
+  // A task's deep review: model, or a fallback; final_model is refused there.
+  const d = project(t, { configEdit: c => ({ ...c, review: { second_model: second, deep_paths: ['src/**'] } }) });
+  d.write('src/a.js', 'export const result = 1;\n');
+  const head = d.commit('T-0001: the work');
+  const deep = review => { const e = evidence(head); return d.run(['ci', '--baseline', d.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: { ...e, review: { ...e.review, level: 'deep', ...review } } }); };
+  const refused = deep({ model: 'gpt-6.1-astra' });
+  assert.equal(refused.status, 1);
+  assert.match(refused.out.findings.join(' | '), /delivery evidence: a deep review is by gpt-6\.1-sol \(review\.second_model; its final_model, gpt-6\.1-astra, is for the milestone review only\), or says in review\.fallback why it could not be/);
+  for (const review of [{ model: 'gpt-6.1-sol' }, { model: 'gpt-6.1-astra', fallback: 'gpt-6.1-sol is out of quota here' }]) { const r = deep(review); assert.equal(r.status, 0, `${JSON.stringify(review)}: ${r.stdout}${r.stderr}`); }
 });

@@ -214,7 +214,7 @@ function renderSettings() {
       const r = await api('/api/settings', {
         // A project without a checkpoint shows none picked and keeps none until the owner picks one.
         approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '', auto_merge: ticked('auto_merge'), defer_to_acceptance: ticked('defer_to_acceptance') },
-        review: { ...(s.review.deep_paths.length ? { deep_paths: s.review.deep_paths } : {}), second_model: ticked('second_model') ? { tool: 'codex', model: value('second_model_name'), max_effort: value('second_model_effort') } : null },
+        review: { ...(s.review.deep_paths.length ? { deep_paths: s.review.deep_paths } : {}), second_model: ticked('second_model') ? { ...(s.review.second_model ?? {}), tool: 'codex', model: value('second_model_name'), max_effort: value('second_model_effort') } : null },
         acceptance_evidence: ticked('acceptance_evidence'),
         project: value('project'), measure: value('measure'),
         client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },

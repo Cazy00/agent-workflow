@@ -199,8 +199,8 @@ export function renderUsage(u) {
   const size = a => (u.priced ? a.cost ?? 0 : tokensOf(a));
   const label = a => `${a.role}${a.task ? ` of ${a.task}` : ''}${a.attribution === 'inferred' ? ' (inferred)' : a.attribution === 'none' ? ' (unattributed)' : ''}${a.description ? ` "${a.description}"` : ''}`;
   lines.push('', `Largest agents, by ${u.priced ? 'estimated cost' : 'tokens'}:`, ...[...u.agents].sort((a, b) => size(b) - size(a)).slice(0, 5).map(a => `  ${label(a)}: ${a.calls} call(s), cache reads ${tok(a.cache_read)}, writes ${tok(written(a))} (${tok(a.after_wait.tokens)} after waits), peak ${tok(a.peak_context)}, ${[a.model, a.effort].filter(Boolean).join(' ') || 'model unknown'}${u.priced ? `, est. ${cost(a.cost)}` : ''}`));
-  const w = u.writes_after_wait, coordinator = u.by_role.find(g => g.role === 'coordinator')?.after_wait.tokens ?? 0;
-  lines.push('', `Writes after a wait longer than the cache's lifetime (over 20 K written): ${w.calls} call(s), ${tok(w.tokens)}; helpers ${tok(w.tokens - coordinator)}, the coordinator ${tok(coordinator)}.`);
+  const w = u.writes_after_wait, c = u.by_role.find(g => g.role === 'coordinator')?.after_wait ?? { calls: 0, tokens: 0 };
+  lines.push('', `Writes after a wait longer than the cache's lifetime (over 20 K written): ${w.calls} call(s), ${tok(w.tokens)}; helpers ${tok(w.tokens - c.tokens)} in ${w.calls - c.calls}, the coordinator ${tok(c.tokens)} in ${c.calls}.`);
   if (w.calls) lines.push(`  by the tool call before them: ${w.by_tool.map(e => `${e.tool ?? 'a message'} ${tok(e.tokens)}`).join(', ')}`, ...w.by_call.filter(e => e.description).slice(0, 5).map(e => `  ${e.tool} "${e.description}": ${e.calls} call(s), ${tok(e.tokens)}`));
   const s = u.second_model;
   lines.push('', `Second-model runs in the window: ${s.matched} named this project's IDs${s.refused ? `, ${s.refused} of them refused at the usage limit` : ''}; ${s.unmatched} named none of them.`);

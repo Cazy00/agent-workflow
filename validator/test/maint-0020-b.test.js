@@ -109,7 +109,7 @@ function setup(t, { prices = null } = {}) {
 const agent = (u, description) => u.agents.find(a => a.description === description);
 
 test('MAINT-0020 P14: wf usage counts each message ID once at its largest output, splits five-minute and one-hour writes and finds the peak', t => {
-  const u = setup(t).json();
+  const s = setup(t), u = s.json();
   assert.equal(u.schema, 'agent-workflow/usage@1');
   const coordinator = u.agents.find(a => a.role === 'coordinator');
   assert.deepEqual([coordinator.calls, coordinator.output, coordinator.cache_read, coordinator.cache_write_1h, coordinator.cache_write_5m], [4, 71, 196000, 105000, 0], 'msg_c1 once, at output 50; the synthetic error line is no call');
@@ -120,6 +120,9 @@ test('MAINT-0020 P14: wf usage counts each message ID once at its largest output
   assert.equal(u.totals.calls, 4 + 5 + 2 + 1 + 1 + 1 + 1 + 1);
   assert.deepEqual([u.totals.cache_write_5m, u.totals.cache_write_1h], [126000 + 45000 + 1000 + 2000 + 300000 + 4000 + 500, 105000 + 30000]);
   assert.deepEqual([coordinator.model, coordinator.effort, agent(u, 'T-0007 paperwork').model, agent(u, 'T-0007 paperwork').effort], ['claude-opus-5-5', 'xhigh', 'claude-haiku-5-5', 'low']);
+  // The session's folder reads as its .jsonl does.
+  const folder = spawnSync(process.execPath, [cli, 'usage', '--json', '--repo', s.repo, '--claude-session', s.sessionFile.replace(/\.jsonl$/, '/'), '--codex-dir', s.codex], { encoding: 'utf8', env: { ...process.env, HOME: s.dir } });
+  assert.deepEqual(JSON.parse(folder.stdout).totals, u.totals);
 });
 
 test('MAINT-0020 P14: a write after a wait outlived its cache\'s lifetime and wrote over 20 K, and names the tool call before it', t => {
@@ -132,7 +135,7 @@ test('MAINT-0020 P14: a write after a wait outlived its cache\'s lifetime and wr
   assert.deepEqual(u.writes_after_wait.by_tool, [{ tool: 'Agent', calls: 2, tokens: 61000 }, { tool: 'Bash', calls: 1, tokens: 30000 }]);
   assert.deepEqual(u.writes_after_wait.by_call.find(e => e.tool === 'Bash'), { tool: 'Bash', description: 'Run the unit tests', calls: 1, tokens: 30000 });
   const text = usageRun().stdout;
-  assert.match(text, /Writes after a wait longer than the cache's lifetime \(over 20 K written\): 3 call\(s\), 91 K; helpers 51 K, the coordinator 40 K\./);
+  assert.match(text, /Writes after a wait longer than the cache's lifetime \(over 20 K written\): 3 call\(s\), 91 K; helpers 51 K in 2, the coordinator 40 K in 1\./);
   assert.match(text, /by the tool call before them: Agent 61 K, Bash 30 K\n {2}Bash "Run the unit tests": 1 call\(s\), 30 K\n/);
 });
 
@@ -215,6 +218,11 @@ test('MAINT-0020 P14: Codex runs in the window are matched by their folder or fi
   assert.equal(alone.status, 2);
   assert.match(alone.stderr, /usage needs --claude-session SESSION\.jsonl, or --since ISO/);
   assert.deepEqual(json('--since', '2026-10-10T00:00:00Z', '--until', '2026-10-10T23:59:00Z').second_model.runs.map(r => r.started), ['2026-10-10T08:00:00.000Z']);
+  // Codex's own folder by default, under the home directory.
+  const home = tempDir(t);
+  fs.cpSync(codex, path.join(home, '.codex', 'sessions'), { recursive: true });
+  const byDefault = spawnSync(process.execPath, [cli, 'usage', '--json', '--since', at(0), '--until', at(160)], { encoding: 'utf8', env: { ...process.env, HOME: home }, cwd: home });
+  assert.equal(JSON.parse(byDefault.stdout).second_model.runs.length, 4, byDefault.stderr);
 });
 
 test('MAINT-0020 P5(a), P14: wf usage --milestone counts the runs used against the budget wf next computes, and warns before the reserve', t => {

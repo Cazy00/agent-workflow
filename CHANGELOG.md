@@ -2,6 +2,32 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.9.0
+
+MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (record §§ 1–9), as the owner chose it (§ 10), with the owner's rule of 17 October for the second model.
+- **`wf usage`** (P14). It reads the harnesses' own records, Claude Code's session transcript with its helpers and Codex's session logs. It prints, per agent, task and role: calls, cache reads, cache writes, writes after a wait with the call before each, peak context, model and effort.
+  - With `usage.prices`, it adds an estimated list-price cost.
+  - With `--milestone`, it adds the second-model runs used against the budget, warning before the milestone review's reserve. This is P5(a)'s count, moved from v2.8.0.
+  - `--outcome` prints a session outcome's `usage` block.
+  - One reader per harness sits behind one contract (`usage-reader@1`, aggregated as `usage@1`). Launch names (`T-NNNN implementer`, `M-NNNN walker`, …) attribute each helper.
+  - Run on M-0005's session, it reproduces the record's figures: 1,177 M cache reads, and 19.4 M helper writes after a wait. M-0005's two studies were made by hand.
+  - It needs a full installation (`scripts/wf`); `bin/wf` extracts only the validator. No gate reads it.
+- **Implement in slices** (P1). `wf brief --lead` splits a task into up to four slices by its acceptance IDs, or else by its scope. Each slice goes to a fresh implementing helper that ends at its checkpoint, given the record, the earlier checkpoints and the diff so far. A light task, or one with a single acceptance ID, is one slice. Helpers read each file once, by range, and `wf usage` flags an implementing helper past 350 K. In M-0005, four helpers grew to 571–814 K and held 37 % of the cache reads, and a quarter to a half of their reading re-read files.
+- **A small coordinator** (P3). `wf brief --acceptance --milestone M` hands the acceptance package and its evidence (`M-NNNN acceptance`, the new `roles.acceptance`, Sonnet at medium), the milestone review (`reviewer`) and the trial walk (`walker`) to fresh helpers, and points the next milestone's draft to another (`plan`, the next free ID). `wf next` prints it at acceptance. M-0005's coordinator wrote the package and drafted M-0006 itself, and grew to 708 K with 13 rebuilds.
+- **The final check on its own model** (the owner's rule of 17 October). `review.second_model.final_model` and `final_effort` serve the milestone review only; a task's deep review keeps `model`. Briefs print the effort explicitly (Codex's `-c model_reasoning_effort=…`), because Codex defaults to low, and on 16 October reviews launched without it ran at low. The acceptance evidence's milestone review now names its model, or a fallback; a carried review keeps the model of the revision it reviewed. The settings page sets both fields.
+- **The walk is the owner's trial** (P7).
+  - The walker walks the address and build the owner is given (`trial_environment`), records what it walked and `first_load_seconds`, and uses its own demo accounts, or the data is reset after it (`walk_data`).
+  - Before the steps, it tries each scenario from its outcome alone, as a newcomer (`unguided`: reached, or stuck with a note). A stuck scenario, or a first load over 5 s, goes in `deferred` for the owner.
+  - The comparison is a consistency check. What keeps the walk off a development server is the profile's trial line and the walker's instructions.
+  - A local production build counts when that is what the owner is given. No environment for the owner is a blocker for the plan's question.
+  - In M-0005 the owner, starting cold, found what the guided walk could not (T-0037), on a development server that took 30 s to open.
+- **Smaller:** `wf next`'s `wf brief --lead` and `--acceptance` keep the selected `--candidate`.
+- **Reviews:** each slice was reviewed as it landed, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) or, out of quota, by a fresh Claude reviewer; FINAL_REVIEW.
+
+Corpus: 42,979 → 44,511 words; `SCHEMA.md` 8,102 → 8,822 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,494, `execute.md` 2,286 → 2,317, `readiness.md` unchanged. MAINT-0020 in all added 2,564 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
+
+Moving a project to this pin: `upgrades.json`. Finish an acceptance in progress first: its walk would need redoing.
+
 ## v2.8.0
 
 MAINT-0020, first part: what M-0005 of mateen-systems (14–16 October) cost on v2.7.0, as measured twice (record §§ 1–9), with the owner's decisions of 16 October (§ 10). The rest (work in slices, a small coordinator, the trial walked on the owner's build, `wf usage`) is v2.9.0.

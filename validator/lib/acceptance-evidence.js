@@ -4,7 +4,7 @@
 // acceptance. Like the delivery evidence it is the agent's own report: its completeness and its binding to the code being
 // accepted are checked here, not its truth.
 import { classifyPaths } from './paths.js';
-import { list } from './records.js';
+import { list, loadConfig } from './records.js';
 import { parseMarked } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
 
@@ -34,6 +34,11 @@ function covers(config, candidate, rev, what, baseline = null) {
   const code = classifyPaths(config, candidate.changedPaths(rev)).filter(c => (!['planning', 'governing'].includes(c.category) || c.acceptance_test) && !(c.category === 'enforcement' && UPGRADE_FILES.includes(c.path) && merged(c.path))).map(c => c.path);
   return code.length ? [`${what} ${rev.slice(0, 12)} is followed by changes to ${code.slice(0, 5).join(', ')}${code.length > 5 ? ', …' : ''}; review and walk the code being accepted`] : [];
 }
+// The config at a revision in this pull request's history, or null (not Git, not in its history, no valid config there).
+function configAt(candidate, rev) {
+  if (candidate.kind !== 'git' || !/^[0-9a-f]{40,64}$/.test(rev ?? '') || (rev !== candidate.name && !candidate.isAncestor(rev))) return null;
+  try { return loadConfig(candidate.atRevision(rev)); } catch { return null; }
+}
 
 export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null }) {
   if (!isObject(e)) return ['acceptance evidence is missing'];
@@ -48,7 +53,10 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     for (const k of ['reviewer', 'model']) if (!text(r[k])) errors.push(`the milestone review needs its ${k}`);
     // MAINT-0020 (the owner, 17 October 2026): the milestone review, the one last check of everything built, is by the second
     // model's final_model or its model (review.md), or says in fallback why neither could run, as a deep task review does.
-    const second = config.review?.second_model, by = [second?.final_model, second?.model].filter(Boolean);
+    // v2.9.0 review S3-1: covers() carries a review over an owner-approved config change the trusted branch brought in, so the
+    // models the config at the reviewed revision named count too; one neither config names still needs the fallback.
+    const named = c => [c?.review?.second_model?.final_model, c?.review?.second_model?.model];
+    const second = config.review?.second_model, by = [...new Set([...named(config), ...(second ? named(configAt(candidate, r.revision)) : [])].filter(Boolean))];
     if (r.fallback !== undefined && !text(r.fallback)) errors.push('the milestone review\'s fallback must be a non-empty text when given');
     else if (second && text(r.model) && !by.includes(r.model) && r.fallback === undefined) errors.push(`the milestone review is by ${by.join(' or ')} (review.second_model), or says in fallback why it could not be`);
     if (!https(r.report)) errors.push('the milestone review needs an https reference to its report');

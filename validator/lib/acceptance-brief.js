@@ -5,6 +5,7 @@
 import { list, loadAll, loadConfig } from './records.js';
 import { effortOf, launchName, resolveRoles, secondModelLaunch, secondModelOf } from './roles.js';
 import { READ_ONCE, WAIT_COMMANDS, waitLine } from './lead-brief.js';
+import { nextIds } from './next.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 const byId = (a, b) => String(a.id).localeCompare(String(b.id));
@@ -34,7 +35,14 @@ export function renderAcceptanceBrief({ baseline, candidate = baseline, mileston
   const setting = (role, key) => `model ${role.model ?? 'inherit'}, effort ${effortOf(role) ?? 'inherit'} (roles.${key})`;
   const second = secondModelOf(config, { milestone: true }); // the owner's rule of 17 October 2026: final_model, else model
   const name = role => `\`${launchName(milestone, role)}\``;
-  const next = `M-${String(Number(milestone.slice(2)) + 1).padStart(4, '0')}`;
+  // v2.9.0 review S3-5: the next milestone is a Draft one already here, else the next free ID past every milestone the history
+  // added, as wf next prints it (a removed record keeps its number: ci.js refuses a reused one).
+  const draft = [...new Map([...trusted.milestones, ...records.milestones]).values()].map(r => r.data).filter(d => d?.id && d.status === 'Draft').sort(byId)[0]?.id;
+  const next = draft ?? nextIds([baseline, candidate], rd)?.milestone ?? `M-${String(Number(milestone.slice(2)) + 1).padStart(4, '0')}`;
+  // v2.9.0 review S3-3: wf usage needs a session or a start time (cli.js), so the command names both, for the helper to fill.
+  // The milestone record holds no date: its authorisation time is the trusted branch's first commit that set it Authorised.
+  const usage = `wf usage --milestone ${milestone} --claude-session COORDINATOR_SESSION.jsonl --since AUTHORISED_AT`;
+  const authorised = `git log --first-parent --diff-merges=first-parent --reverse -G'^status: Authorised' --format=%cI ${base} -- ${rd}/milestones/${milestone}.md | head -1`;
   // MAINT-0020 P7: the walker walks what the owner will trial, each scenario once without the steps (acceptance-evidence.js).
   return `# ${milestone} acceptance
 
@@ -57,14 +65,14 @@ ${bullets([
 
 ## Helpers
 1. ${name('reviewer')}: the milestone review of the whole milestone diff (procedures/review.md), ${second ? `by the second model (review.second_model${config.review.second_model.final_model ? ', its final_model' : ''}): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(milestone, 'reviewer'))}. Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review.fallback says why.` :'by a fresh reviewer of your own tool (no review.second_model): model inherit, effort max.'}
-2. ${name('acceptance')}: the owner's trial environment with demo data, and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, fixing or listing for the owner what the walk found, with the table \`wf usage --milestone ${milestone}\` prints: ${setting(roles.acceptance, 'acceptance')}.
+2. ${name('acceptance')}: the owner's trial environment with demo data, and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, fixing or listing for the owner what the walk found, with the usage table the \`wf usage\` command below prints: ${setting(roles.acceptance, 'acceptance')}.
 3. ${name('walker')}: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report. Once the review's fixes are merged, in the background (procedures/accept-release.md): ${setting(roles.walker, 'walker')}.
 
 The next milestone's draft goes to a fresh helper, \`${launchName(next, 'plan')}\`, following procedures/readiness.md; it returns the draft's pull request.
 
 ## Commands
 ${bullets([
-    `wf usage --milestone ${milestone}  (the milestone's usage table, which the acceptance package carries: MAINT-0020 P14)`,
+    `${usage}  (the milestone's usage table, which the acceptance package carries: MAINT-0020 P14). COORDINATOR_SESSION.jsonl is your Claude Code session file, one --claude-session for each session that coordinated ${milestone}: ~/.claude/projects/<this checkout's path, each character but a letter or digit as ->/<session ID>.jsonl, whose folder of the same name holds its helpers'. AUTHORISED_AT is when ${milestone} was authorised: \`${authorised}\``,
     evidence ? `wf ci --baseline ${base} --candidate HEAD --delivery-evidence PR_DESCRIPTION_FILE  (checks the acceptance evidence in the pull request description, as the wf ci check does)` : 'no acceptance evidence to check: the project sets no acceptance_evidence, or approves without pull requests',
     ...(prMode ? WAIT_COMMANDS : []),
   ])}

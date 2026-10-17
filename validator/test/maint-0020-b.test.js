@@ -518,14 +518,14 @@ test('MAINT-0020 P3: the acceptance brief names its three helpers with their mod
   const [reviewer, acceptance, walker] = [1, 2, 3].map(n => helperLine(out, n));
   assert.ok(reviewer.startsWith('1. `M-0001 reviewer`: the milestone review of the whole milestone diff (procedures/review.md), by the second model (review.second_model, its final_model): model gpt-6.1-astra, effort xhigh: `setsid nohup codex exec -m gpt-6.1-astra -c model_reasoning_effort=xhigh "M-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`.'), reviewer);
   assert.match(reviewer, /Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review\.fallback says why\.$/);
-  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, fixing or listing for the owner what the walk found, with the table `wf usage --milestone M-0001` prints: model sonnet, effort medium \(roles\.acceptance\)\.$/);
+  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, fixing or listing for the owner what the walk found, with the usage table the `wf usage` command below prints: model sonnet, effort medium \(roles\.acceptance\)\.$/);
   assert.match(walker, /^3\. `M-0001 walker`: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report\. Once the review's fixes are merged, in the background \(procedures\/accept-release\.md\): model opus, effort high \(roles\.walker\)\.$/);
   assert.ok(out.includes('The next milestone\'s draft goes to a fresh helper, `M-0002 plan`, following procedures/readiness.md; it returns the draft\'s pull request.'), out);
   // Every name is the convention wf usage reads, the next milestone's plan helper included.
   assert.deepEqual([reviewer, acceptance, walker].map(l => parseLaunchName(l.match(/`(M-\d{4} [a-z]+)`/)[1]).role), ['reviewer', 'acceptance', 'walker']);
   assert.deepEqual(parseLaunchName('M-0002 plan drafts the next milestone'), { id: 'M-0002', role: 'plan' });
   const commands = out.slice(out.indexOf('## Commands'));
-  assert.ok(commands.includes('- wf usage --milestone M-0001  (the milestone\'s usage table, which the acceptance package carries: MAINT-0020 P14)\n'), commands);
+  assert.ok(commands.includes('- wf usage --milestone M-0001 --claude-session COORDINATOR_SESSION.jsonl --since AUTHORISED_AT  (the milestone\'s usage table, which the acceptance package carries: MAINT-0020 P14). '), commands);
   assert.ok(commands.includes(`- wf ci --baseline ${sha} --candidate HEAD --delivery-evidence PR_DESCRIPTION_FILE  (checks the acceptance evidence in the pull request description, as the wf ci check does)\n`), commands);
   // The waiting and reading lines are the lead brief's own, written once.
   for (const line of [...WAIT_COMMANDS.map(c => `- ${c}`), waitLine(true)]) assert.ok(commands.split('\n').includes(line), line);
@@ -686,4 +686,72 @@ test('MAINT-0020 P3: the acceptance helper has its own role, roles.acceptance, S
   assert.throws(rolesConfig({ acceptance: { model: 'opus 5' } }), /roles\.acceptance\.model must be a plain model name/);
   assert.match(helperLine(closing(t, { roles: { acceptance: { model: 'opus', effort: 'high' } } }).out, 2), /: model opus, effort high \(roles\.acceptance\)\.$/);
   assert.match(helperLine(closing(t, { roles: { paperwork: { model: 'opus', effort: 'max' } } }).out, 2), /: model sonnet, effort medium \(roles\.acceptance\)\.$/, 'roles.paperwork no longer sets it');
+});
+
+// v2.9.0 review fixes S3 (Codex, gpt-6.1-sol at high effort, of 450faa9).
+test('v2.9.0 review S3-1: a milestone review carried over an owner-approved change of the second model is judged by its revision\'s config too', t => {
+  const a = project(t, { configEdit: c => ({ ...c, acceptance_evidence: true, review: { second_model: { tool: 'codex', model: 'old-model' } } }) });
+  a.git('checkout', '-q', '-b', 'accept');
+  a.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')); a.commit('Accept M-0001');
+  // A config-only change the owner approved merges before the acceptance, and the acceptance pull request takes it in.
+  a.git('checkout', '-q', 'main');
+  a.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), review: { second_model: { tool: 'codex', model: 'new-model' } } }));
+  const moved = a.commit('the owner moves review.second_model to new-model');
+  a.git('checkout', '-q', 'accept'); a.git('merge', '-q', '--no-edit', 'main'); const head = a.git('rev-parse', 'HEAD');
+  const accept = review => a.run(['ci', '--baseline', moved, '--candidate', head, '--task', 'T-0001'], { evidence: {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: a.baseline,
+    review: { reviewer: 'codex exec, fresh context', revision: a.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1', ...review },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred: [], tests_changed: [],
+  } });
+  for (const model of ['old-model', 'new-model']) { const r = accept({ model }); assert.equal(r.status, 0, `${model}: ${r.stdout}${r.stderr}`); }
+  const other = accept({ model: 'other-model' });
+  assert.equal(other.status, 1, other.stdout);
+  assert.match(other.out.findings.join(' | '), /acceptance evidence: the milestone review is by new-model or old-model \(review\.second_model\), or says in fallback why it could not be/);
+  assert.equal(accept({ model: 'other-model', fallback: 'codex was signed out here' }).status, 0);
+});
+
+test('v2.9.0 review S3-3: the acceptance brief\'s wf usage command names its inputs, says where to find them, and runs once they are filled', t => {
+  const { p, sha, out } = closing(t);
+  const line = out.split('\n').find(l => l.startsWith('- wf usage '));
+  const command = line.slice(2, line.indexOf('  ('));
+  assert.equal(command, 'wf usage --milestone M-0001 --claude-session COORDINATOR_SESSION.jsonl --since AUTHORISED_AT');
+  assert.match(line, /COORDINATOR_SESSION\.jsonl is your Claude Code session file, one --claude-session for each session that coordinated M-0001: ~\/\.claude\/projects\/<this checkout's path, each character but a letter or digit as ->\/<session ID>\.jsonl, whose folder of the same name holds its helpers'\./);
+  const find = line.match(/ AUTHORISED_AT is when M-0001 was authorised: `([^`]+)`$/)?.[1];
+  assert.equal(find, `git log --first-parent --diff-merges=first-parent --reverse -G'^status: Authorised' --format=%cI ${sha} -- docs/workflow/milestones/M-0001.md | head -1`, line);
+  const since = spawnSync('sh', ['-c', find], { cwd: p.repo, encoding: 'utf8' }).stdout.trim();
+  assert.equal(since, p.git('log', '-1', '--format=%cI', p.initial), 'the first commit with M-0001 Authorised, though it is Active now');
+  // Filled as the brief says, it runs; as printed before, it stopped at once (exit 2).
+  const dir = tempDir(t), env = { ...process.env, HOME: dir };
+  const args = command.replace('COORDINATOR_SESSION.jsonl', claudeSession(dir)).replace('AUTHORISED_AT', since).split(' ').slice(1);
+  const r = spawnSync(process.execPath, [cli, ...args, '--repo', p.repo], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Usage of \d+ agent\(s\)/);
+  assert.equal(spawnSync(process.execPath, [cli, 'usage', '--milestone', 'M-0001', '--repo', p.repo], { encoding: 'utf8', env }).status, 2);
+});
+
+test('v2.9.0 review S3-4: wf next\'s acceptance action keeps the selected candidate in its brief command', t => {
+  const p = project(t);
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active\ntasks: [T-0001]'));
+  const ready = p.commit('M-0001 Active, T-0001 Ready');
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done'));
+  const done = p.commit('T-0001 Done');
+  p.git('checkout', '-q', ready); // the working tree is the baseline: only --candidate reaches the Done task
+  const n = p.run(['next', '--baseline', ready, '--candidate', done]).out;
+  const present = [n.next, ...n.also].find(a => a.kind === 'present');
+  assert.deepEqual(present?.run, [`wf brief --acceptance --milestone M-0001 --baseline ${ready} --candidate ${done}  (the brief for the fresh helpers that close it; post their results)`], JSON.stringify(n, null, 2));
+  const brief = spawnSync(process.execPath, [cli, ...present.run[0].slice(0, present.run[0].indexOf('  (')).split(' ').slice(1), '--repo', p.repo], { encoding: 'utf8' });
+  assert.equal(brief.status, 0, brief.stderr);
+  assert.ok(brief.stdout.split('\n').includes('- Planned tasks: T-0001 (Done)'), brief.stdout);
+});
+
+test('v2.9.0 review S3-5: the next milestone\'s draft is a Draft milestone already there, else the next free ID, never a removed one\'s', t => {
+  const { p } = closing(t);
+  const planner = rev => spawnSync(process.execPath, [cli, 'brief', '--acceptance', '--milestone', 'M-0001', '--repo', p.repo, '--baseline', rev], { encoding: 'utf8' }).stdout.match(/a fresh helper, `(M-\d{4}) plan`/)?.[1];
+  const second = 'docs/workflow/milestones/M-0002.md';
+  p.write(second, fs.readFileSync(path.join(p.repo, 'docs/workflow/milestones/M-0001.md'), 'utf8').replaceAll('M-0001', 'M-0002').replace(/^status: \w+$/m, 'status: Draft'));
+  assert.equal(planner(p.commit('M-0002 drafted')), 'M-0002', 'the Draft one');
+  p.edit(second, x => x.replace('status: Draft', 'status: Authorised'));
+  assert.equal(planner(p.commit('M-0002 authorised')), 'M-0003', 'no Draft: the next free ID');
+  fs.rmSync(path.join(p.repo, second));
+  assert.equal(planner(p.commit('M-0002 removed')), 'M-0003', 'a removed milestone keeps its number');
 });

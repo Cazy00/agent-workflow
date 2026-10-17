@@ -183,6 +183,8 @@ function renderSettings() {
       <label class="choice"><input type="checkbox" name="second_model"${s.review.second_model ? ' checked' : ''}><strong>Use Codex for deep reviews and the milestone review</strong><p>Another model family catches what Claude misses. Small changes get a quick Claude review either way. If Codex runs out or is signed out, a Claude reviewer takes over and says why.</p></label>
       <label class="field"><span>Codex model</span><input type="text" name="second_model_name" value="${esc(s.review.second_model?.model ?? 'gpt-6.1-sol')}" autocomplete="off"></label>
       <label class="field"><span>Highest effort</span><select name="second_model_effort">${['low', 'medium', 'high', 'xhigh'].map(e => `<option value="${e}"${(s.review.second_model?.max_effort ?? 'high') === e ? ' selected' : ''}>${e}</option>`).join('')}</select></label>
+      <label class="field"><span>Codex model for the milestone review</span><input type="text" name="second_model_final" value="${esc(s.review.second_model?.final_model ?? '')}" autocomplete="off"><small>The one last check of everything built. Leave it empty for the model above.</small></label>
+      <label class="field"><span>Its effort</span><select name="second_model_final_effort">${[...new Set(['', 'low', 'medium', 'high', 'xhigh', s.review.second_model?.final_effort ?? ''])].map(e => `<option value="${e}"${(s.review.second_model?.final_effort ?? '') === e ? ' selected' : ''}>${e || 'as a deep review: high, at most the highest effort'}</option>`).join('')}</select><small>At most the highest effort.</small></label>
       <label class="choice"><input type="checkbox" name="acceptance_evidence"${s.acceptance_evidence ? ' checked' : ''}><strong>Require the trial walk and the milestone review before you accept</strong><p>Before asking you to accept a milestone, the agent posts the milestone review and a walk through your trial steps in a browser, in each language, with screenshots and corrected steps (or says why there is no screen to walk). The workflow check refuses the acceptance pull request without them.</p></label>
     </section>
     <section><h2>The project</h2>
@@ -214,7 +216,9 @@ function renderSettings() {
       const r = await api('/api/settings', {
         // A project without a checkpoint shows none picked and keeps none until the owner picks one.
         approval: { label: picked('label'), ...(picked('label') === 'owner-merge' && picked('checkpoint') ? { checkpoint: picked('checkpoint') } : {}), approver: value('approver'), agent_identity: picked('account') === 'worker' ? value('worker') : '', auto_merge: ticked('auto_merge'), defer_to_acceptance: ticked('defer_to_acceptance') },
-        review: { ...(s.review.deep_paths.length ? { deep_paths: s.review.deep_paths } : {}), second_model: ticked('second_model') ? { ...(s.review.second_model ?? {}), tool: 'codex', model: value('second_model_name'), max_effort: value('second_model_effort') } : null },
+        // v2.9.0 review S3-2: the milestone review's model and effort have fields, so the owner sets them here and can lower an
+        // effort the check refuses as above the highest; an empty one is left out (JSON drops undefined).
+        review: { ...(s.review.deep_paths.length ? { deep_paths: s.review.deep_paths } : {}), second_model: ticked('second_model') ? { ...(s.review.second_model ?? {}), tool: 'codex', model: value('second_model_name'), max_effort: value('second_model_effort'), final_model: value('second_model_final').trim() || undefined, final_effort: value('second_model_final_effort') || undefined } : null },
         acceptance_evidence: ticked('acceptance_evidence'),
         project: value('project'), measure: value('measure'),
         client: { title: value('client_title'), language: value('client_language'), detail: value('client_detail'), exclude: [...app.querySelectorAll('[name=exclude]:checked')].map(i => i.value) },

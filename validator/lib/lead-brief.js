@@ -2,11 +2,21 @@
 // not write it by hand and the lead does not read whole records to find its part. In M-0004 of mateen-systems the briefs
 // said "Build it": seven of eight leads implemented their tasks themselves and grew to 400–635 K tokens. The brief says who
 // implements, what the lead must not edit, the task's own records and the commands with their revisions. It grants nothing.
+// MAINT-0020 P1: it also splits the task into slices, one fresh helper each: M-0005's four implementing helpers grew to 571–814 K
+// and spent 37 % of the cache reads, a quarter to a half of their reading a re-read of a file they had read (record §§ 1, 9).
 import { list, loadAll, loadConfig } from './records.js';
 import { ACCEPTANCE } from './acceptance-files.js';
 import { effortOf, launchName, resolveRoles, reviewLevel } from './roles.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
+// The slices of a task: its acceptance entries (else its scope entries), one slice each, at most MAX_SLICES, the entries beyond
+// that grouped in order, the first groups taking the extra; one slice for a light task or fewer than two entries.
+export const MAX_SLICES = 4;
+export function sliceTask(items, level) {
+  const k = level === 'light' ? 1 : Math.min(items.length, MAX_SLICES) || 1;
+  let at = 0;
+  return Array.from({ length: k }, (_, i) => items.slice(at, at += Math.floor(items.length / k) + (i < items.length % k ? 1 : 0)));
+}
 export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
@@ -30,7 +40,10 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const { level, why } = reviewLevel(t, deep);
   const setting = (role, at) => `model ${role.model ?? 'inherit'}, effort ${effortOf(role, at) ?? 'inherit'}`;
   // MAINT-0020 P14: each helper's launch name (roles.js), which `wf usage` reads to attribute its cost to the task and role.
-  const name = role => `\`${launchName(task, role)}\``;
+  const name = (role, slice) => `\`${launchName(task, role, slice)}\``;
+  // MAINT-0020 P1: slice 1 gets the record; a later slice also the earlier checkpoints and the work so far, never a conversation.
+  const slices = sliceTask(acceptance.length ? acceptance : list(t.scope).map(s => `scope ${s}`), level);
+  const given = n => `the task record${n > 1 ? `, the checkpoint commit${n > 2 ? 's' : ''} of ${n > 2 ? `slices 1–${n - 1}` : 'slice 1'} and \`git diff ${base}..HEAD --stat\`` : ''}`;
   // MAINT-0020 P13: friction starts empty and `wf session` refuses it empty, so "none" is a statement the lead makes (F13: all
   // 13 outcomes of M-0005 kept a pre-filled "none").
   const session = { outcome: 'ready-for-review', workflow: { version: pin.version ?? '', revision: pin.revision ?? '' }, implementer: 'helper', summary: '', candidate: '', evidence: ['<the pull request>'], next_action: '', friction: '', models: Object.fromEntries(['lead', 'implementer', 'paperwork'].map(r => [r, { model: '', effort: '' }])) };
@@ -39,7 +52,7 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
 ${t.objective ?? ''}
 
 ## How this task is done
-You are the task lead. A fresh helper implements the task; each fix round goes to a new helper given the record, the review and the head; a small one writes the closing paperwork (the delivery evidence, the pull request description, the handoff and the session outcome). You hold the results, not the files and logs they read: keep your own context small (procedures/execute.md *Coordinate and delegate*).
+You are the task lead. Fresh helpers implement the task, one per slice (below); each fix round goes to a new helper given the record, the review and the head; a small one writes the closing paperwork (the delivery evidence, the pull request description, the handoff and the session outcome). You hold the results, not the files and logs they read: keep your own context small (procedures/execute.md *Coordinate and delegate*).
 
 Launch with these settings (\`roles\` in the config; a model is the harness's own name, inherit leaves it to the session):
 ${bullets([
@@ -50,13 +63,18 @@ ${bullets([
 
 Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.
 
+## Slices (${slices.length})
+Give each slice to its own fresh implementing helper, in order, ending at a checkpoint commit (its message starts \`${task}\`); a helper gets what its slice lists, never an earlier helper's conversation.
+${slices.map((s, i) => `${i + 1}. ${name('implementer', [i + 1, slices.length])}, given ${given(i + 1)}\n${bullets(s.length ? s : ['the whole task']).replace(/^/gm, '   ')}`).join('\n')}
+
+Tell each implementing helper, a fix round's too: read a file once, by range (find with \`grep -n\`, read with \`sed -n a,bp\`); do not re-read what is in your context; put the files and ranges you relied on in your checkpoint commit's message, so the next slice starts from them.
+
 ## The task's records
 - Task record: ${rd}/tasks/${task}.md (status ${t.status ?? '?'}; scope ${list(t.scope).join(', ') || '—'})
 - Milestone ${t.milestone ?? '—'}: ${m.outcome ?? ''}
   - limits: ${m.limits ?? '—'}
   - stop conditions: ${m.stop_conditions ?? '—'}
-- Acceptance:
-${bullets(acceptance.length ? acceptance : ['none'])}
+- Acceptance: ${acceptance.length ? 'in the slices above' : 'none'}
 - Governing, read only what the task needs: ${list(t.governing).join(', ') || '—'}${t.design ? `; design ${list(t.design).join(', ')}` : ''}
 
 ## Do not edit, in this task's pull request: ${governing.join(', ') || 'nothing listed'}

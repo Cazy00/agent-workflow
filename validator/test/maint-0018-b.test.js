@@ -22,7 +22,7 @@ test('MAINT-0018 B1: wf brief --lead prints the task lead\'s brief: the task, wh
   for (const want of [
     /^# T-0001: Task T-0001$/m,
     /Do the work of T-0001/,
-    /A fresh helper implements the task; each fix round goes to a new helper[^;]*; a small one writes the closing paperwork/,
+    /Fresh helpers implement the task, one per slice \(below\); each fix round goes to a new helper[^;]*; a small one writes the closing paperwork/,
     /AC-001-1/,
     /Do not edit, in this task's pull request: [^\n]*docs\/specs\/\*\*/,
     /wf evidence --baseline [0-9a-f]{40} --candidate HEAD --task T-0001/,

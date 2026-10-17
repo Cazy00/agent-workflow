@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig } from '../lib/index.js';
 import { LAUNCH_ROLES, launchName, parseLaunchName } from '../lib/roles.js';
+import { MAX_SLICES, sliceTask } from '../lib/lead-brief.js';
+import { HELPER_PEAK } from '../lib/usage.js';
 import { cli, project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0020, v2.9.0: what M-0005 of mateen-systems measured on v2.7.0, the second part. Later slices append their tests here.
@@ -300,4 +302,123 @@ test('MAINT-0020 P14: the harness readers are adapters behind one contract, so t
   // Each reader returns the reader contract; the aggregator refuses anything else.
   for (const file of ['claude-code.mjs', 'codex.mjs']) assert.match(fs.readFileSync(path.join(root, 'adapters/usage', file), 'utf8'), /export const SCHEMA = 'agent-workflow\/usage-reader@1';[\s\S]*export function read\(paths/);
   assert.match(fs.readFileSync(path.join(root, 'validator/lib/usage.js'), 'utf8'), /Replacing or adding a reader changes only that reader and its line in cli\.js/);
+});
+
+// P1. M-0005's four implementing helpers grew to 571–814 K and spent 37 % of the cache reads; a quarter to a half of their reading
+// re-read a file they had read. The brief splits the task into slices, one fresh helper each, and tells each to read a file once.
+const briefOf = (t, { ids, scope, review } = {}) => {
+  const p = project(t);
+  if (ids) p.write('docs/workflow/acceptance.json', JSON.stringify({ examples: ids.map(id => ({ id, requirement: 'docs/specs/feature.md', method: 'automated' })) }));
+  p.edit(taskPath, x => {
+    if (ids) x = x.replace(/^acceptance: .*$/m, `acceptance: [${ids.join(', ')}]`);
+    if (scope) x = x.replace(/^scope: .*$/m, `scope: [${scope.join(', ')}]`);
+    return review ? x.replace(/^review: .*$/m, `review: ${review}`) : x;
+  });
+  const sha = ids || scope || review ? p.commit('the task') : p.baseline;
+  const r = spawnSync(process.execPath, [cli, 'brief', '--lead', '--task', 'T-0001', '--repo', p.repo, '--baseline', sha], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  return { out: r.stdout, sha };
+};
+const slicesIn = out => {
+  const [, count, block] = out.match(/^## Slices \((\d+)\)\n[^\n]*\n([\s\S]*?)\n\nTell each implementing helper/m);
+  const slices = [...block.matchAll(/^(\d+)\. `([^`]+)`, given ([^\n]+)\n((?: {3}- [^\n]+\n?)+)/gm)].map(m => ({ n: +m[1], name: m[2], given: m[3], items: m[4].trimEnd().split('\n').map(l => l.slice(5)) }));
+  assert.equal(slices.length, +count, 'the heading counts the slices printed');
+  return slices;
+};
+const ids = n => Array.from({ length: n }, (_, i) => `AC-001-${i + 1}`);
+const idsOf = slice => slice.items.map(i => i.split(':')[0]);
+
+test('MAINT-0020 P1: the lead\'s brief prints one slice for one acceptance ID, and one for a light task whatever its IDs', t => {
+  const one = slicesIn(briefOf(t).out);
+  assert.deepEqual(one.map(s => [s.n, s.name, s.given, s.items]), [[1, 'T-0001 implementer, slice 1 of 1', 'the task record', ['AC-001-1: docs/specs/feature.md (inspection)']]]);
+  const light = slicesIn(briefOf(t, { ids: ids(3), review: 'light: copy and styling' }).out);
+  assert.deepEqual(light.map(s => [s.name, idsOf(s)]), [['T-0001 implementer, slice 1 of 1', ids(3)]]);
+  assert.equal(slicesIn(briefOf(t, { ids: ids(3), review: 'standard' }).out).length, 3, 'only a light task is one slice');
+  assert.equal(slicesIn(briefOf(t, { ids: ids(3), review: 'deep' }).out).length, 3);
+});
+
+test('MAINT-0020 P1: the brief prints a slice for each of three IDs, and four for six, the consecutive IDs grouped', t => {
+  const { out, sha } = briefOf(t, { ids: ids(3) });
+  const three = slicesIn(out);
+  assert.deepEqual(three.map(s => [s.name, idsOf(s)]), [1, 2, 3].map(n => [`T-0001 implementer, slice ${n} of 3`, [`AC-001-${n}`]]));
+  assert.ok(three[0].items[0].startsWith('AC-001-1: docs/specs/feature.md (automated)'), 'an ID comes with its requirement and method, as the brief printed them');
+  // Slice 1 gets the record; a later slice also the earlier checkpoints and the work so far, never a conversation.
+  const diff = `\`git diff ${sha}..HEAD --stat\``;
+  assert.deepEqual(three.map(s => s.given), ['the task record', `the task record, the checkpoint commit of slice 1 and ${diff}`, `the task record, the checkpoint commits of slices 1–2 and ${diff}`]);
+  assert.match(out, /^Give each slice to its own fresh implementing helper, in order, ending at a checkpoint commit \(its message starts `T-0001`\); a helper gets what its slice lists, never an earlier helper's conversation\.$/m);
+  const six = slicesIn(briefOf(t, { ids: ids(6) }).out);
+  assert.deepEqual(six.map(s => idsOf(s)), [['AC-001-1', 'AC-001-2'], ['AC-001-3', 'AC-001-4'], ['AC-001-5'], ['AC-001-6']]);
+  assert.deepEqual(six.map(s => s.name), [1, 2, 3, 4].map(n => `T-0001 implementer, slice ${n} of 4`));
+  assert.match(six[3].given, /the checkpoint commits of slices 1–3 and/);
+});
+
+test('MAINT-0020 P1: a task without acceptance IDs is sliced by its scope entries the same way', t => {
+  const scoped = (n, extra) => briefOf(t, { ids: [], scope: Array.from({ length: n }, (_, i) => `src/part${i + 1}`), ...extra }).out;
+  const three = slicesIn(scoped(3));
+  assert.deepEqual(three.map(s => [s.name, s.items]), [1, 2, 3].map(n => [`T-0001 implementer, slice ${n} of 3`, [`scope src/part${n}`]]));
+  assert.deepEqual(slicesIn(scoped(6)).map(s => s.items.length), [2, 2, 1, 1]);
+  assert.deepEqual(slicesIn(scoped(1)).map(s => s.items), [['scope src/part1']]);
+  assert.equal(slicesIn(scoped(3, { review: 'light' })).length, 1);
+  // An acceptance ID wins over scope: three IDs on a task with a long scope are three slices.
+  assert.deepEqual(slicesIn(briefOf(t, { ids: ids(3), scope: ['a', 'b', 'c', 'd', 'e'] }).out).map(idsOf), [['AC-001-1'], ['AC-001-2'], ['AC-001-3']]);
+  const none = slicesIn(briefOf(t, { ids: [], scope: [] }).out);
+  assert.deepEqual(none.map(s => [s.name, s.items]), [['T-0001 implementer, slice 1 of 1', ['the whole task']]]);
+  assert.match(briefOf(t, { ids: [] }).out, /^- Acceptance: none$/m);
+  assert.match(briefOf(t).out, /^- Acceptance: in the slices above$/m);
+});
+
+test('MAINT-0020 P1: slices are balanced groups of consecutive entries, at most four, and a slice\'s launch name is the convention wf usage reads', t => {
+  assert.equal(MAX_SLICES, 4);
+  const items = n => Array.from({ length: n }, (_, i) => i + 1);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 9].map(n => sliceTask(items(n), 'standard').map(s => s.length)), [[0], [1], [1, 1], [1, 1, 1], [1, 1, 1, 1], [2, 1, 1, 1], [2, 2, 1, 1], [2, 2, 2, 1], [3, 2, 2, 2]]);
+  assert.deepEqual(sliceTask(items(9), 'standard').flat(), items(9), 'every entry once, in order');
+  assert.deepEqual(sliceTask(items(5), 'light'), [items(5)]);
+  for (const s of slicesIn(briefOf(t, { ids: ids(3) }).out)) assert.deepEqual(parseLaunchName(s.name), { id: 'T-0001', role: 'implementer' });
+  assert.equal(launchName('T-0042', 'fix', [2, 5]), 'T-0042 fix, slice 2 of 5');
+  assert.equal(launchName('T-0042', 'fix'), 'T-0042 fix', 'no slice, no suffix');
+});
+
+test('MAINT-0020 P1: the brief tells each implementing helper to read a file once, by range, and to name what it relied on', t => {
+  const { out } = briefOf(t, { ids: ids(2) });
+  assert.ok(out.split('\n').includes('Tell each implementing helper, a fix round\'s too: read a file once, by range (find with `grep -n`, read with `sed -n a,bp`); do not re-read what is in your context; put the files and ranges you relied on in your checkpoint commit\'s message, so the next slice starts from them.'), out);
+  // The fix round stays with a new helper given the record, the review and the head.
+  assert.match(out, /each fix round goes to a new helper given the record, the review and the head;/);
+});
+
+test('MAINT-0020 P1: execute.md has the lead give each slice to its own fresh helper, in order', () => {
+  const execute = fs.readFileSync(path.join(root, 'procedures/execute.md'), 'utf8');
+  assert.ok(execute.includes('It gives each slice `wf brief --lead` lists to its own fresh helper, in order, each ending at its checkpoint commit,'));
+  assert.doesNotMatch(execute, /It has a fresh helper implement it/);
+});
+
+test('MAINT-0020 P1: wf usage flags an implementer or fix whose peak context passed 350 K, naming P1, and no other', t => {
+  const dir = tempDir(t), id = 'c0ffee00-0000-4000-8000-000000000002', sub = path.join(dir, 'claude', id, 'subagents'), codex = path.join(dir, 'codex');
+  fs.mkdirSync(codex);
+  jsonl(path.join(dir, 'claude', `${id}.jsonl`), [call('main-1', 0, usage({ read: 1000, w1: 2000 }))]);
+  // One call each, peak = input + reads + writes: the 350 K line itself is not over.
+  const helper = (agent, description, peak) => {
+    jsonl(path.join(sub, `agent-${agent}.jsonl`), [call(`${agent}-1`, 1, usage({ read: peak - 20003, w5: 20000 }))]);
+    fs.writeFileSync(path.join(sub, `agent-${agent}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description }));
+  };
+  helper('a', 'T-0007 fix R-0012 findings', 360000); // read first, flagged second: the largest comes first
+  helper('b', 'T-0007 implementer, slice 2 of 2', 300000);
+  helper('c', 'T-0007 implementer, slice 1 of 2', 400000);
+  helper('d', 'T-0007 reviewer: second look', 500000);
+  helper('e', 'T-0008 implementer', HELPER_PEAK);
+  helper('f', 'Implement the old way for T-0009', HELPER_PEAK + 1);
+  const run = (...args) => spawnSync(process.execPath, [cli, 'usage', '--repo', dir, '--claude-session', path.join(dir, 'claude', `${id}.jsonl`), '--codex-dir', codex, ...args], { encoding: 'utf8', env: { ...process.env, HOME: dir } });
+  const text = run();
+  assert.equal(text.status, 0, text.stderr);
+  const flagged = text.stdout.split('\n').filter(l => /peaked at/.test(l));
+  assert.deepEqual(flagged, [
+    '  - implementer of T-0007 "T-0007 implementer, slice 1 of 2" peaked at 400 K, over 350 K: slices keep a helper under it (MAINT-0020 P1; wf brief --lead lists them)',
+    '  - fix of T-0007 "T-0007 fix R-0012 findings" peaked at 360 K, over 350 K: slices keep a helper under it (MAINT-0020 P1; wf brief --lead lists them)',
+    '  - implementer of T-0009 "Implement the old way for T-0009" peaked at 351 K, over 350 K: slices keep a helper under it (MAINT-0020 P1; wf brief --lead lists them)',
+  ]);
+  assert.ok(text.stdout.indexOf('peaked at') > text.stdout.indexOf('\nNotes:\n') && text.stdout.includes('\nNotes:\n'), 'in the Notes of the text output');
+  const json = JSON.parse(run('--json').stdout);
+  assert.equal(json.notes.filter(n => /peaked at/.test(n)).length, 3);
+  const flaggedFor = task => JSON.parse(run('--json', '--task', task).stdout).notes.filter(n => /peaked at/.test(n)).length;
+  assert.deepEqual([flaggedFor('T-0007'), flaggedFor('T-0008')], [2, 0], 'the filter leaves other tasks out, and a helper exactly at the line is not over it');
+  assert.ok(fs.readFileSync(path.join(root, 'SCHEMA.md'), 'utf8').includes(`over ${HELPER_PEAK / 1000} K, \`HELPER_PEAK\``), 'SCHEMA.md documents the threshold');
 });

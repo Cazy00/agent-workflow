@@ -22,6 +22,9 @@ const FIELDS = ['input', 'cache_read', 'cache_write_5m', 'cache_write_1h', 'outp
 // A call writes after a wait when the gap since its agent's previous call outlived the cache its writes use and it wrote more than
 // REBUILD: M-0005's helpers rebuilt 19.4 M of their 31.5 M written tokens so (record § 9, F11).
 const LIFETIME = { cache_write_5m: 300, cache_write_1h: 3600 }, REBUILD = 20000;
+// MAINT-0020 P1: the peak context an implementing helper (implementer or fix) should stay under; M-0005's four largest reached
+// 571–814 K. Slices (wf brief --lead) are the cut; this flags a recurrence, since no gate can read a harness's token counts.
+export const HELPER_PEAK = 350000;
 const ROLES = ['coordinator', 'lead', 'implementer', 'fix', 'reviewer', 'paperwork', 'walker', 'acceptance', 'other'];
 // Descriptions older than the launch-name convention (roles.js), as M-0005's read, in this order: "Task lead for T-0029" is a
 // lead, "Implement T-0035 review fixes" a fix.
@@ -164,6 +167,7 @@ export function evaluateUsage({ readings, since = null, until = null, task = nul
   const notesOut = [...notes, ...readings.flatMap(r => r.notes ?? [])];
   const inferred = agents.filter(a => a.attribution === 'inferred').length, none = agents.filter(a => a.attribution === 'none').length;
   if (inferred || none) notesOut.push(`${inferred} agent(s) attributed by the words of their description (inferred) and ${none} by none: their launch names do not follow the convention (wf brief --lead prints it)`);
+  for (const a of agents.filter(a => ['implementer', 'fix'].includes(a.role) && a.peak_context > HELPER_PEAK).sort((x, y) => y.peak_context - x.peak_context)) notesOut.push(`${a.role} of ${a.task ?? 'no task'}${a.description ? ` "${a.description}"` : ''} peaked at ${Math.ceil(a.peak_context / 1e3)} K, over ${tok(HELPER_PEAK)}: slices keep a helper under it (MAINT-0020 P1; wf brief --lead lists them)`);
   const unpriced = agents.reduce((n, a) => n + a.unpriced_calls, 0);
   if (priced && unpriced) notesOut.push(`${unpriced} call(s) of models usage.prices does not name are left out of the estimate`);
   if (task && !agents.length) notesOut.push(`no agent of ${task} has a call in the window`);

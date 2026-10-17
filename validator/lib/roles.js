@@ -33,8 +33,9 @@ export function reviewLevel(task, deepPaths = []) {
 // MAINT-0020 P14: the launch-name convention. A helper's description starts with its task or milestone and its role, then free
 // text ("T-0025 implementer shop time zone"), so `wf usage` attributes its cost; M-0005's two studies sorted 51 helpers by hand.
 // `wf brief --lead` prints the names; a description that does not follow it is read by keywords and marked inferred (usage.js).
+// MAINT-0020 P1: a slice's helper adds ", slice N of M" after the role, which parseLaunchName reads past.
 export const LAUNCH_ROLES = { task: ['lead', 'implementer', 'fix', 'reviewer', 'paperwork'], milestone: ['walker', 'acceptance', 'reviewer'] };
-export const launchName = (id, role) => `${id} ${role}`;
+export const launchName = (id, role, slice = null) => `${id} ${role}${slice ? `, slice ${slice[0]} of ${slice[1]}` : ''}`;
 export function parseLaunchName(description) {
   const m = String(description ?? '').match(/^(T-\d{4}|M-\d{4}) ([a-z]+)(?=$|[\s:,.;(—–-])/);
   return m && LAUNCH_ROLES[m[1][0] === 'T' ? 'task' : 'milestone'].includes(m[2]) ? { id: m[1], role: m[2] } : null;

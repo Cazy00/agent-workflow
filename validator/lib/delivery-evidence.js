@@ -37,7 +37,8 @@ const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verificatio
 
 // Agent-attested evidence for the exact candidate. Every problem is an error; nothing becomes `unverified`. A finding the
 // agent accepted rather than fixed needs a stated resolution, and ci.js leaves that candidate's merge to the owner.
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {} }) {
+// MAINT-0021: reviewOptional, for a test-only change (ci.js), lets the review be left out or name level none.
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {}, reviewOptional = false }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -66,7 +67,9 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
     if (stage === 'verification' && !s.checks.some(c => c?.result === 'passed')) errors.push('verification lists no check the agent ran and saw pass');
   }
   const r = evidence.review;
+  if (reviewOptional && (r == null || (isObject(r) && r.level === 'none'))) return errors;
   if (!isObject(r)) return [...errors, 'independent review evidence is missing'];
+  if (r.level === 'none') errors.push('review level none is only for a test-only change (procedures/review.md)');
   if (typeof r.reviewer !== 'string' || !r.reviewer.trim()) errors.push('review needs a reviewer');
   if (r.implementer !== owner) errors.push('review implementer must be the tasks\' owner');
   if (typeof r.reviewer === 'string' && [r.implementer, owner].some(v => typeof v === 'string' && r.reviewer.trim().toLowerCase() === v.trim().toLowerCase())) errors.push('reviewer must differ from the implementer');
@@ -100,7 +103,7 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
 // MAINT-0016: the review's level (procedures/review.md). A change to a path the project names in review.deep_paths needs a
 // deep review, by the configured second model or with the reason it could not be used (review.fallback); running out of
 // a second model is then a recorded fallback, not a stop.
-export const REVIEW_LEVELS = ['light', 'standard', 'deep'];
+export const REVIEW_LEVELS = ['none', 'light', 'standard', 'deep'];
 const BLOCKING = /^(?:blocking|critical|high)$/i;
 export const isBlocking = f => BLOCKING.test(String(f?.severity ?? '').trim());
 export function reviewLevelErrors({ review, deep = [], secondModel = null }) {

@@ -96,13 +96,24 @@ test('a review states its level, model and any fallback; a deep path needs a dee
   const second = { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' };
   const deep = ['src/auth/a.js'];
   assert.deepEqual(reviewLevelErrors({ review: r }), []);
-  assert.match(reviewLevelErrors({ review: { ...r, level: 'heavy' } }).join(), /level must be one of light, standard, deep/);
+  assert.match(reviewLevelErrors({ review: { ...r, level: 'heavy' } }).join(), /level must be one of none, light, standard, deep/);
   assert.match(reviewLevelErrors({ review: { ...r, model: ' ' } }).join(), /review model must be a non-empty text/);
   assert.match(reviewLevelErrors({ review: { ...r, level: 'light' }, deep }).join(), /need a deep review \(review\.deep_paths\): src\/auth\/a\.js; this review's level is light/);
   assert.match(reviewLevelErrors({ review: { ...r, level: 'deep' }, deep, secondModel: second }).join(), /a deep review is by gpt-6\.1-sol/);
   assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep', model: 'gpt-6.1-sol' }, deep, secondModel: second }), []);
   assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep', model: 'claude-opus-5-5', fallback: 'codex: usage limit reached' }, deep, secondModel: second }), []);
   assert.deepEqual(reviewLevelErrors({ review: { ...r, level: 'deep' }, deep }), [], 'without a second model any deep review will do');
+});
+
+test('MAINT-0021: a test-only change may leave the review out or name level none; other changes may not', () => {
+  const none = evidence(); delete none.review;
+  assert.deepEqual(errorsFor(none, { reviewOptional: true }), []);
+  const levelNone = evidence(); levelNone.review = { level: 'none' };
+  assert.deepEqual(errorsFor(levelNone, { reviewOptional: true }), []);
+  const full = evidence(); full.review.level = 'none';
+  assert.match(errorsFor(full).join(), /review level none is only for a test-only change \(procedures\/review\.md\)/);
+  assert.match(errorsFor(none).join(), /independent review evidence is missing/);
+  assert.deepEqual(reviewLevelErrors({ review: { ...evidence().review, level: 'none' } }), []);
 });
 
 test('blocking, critical and high are blocking severities; should fix, note, medium and low are not', () => {

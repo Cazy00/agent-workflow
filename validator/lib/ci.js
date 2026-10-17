@@ -1,7 +1,7 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
 import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list, namesIn } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths, deepChanges } from './paths.js';
+import { classifyPaths, deepChanges, isTestOnlyPath } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
@@ -186,8 +186,11 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md);
       // a test file only where the glob names tests itself (MAINT-0018, lib/paths.js).
       const deep = deepChanges(config.review?.deep_paths, production);
+      // MAINT-0021: a test-only change needs no review: every production path a test path, no acceptance test, nothing deep.
+      const testOnly = production.length > 0 && production.every(isTestOnlyPath) && !classes.some(c => c.acceptance_test) && deep.length === 0;
+      if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly }),
         ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null }),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);

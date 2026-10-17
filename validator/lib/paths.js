@@ -31,6 +31,10 @@ const TEST_FILE = [
   /[a-z0-9]Tests?\.(?:java|kts?|scala|groovy|cs|swift|php)$/,
 ];
 export const isTestPath = p => CODE.test(p) && TEST_FILE.some(r => r.test(p));
+// MAINT-0021: a path a test-only change may touch with no review (procedures/review.md): anything in a test/, tests/ or
+// __tests__/ folder, fixtures and helpers included, or a test file by isTestPath. ci.js adds the rest of the definition: no
+// owner-approved acceptance test and no deep path.
+export const isTestOnlyPath = p => /(?:^|\/)(?:tests?|__tests__)\//.test(p) || isTestPath(p);
 const NAMES_TESTS = /(?:^|[^A-Za-z])(?:tests?|__tests__|specs?)(?:[^A-Za-z]|$)|Tests?(?![a-z])/;
 const byName = g => /^\*\*/.test(g);
 export const deepChanges = (globs, paths) => paths.filter(p => (globs ?? []).map(patternOf).some(g => matchGlob(g, p) && (!byName(g) || !isTestPath(p) || NAMES_TESTS.test(g))));

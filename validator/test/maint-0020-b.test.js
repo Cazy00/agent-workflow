@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig } from '../lib/index.js';
 import { DEFAULT_ROLES, LAUNCH_ROLES, launchName, parseLaunchName, resolveRoles } from '../lib/roles.js';
-import { acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
+import { FIRST_LOAD_LIMIT, acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
 import { INSTALLED } from '../../adapters/upgrade.mjs';
 import { MAX_SLICES, READ_ONCE, WAIT_COMMANDS, sliceTask, waitLine } from '../lib/lead-brief.js';
 import { HELPER_PEAK, READER, evaluateUsage } from '../lib/usage.js';
@@ -518,8 +518,8 @@ test('MAINT-0020 P3: the acceptance brief names its three helpers with their mod
   const [reviewer, acceptance, walker] = [1, 2, 3].map(n => helperLine(out, n));
   assert.ok(reviewer.startsWith('1. `M-0001 reviewer`: the milestone review of the whole milestone diff (procedures/review.md), by the second model (review.second_model, its final_model): model gpt-6.1-astra, effort xhigh: `setsid nohup codex exec -m gpt-6.1-astra -c model_reasoning_effort=xhigh "M-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`.'), reviewer);
   assert.match(reviewer, /Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review\.fallback says why\.$/);
-  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, fixing or listing for the owner what the walk found, with the usage table the `wf usage` command below prints: model sonnet, effort medium \(roles\.acceptance\)\.$/);
-  assert.match(walker, /^3\. `M-0001 walker`: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report\. Once the review's fixes are merged, in the background \(procedures\/accept-release\.md\): model opus, effort high \(roles\.walker\)\.$/);
+  assert.equal(acceptance, '2. `M-0001 acceptance`: the owner\'s trial environment with demo data, and the walker\'s own demo accounts and demo business (or tenant), never those the owner will use (a local production build counts when that is what the owner is given: it starts it and keeps it running for the walker; with no environment the owner can be given, the walk is unavailable, a blocker for the plan\'s question from `wf doctor`); and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps. Once the review and the walk are back, a fresh one completes the package and its evidence (templates/acceptance-evidence.json) from their results, fixing or listing for the owner what the walk found (each scenario still stuck, and a slow first load, in `deferred`), with the usage table the `wf usage` command below prints, and resets or reseeds a shared dataset after the last walk, before the owner is told the trial is ready: model sonnet, effort medium (roles.acceptance).');
+  assert.equal(walker, '3. `M-0001 walker`: the trial walk on that environment, the address and build the owner will be given, never a development server, in its own demo accounts and business, a fresh one for each unguided pass: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page\'s load time, and over 5 s is a finding to report. Once the review\'s fixes are merged, in the background (procedures/accept-release.md): model opus, effort high (roles.walker).');
   assert.ok(out.includes('The next milestone\'s draft goes to a fresh helper, `M-0002 plan`, following procedures/readiness.md; it returns the draft\'s pull request.'), out);
   // Every name is the convention wf usage reads, the next milestone's plan helper included.
   assert.deepEqual([reviewer, acceptance, walker].map(l => parseLaunchName(l.match(/`(M-\d{4} [a-z]+)`/)[1]).role), ['reviewer', 'acceptance', 'walker']);
@@ -614,11 +614,12 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted 
 // P7. M-0005's walk ran on a development server, which the profile's trial-walk line started, and followed the steps. The owner's
 // trial, on the same server, took 30 s to open and found, starting cold, that a new shop's Today never led to setup (T-0037).
 const REV = 'c'.repeat(40);
-const walkErrors = (edit = w => w) => acceptanceEvidenceErrors({ milestone: 'M-0001', config: {}, candidate: { name: REV, kind: 'dir' }, records: { tasks: new Map() }, evidence: {
-  schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: REV, deferred: [], tests_changed: [],
+const walkErrors = (edit = w => w, top = {}) => acceptanceEvidenceErrors({ milestone: 'M-0001', config: {}, candidate: { name: REV, kind: 'dir' }, records: { tasks: new Map() }, evidence: {
+  schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: REV, deferred: [], tests_changed: [], ...top,
   review: { reviewer: 'codex exec, fresh context', model: 'gpt-6.1-sol', revision: REV, report: 'https://github.com/o/r/pull/9#issuecomment-1' },
   walkthrough: edit({
-    revision: REV, trial_environment: 'https://Staging.Example.com/shop/, build 1.4.0', environment: 'https://staging.example.com/shop, build 1.4.0', first_load_seconds: 2.4,
+    revision: REV, trial_environment: { address: 'HTTPS://Staging.Example.com:443/shop/', build: '1.4.0' }, address: 'https://staging.example.com/shop', build: ' 1.4.0 ',
+    environment: 'Chromium 140, Playwright 1.56', walk_data: 'separate', first_load_seconds: 2.4,
     walker: 'trial-walker subagent', languages: ['en'], viewports: ['390x844'],
     unguided: [{ scenario: 'AC-001-1', outcome: 'A new shop is set up from Today', result: 'reached' }],
     steps: [{ step: '1. Open Today', scenario: 'AC-001-1', expected: 'the setup card', observed: 'the setup card', result: 'passed', screenshot: 'https://github.com/o/r/pull/9#step-1' }],
@@ -626,14 +627,17 @@ const walkErrors = (edit = w => w) => acceptanceEvidenceErrors({ milestone: 'M-0
 } });
 
 test('MAINT-0020 P7(a): the walk is on the address and build the owner is given, and records the first load', () => {
-  assert.deepEqual(walkErrors(), [], 'the same address and build, but for the host\'s case and a trailing slash');
-  for (const env of ['http://localhost:5173/shop, build 1.4.0', 'https://staging.example.com/Shop, build 1.4.0', 'https://staging.example.com/shop, build 1.4.1']) {
-    assert.deepEqual(walkErrors(w => ({ ...w, environment: env })), [`the walkthrough ran on ${env}, not the trial environment the owner is given (https://Staging.Example.com/shop/, build 1.4.0): walk that address and build, never a development server`], env);
+  assert.deepEqual(walkErrors(), [], 'the same address and build, but for the scheme\'s and host\'s case, the default port, a trailing slash and spaces');
+  for (const [k, v, given] of [['address', 'http://localhost:5173/shop', 'HTTPS://Staging.Example.com:443/shop/'], ['address', 'https://staging.example.com/Shop', 'HTTPS://Staging.Example.com:443/shop/'], ['address', 'https://staging.example.com:8443/shop', 'HTTPS://Staging.Example.com:443/shop/'], ['build', '1.4.1', '1.4.0']]) {
+    assert.deepEqual(walkErrors(w => ({ ...w, [k]: v })), [`the walkthrough's ${k}, ${v}, is not trial_environment's, ${given}: the evidence must say the walk was on the ${k} the owner is given`], v);
   }
-  assert.deepEqual(walkErrors(({ trial_environment, ...w }) => w), ['the walkthrough needs its trial_environment']);
+  for (const k of ['address', 'build', 'environment']) assert.deepEqual(walkErrors(({ [k]: _, ...w }) => w), [`the walkthrough needs its ${k}`], k);
+  const needs = 'the walkthrough needs its trial_environment, the address and build the owner is given: { address, build }';
+  for (const te of [undefined, 'https://staging.example.com, build 1.4.0', { address: 'https://staging.example.com' }, { address: ' ', build: '1.4.0' }]) assert.deepEqual(walkErrors(w => ({ ...w, trial_environment: te })), [needs], JSON.stringify(te));
   for (const bad of [undefined, null, '2.4', -1, Number.NaN]) assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: bad })), ['the walkthrough needs first_load_seconds, the first page\'s load time the walker measured: a number, 0 or more'], String(bad));
   assert.deepEqual(walkErrors(({ first_load_seconds, ...w }) => w).length, 1, 'missing');
-  for (const ok of [0, 31]) assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: ok })), [], 'a slow first load is a finding for the package, not a failed walk');
+  assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: 0 })), []);
+  assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: 31 }), { deferred: ['The first load takes 31 s (T-0038)'] }), [], 'a slow first load is a finding for the owner, not a failed walk');
   assert.deepEqual(walkErrors(() => ({ not_applicable: 'the project has no user interface' })), [], 'a walk that does not apply is unchanged');
   assert.match(walkErrors(() => ({ not_applicable: 'no user interface', first_load_seconds: 1 })).join(' | '), /a walkthrough that does not apply says only why, in not_applicable/);
 });
@@ -646,11 +650,12 @@ test('MAINT-0020 P7(b): before the steps, each scenario they name is tried from 
   // Steps that name no scenario: one entry is all the check can ask (SCHEMA.md).
   assert.deepEqual(walkErrors(w => ({ ...w, steps: w.steps.map(({ scenario, ...s }) => s), unguided: [{ scenario: 'a new shop', outcome: 'The owner sets up a new shop', result: 'reached' }] })), []);
   const stuck = extra => w => ({ ...w, unguided: [{ ...w.unguided[0], result: 'stuck', ...extra }] });
-  for (const note of [{}, { note: ' ' }]) assert.deepEqual(walkErrors(stuck(note)), ['unguided entry 1 got stuck: its note says where'], JSON.stringify(note));
-  assert.deepEqual(walkErrors(stuck({ note: 'Today shows an empty list and no way to the setup' })), [], 'stuck is a finding for the acceptance package, not a failed walk');
+  const listed = { deferred: ['AC-001-1: a new shop\'s Today never leads to the setup'] };
+  for (const note of [{}, { note: ' ' }]) assert.deepEqual(walkErrors(stuck(note), listed), ['unguided entry 1 got stuck: its note says where'], JSON.stringify(note));
+  assert.deepEqual(walkErrors(stuck({ note: 'Today shows an empty list and no way to the setup' }), listed), [], 'stuck is a finding for the owner, not a failed walk');
   assert.deepEqual(walkErrors(w => ({ ...w, unguided: [{ ...w.unguided[0], note: '' }] })), ['unguided entry 1\'s note must be a non-empty text when given']);
   for (const bad of [{ scenario: 'AC-001-1', outcome: 'x', result: 'passed' }, { scenario: 'AC-001-1', result: 'reached' }, { scenario: 'AC-001-1', outcome: ' ', result: 'stuck', note: 'x' }]) {
-    assert.deepEqual(walkErrors(w => ({ ...w, unguided: [bad] })), ['unguided entry 1 needs scenario, outcome and a result, reached or stuck'], JSON.stringify(bad));
+    assert.deepEqual(walkErrors(w => ({ ...w, unguided: [bad] }), listed), ['unguided entry 1 needs scenario, outcome and a result, reached or stuck'], JSON.stringify(bad));
   }
   assert.deepEqual(walkErrors(w => ({ ...w, steps: [{ ...w.steps[0], scenario: ' ' }] })), ['walkthrough step 1\'s scenario must be a non-empty text when given']);
 });
@@ -663,7 +668,8 @@ test('MAINT-0020 P7: the walker, the procedure and the brief walk the owner\'s a
   }
   assert.match(read('templates/profile.md'), /the address and build the owner will be given, never a development server/, 'the profile\'s trial-walk line (record § 9)');
   const w = JSON.parse(read('templates/acceptance-evidence.json')).walkthrough;
-  assert.deepEqual(Object.keys(w), ['revision', 'trial_environment', 'environment', 'first_load_seconds', 'walker', 'languages', 'viewports', 'unguided', 'steps']);
+  assert.deepEqual(Object.keys(w), ['revision', 'trial_environment', 'address', 'build', 'environment', 'walk_data', 'first_load_seconds', 'walker', 'languages', 'viewports', 'unguided', 'steps']);
+  assert.deepEqual(Object.keys(w.trial_environment), ['address', 'build']);
   assert.deepEqual([Object.keys(w.unguided[0]), Object.keys(w.steps[0])], [['scenario', 'outcome', 'result', 'note'], ['step', 'scenario', 'expected', 'observed', 'result', 'screenshot']]);
   // bin/wf-upgrade refreshes the walker where a project left it as its pinned release's copy, as for v2.7.0 (adapters/upgrade.mjs).
   assert.ok(INSTALLED.some(i => i.path === '.claude/agents/trial-walker.md' && i.template === 'templates/claude/agents/trial-walker.md'));
@@ -754,4 +760,71 @@ test('v2.9.0 review S3-5: the next milestone\'s draft is a Draft milestone alrea
   assert.equal(planner(p.commit('M-0002 authorised')), 'M-0003', 'no Draft: the next free ID');
   fs.rmSync(path.join(p.repo, second));
   assert.equal(planner(p.commit('M-0002 removed')), 'M-0003', 'a removed milestone keeps its number');
+});
+
+// v2.9.0 review fixes S4 (a fresh Claude reviewer of b33f06a, standing in for the second model).
+const doc = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+const WALK_DATA = 'the walkthrough\'s walk_data is separate (the walker\'s own demo accounts and business, a fresh one for each unguided pass) or reset (the one shared dataset reset or reseeded after the last walk, before the owner is told), so the owner\'s trial starts cold';
+
+test('v2.9.0 review S4-1: the walk leaves the owner\'s trial cold: its own demo accounts and business, or one shared dataset reset after it', t => {
+  for (const bad of [undefined, '', 'shared', 'Separate']) assert.deepEqual(walkErrors(w => ({ ...w, walk_data: bad })), [WALK_DATA], String(bad));
+  assert.deepEqual(walkErrors(w => ({ ...w, walk_data: 'reset' })), []);
+  assert.deepEqual(walkErrors(() => ({ not_applicable: 'the project has no user interface' })), [], 'no walk, no walk data');
+  for (const [name, text] of [['trial-walker.md', doc('templates/claude/agents/trial-walker.md')], ['accept-release.md', doc('procedures/accept-release.md')], ['the brief', closing(t).out]]) {
+    for (const said of [/own demo accounts and (demo )?business/, /never those the owner will use/, /a fresh one for each unguided pass/, /resets or reseeds/, /after the last walk, before the owner is told the trial is ready/]) assert.match(text, said, name);
+  }
+});
+
+test('v2.9.0 review S4-2, S4-3: the address and build walked agree with those the owner is given, read as a URL or trimmed; environment is free text', () => {
+  const at = (given, walked, environment = 'Firefox 141 at 390x844') => walkErrors(w => ({ ...w, trial_environment: given, ...walked, environment }));
+  for (const [given, walked] of [['https://x.com', 'https://x.com/'], ['https://x.com:443/a', 'HTTPS://X.COM/a'], ['http://x.com:80/', 'http://x.com'], ['https://x.com/a?b=1', 'https://x.com/a/?b=1'], ['file:///Applications/Mateen.app/', 'file:///Applications/Mateen.app'], ['Mateen.app', ' Mateen.app ']]) {
+    assert.deepEqual(at({ address: given, build: '1.4.0' }, { address: walked, build: ' 1.4.0' }), [], `${given} | ${walked}`);
+  }
+  for (const [given, walked] of [['https://x.com/a', 'https://x.com/A'], ['https://x.com', 'https://x.com:8443'], ['https://x.com', 'http://x.com'], ['Mateen.app', 'Mateen Dev.app']]) {
+    assert.deepEqual(at({ address: given, build: '1.4.0' }, { address: walked, build: '1.4.0' }), [`the walkthrough's address, ${walked}, is not trial_environment's, ${given}: the evidence must say the walk was on the address the owner is given`], `${given} | ${walked}`);
+  }
+  assert.deepEqual(at({ address: 'https://x.com', build: '1.4.0' }, { address: 'https://x.com', build: 'v1.4.0' }), ['the walkthrough\'s build, v1.4.0, is not trial_environment\'s, 1.4.0: the evidence must say the walk was on the build the owner is given']);
+  // A consistency check only: both can name a development server, and the error does not claim to have told one apart.
+  assert.deepEqual(at({ address: 'http://localhost:5173', build: 'dev' }, { address: 'http://localhost:5173/', build: 'dev' }), []);
+  assert.doesNotMatch(at({ address: 'https://x.com', build: '1' }, { address: 'http://localhost:5173', build: '1' }).join(' | '), /development server/);
+  assert.match(doc('SCHEMA.md'), /This is a consistency check: both can name a development server\. The defence against one is the profile's trial line, the walker's instructions and `first_load_seconds`\./);
+});
+
+test('v2.9.0 review S4-4: a local production build can be the trial environment, the acceptance helper keeps it running, and none to give is a blocker', t => {
+  const texts = { walker: doc('templates/claude/agents/trial-walker.md'), procedure: doc('procedures/accept-release.md'), brief: closing(t).out, profile: doc('templates/profile.md') };
+  for (const [name, text] of Object.entries(texts)) assert.match(text, /a local production build (is the trial environment|counts) when that is what the owner is given/i, name);
+  for (const name of ['walker', 'procedure', 'brief']) for (const said of [/starts it and keeps it running for (you|the walker)/, /no environment the owner can be given/i]) assert.match(texts[name], said, name);
+  for (const name of ['procedure', 'brief', 'profile']) assert.match(texts[name], /no environment the owner can be given, the walk is (unavailable, )?a blocker|No environment the owner can be given makes the walk unavailable, a blocker/, name);
+  for (const name of ['procedure', 'brief', 'profile']) assert.match(texts[name], /the plan's question/, name);
+});
+
+test('v2.9.0 review S4-5: a scenario still stuck, and a first load over FIRST_LOAD_LIMIT, are listed in deferred for the owner', t => {
+  assert.equal(FIRST_LOAD_LIMIT, 5);
+  const stuck = w => ({ ...w, unguided: [{ ...w.unguided[0], result: 'stuck', note: 'Today shows no way to the setup' }, { ...w.unguided[0], result: 'stuck', note: 'again, from a second fresh business' }] });
+  const owed = ['deferred must list each scenario the walk still got stuck on, for the owner: AC-001-1'];
+  assert.deepEqual(walkErrors(stuck), owed);
+  assert.deepEqual(walkErrors(stuck, { deferred: ['R-0001/N1: unrelated'] }), owed);
+  assert.deepEqual(walkErrors(stuck, { deferred: ['AC-001-1: a new shop\'s Today never leads to the setup'] }), []);
+  assert.deepEqual(walkErrors(), [], 'fixed, and re-walked: reached, nothing owed');
+  assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: FIRST_LOAD_LIMIT })), [], 'at the limit');
+  assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: 5.1 })), ['deferred must list the first load of 5.1 s, over 5 s, for the owner: a line naming the first load']);
+  assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: 5.1 }), { deferred: ['First load: 5.1 s on a phone'] }), []);
+  assert.match(helperLine(closing(t).out, 3), new RegExp(`over ${FIRST_LOAD_LIMIT} s is a finding to report`));
+  assert.match(JSON.parse(doc('templates/acceptance-evidence.json')).deferred[0], /each scenario still stuck \(by its name\) and a first load over 5 s \(naming the first load\)/);
+  assert.match(doc('SCHEMA.md'), /over 5 \(`FIRST_LOAD_LIMIT`\) a `deferred` line naming the first load/);
+});
+
+test('v2.9.0 review S4-6: wf next\'s task hand-over keeps the selected candidate in the lead\'s brief command', t => {
+  const p = project(t);
+  p.git('checkout', '-q', '-b', 'claim');
+  p.edit(taskPath, x => x.replace('title: Task T-0001', 'title: The title on its claim branch'));
+  const claimed = p.commit('T-0001: the record on its claim branch');
+  p.git('checkout', '-q', p.baseline); // the working tree is the baseline: only --candidate reaches the claim branch's record
+  const n = p.run(['next', '--baseline', p.baseline, '--candidate', claimed]).out;
+  const start = [n.next, ...n.also].find(a => a.item === 'T-0001');
+  assert.equal(start?.run[1], `wf brief --lead --task T-0001 --baseline ${p.baseline} --candidate ${claimed}  (the task lead's brief)`, JSON.stringify(n, null, 2));
+  const brief = spawnSync(process.execPath, [cli, ...start.run[1].slice(0, start.run[1].indexOf('  (')).split(' ').slice(1), '--repo', p.repo], { encoding: 'utf8' });
+  assert.equal(brief.status, 0, brief.stderr);
+  assert.match(brief.stdout, /^# T-0001: The title on its claim branch$/m);
+  assert.equal(p.run(['next', '--baseline', p.baseline]).out.next.run[1], `wf brief --lead --task T-0001 --baseline ${p.baseline}  (the task lead's brief)`, 'the working tree: no --candidate');
 });

@@ -148,8 +148,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const ownersDecision = t => (t.reasons ?? []).length > 0 && (t.reasons ?? []).every(r => /^(decision|deferred input) D-\d{4}/.test(r));
   const held = open.filter(holding).sort(byId).map(t => ({ task: t.id, reasons: [`waits for the owner's acceptance of ${hold.first} (checkpoint ${checkpoint})`] }));
   // MAINT-0018: work on a task begins with the access check (B5) and the task lead's brief (B1), whether the task is about
-  // to start (Ready, or a Draft claimed on its own branch) or continues there.
-  const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}  (the task lead's brief)`];
+  // to start (Ready, or a Draft claimed on its own branch) or continues there. v2.9.0 review S4-6: the brief reads the task from
+  // the selected candidate, as the other commands do (a task claimed on its own branch is there, not on the baseline).
+  const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}${chosen}  (the task lead's brief)`];
   // MAINT-0020 P10: a claim does not wait for the trusted branch's checks on its baseline (P2(b)); the lead waits with this.
   const baselineWait = kind => kind === 'start' && !manual ? [`wf wait --commit ${base}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`] : [];
   const taskAction = (t, kind, verb, why) => {

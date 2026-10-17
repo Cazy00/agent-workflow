@@ -14,8 +14,11 @@ const KEYS = ['schema', 'milestone', 'candidate', 'review', 'walkthrough', 'defe
 const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = v => typeof v === 'string' && v.trim() !== '';
 const https = v => { if (typeof v !== 'string' || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
-// MAINT-0020 P7(a): an address and build as compared, whatever the case of a URL's scheme and host and with no trailing slashes.
-const place = v => v.trim().replace(/\s+/g, ' ').replace(/[a-z][a-z\d+.-]*:\/\/[^\s/?#,;]+/gi, h => h.toLowerCase()).replace(/\/+(?=$|[\s,;])/g, '');
+// MAINT-0020 P7(a), v2.9.0 review S4-3: an address as compared. A URL with its scheme and host in lower case, its default port
+// dropped (new URL does both) and no trailing slash; anything else, a desktop app's say, trimmed. A build is compared trimmed.
+const address = v => { const s = v.trim(); if (!/^[a-z][a-z\d+.-]*:\/\/\S*$/i.test(s)) return s; try { const u = new URL(s); return `${u.protocol}//${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, '')}${u.search}${u.hash}`; } catch { return s; } };
+// v2.9.0 review S4-5: a first page slower than this, in seconds, is a finding the owner is told of (in deferred).
+export const FIRST_LOAD_LIMIT = 5;
 
 // MAINT-0018: the files bin/wf-upgrade writes (adapters/upgrade.mjs INSTALLED, and the pin), the only workflow files an
 // upgrade brings in. A test keeps the two lists equal.
@@ -67,10 +70,17 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   else if (Object.hasOwn(w, 'not_applicable')) { if (!text(w.not_applicable) || Object.keys(w).length > 1) errors.push('a walkthrough that does not apply says only why, in not_applicable'); }
   else {
     errors.push(...covers(config, candidate, w.revision, 'the walkthrough\'s revision', baseline));
-    for (const k of ['environment', 'trial_environment', 'walker']) if (!text(w[k])) errors.push(`the walkthrough needs its ${k}`);
+    for (const k of ['address', 'build', 'environment', 'walker']) if (!text(w[k])) errors.push(`the walkthrough needs its ${k}`);
     // MAINT-0020 P7(a): the walk is on the address and build the owner is given. In M-0005 the profile's trial-walk line started a
     // development server, and the owner's trial ran on it too, 30 s to open (record §§ 3, 9). The walker measures the first load.
-    if (text(w.environment) && text(w.trial_environment) && place(w.environment) !== place(w.trial_environment)) errors.push(`the walkthrough ran on ${w.environment}, not the trial environment the owner is given (${w.trial_environment}): walk that address and build, never a development server`);
+    // v2.9.0 review S4-2: this holds the evidence to itself, the place walked to the place it names for the owner; both can name a
+    // development server. The defence against one is the profile's trial line, the walker's instructions and first_load_seconds.
+    const te = w.trial_environment;
+    if (!isObject(te) || !text(te.address) || !text(te.build)) errors.push('the walkthrough needs its trial_environment, the address and build the owner is given: { address, build }');
+    else for (const [k, same] of [['address', address], ['build', v => v.trim()]]) if (text(w[k]) && same(w[k]) !== same(te[k])) errors.push(`the walkthrough's ${k}, ${w[k]}, is not trial_environment's, ${te[k]}: the evidence must say the walk was on the ${k} the owner is given`);
+    // v2.9.0 review S4-1: the walk's records, imports and setups stay out of the owner's trial, so the owner starts cold: the walker's
+    // own demo accounts and business (a fresh one for each unguided pass), or one shared dataset reset after the last walk.
+    if (!['separate', 'reset'].includes(w.walk_data)) errors.push('the walkthrough\'s walk_data is separate (the walker\'s own demo accounts and business, a fresh one for each unguided pass) or reset (the one shared dataset reset or reseeded after the last walk, before the owner is told), so the owner\'s trial starts cold');
     if (typeof w.first_load_seconds !== 'number' || !Number.isFinite(w.first_load_seconds) || w.first_load_seconds < 0) errors.push('the walkthrough needs first_load_seconds, the first page\'s load time the walker measured: a number, 0 or more');
     for (const k of ['languages', 'viewports']) if (!Array.isArray(w[k]) || !w[k].length || !w[k].every(text)) errors.push(`the walkthrough lists its ${k}`);
     if (!Array.isArray(w.steps) || !w.steps.length) errors.push('the walkthrough lists no steps');
@@ -96,11 +106,19 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     }
   }
   for (const k of ['deferred', 'tests_changed']) if (!Array.isArray(e[k]) || !e[k].every(text)) errors.push(`acceptance evidence ${k} must be a list of lines (empty when there is nothing)`);
+  const lines = (Array.isArray(e.deferred) ? e.deferred : []).filter(d => typeof d === 'string');
+  // v2.9.0 review S4-5: what the walk found reaches the owner. Each scenario still stuck, and a first load over the limit, are
+  // listed in deferred, as accepted findings are; a fixed one shows as reached, or under the limit, after a re-walk.
+  if (isObject(w) && !Object.hasOwn(w, 'not_applicable')) {
+    const stuck = [...new Set((Array.isArray(w.unguided) ? w.unguided : []).filter(g => g?.result === 'stuck' && text(g.scenario)).map(g => g.scenario.trim()))].filter(s => !lines.some(d => d.includes(s)));
+    if (stuck.length) errors.push(`deferred must list each scenario the walk still got stuck on, for the owner: ${stuck.join(', ')}`);
+    if (typeof w.first_load_seconds === 'number' && w.first_load_seconds > FIRST_LOAD_LIMIT && !lines.some(d => /first load/i.test(d))) errors.push(`deferred must list the first load of ${w.first_load_seconds} s, over ${FIRST_LOAD_LIMIT} s, for the owner: a line naming the first load`);
+  }
   // Every finding the milestone's tasks accepted rather than fixed (their accepted_findings) is listed for the owner. Read
   // from the trusted branch's records as well as the candidate's (the independent review of MAINT-0016, I1): the
   // acceptance pull request may also remove the Done task records, which would otherwise empty this check.
   const owed = [...new Set([records].flat().flatMap(r => [...r.tasks.values()]).map(t => t.data).filter(t => t?.milestone === milestone).flatMap(t => list(t.accepted_findings)))];
-  const missing = owed.filter(id => !(Array.isArray(e.deferred) ? e.deferred : []).some(d => typeof d === 'string' && d.includes(id)));
+  const missing = owed.filter(id => !lines.some(d => d.includes(id)));
   if (missing.length) errors.push(`deferred must list the findings the milestone's tasks accepted rather than fixed: ${missing.join(', ')}`);
   return errors;
 }

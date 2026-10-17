@@ -28,7 +28,7 @@ function evidence(rev) {
     schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: rev,
     review: { reviewer: 'codex exec, fresh context', model: 'gpt-6.1-sol', revision: rev, report: 'https://github.com/o/r/pull/9#issuecomment-1' },
     walkthrough: {
-      revision: rev, trial_environment: 'https://staging.example.com, build 1.4.0', environment: 'https://staging.example.com, build 1.4.0', first_load_seconds: 1.2, walker: 'trial-walker subagent', languages: ['en', 'ar'], viewports: ['1366x900', '390x844'],
+      revision: rev, trial_environment: { address: 'https://staging.example.com', build: '1.4.0' }, address: 'https://staging.example.com', build: '1.4.0', environment: 'Chromium 140', walk_data: 'separate', first_load_seconds: 1.2, walker: 'trial-walker subagent', languages: ['en', 'ar'], viewports: ['1366x900', '390x844'],
       unguided: [{ scenario: 'AC-001-1', outcome: 'The owner imports a list', result: 'reached' }],
       steps: [{ step: '1. Import the list', expected: 'two added, one duplicate', observed: 'two added, one duplicate', result: 'passed', screenshot: 'https://github.com/o/r/pull/9#step-1' }],
     },

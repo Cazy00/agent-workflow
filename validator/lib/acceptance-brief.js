@@ -6,6 +6,7 @@ import { list, loadAll, loadConfig } from './records.js';
 import { effortOf, launchName, resolveRoles, secondModelLaunch, secondModelOf } from './roles.js';
 import { READ_ONCE, WAIT_COMMANDS, waitLine } from './lead-brief.js';
 import { nextIds } from './next.js';
+import { FIRST_LOAD_LIMIT } from './acceptance-evidence.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 const byId = (a, b) => String(a.id).localeCompare(String(b.id));
@@ -44,6 +45,8 @@ export function renderAcceptanceBrief({ baseline, candidate = baseline, mileston
   const usage = `wf usage --milestone ${milestone} --claude-session COORDINATOR_SESSION.jsonl --since AUTHORISED_AT`;
   const authorised = `git log --first-parent --diff-merges=first-parent --reverse -G'^status: Authorised' --format=%cI ${base} -- ${rd}/milestones/${milestone}.md | head -1`;
   // MAINT-0020 P7: the walker walks what the owner will trial, each scenario once without the steps (acceptance-evidence.js).
+  // v2.9.0 review S4-1, S4-4: in its own demo accounts and business, so the owner starts cold; on a local production build when that
+  // is what the owner is given; and no environment to give the owner is a blocker the plan's question raised.
   return `# ${milestone} acceptance
 
 ${m.outcome ?? ''}
@@ -65,8 +68,8 @@ ${bullets([
 
 ## Helpers
 1. ${name('reviewer')}: the milestone review of the whole milestone diff (procedures/review.md), ${second ? `by the second model (review.second_model${config.review.second_model.final_model ? ', its final_model' : ''}): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(milestone, 'reviewer'))}. Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review.fallback says why.` :'by a fresh reviewer of your own tool (no review.second_model): model inherit, effort max.'}
-2. ${name('acceptance')}: the owner's trial environment with demo data, and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, fixing or listing for the owner what the walk found, with the usage table the \`wf usage\` command below prints: ${setting(roles.acceptance, 'acceptance')}.
-3. ${name('walker')}: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report. Once the review's fixes are merged, in the background (procedures/accept-release.md): ${setting(roles.walker, 'walker')}.
+2. ${name('acceptance')}: the owner's trial environment with demo data, and the walker's own demo accounts and demo business (or tenant), never those the owner will use (a local production build counts when that is what the owner is given: it starts it and keeps it running for the walker; with no environment the owner can be given, the walk is unavailable, a blocker for the plan's question from \`wf doctor\`); and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps. Once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, fixing or listing for the owner what the walk found${evidence ? ' (each scenario still stuck, and a slow first load, in `deferred`)' : ''}, with the usage table the \`wf usage\` command below prints, and resets or reseeds a shared dataset after the last walk, before the owner is told the trial is ready: ${setting(roles.acceptance, 'acceptance')}.
+3. ${name('walker')}: the trial walk on that environment, the address and build the owner will be given, never a development server, in its own demo accounts and business, a fresh one for each unguided pass: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over ${FIRST_LOAD_LIMIT} s is a finding to report. Once the review's fixes are merged, in the background (procedures/accept-release.md): ${setting(roles.walker, 'walker')}.
 
 The next milestone's draft goes to a fresh helper, \`${launchName(next, 'plan')}\`, following procedures/readiness.md; it returns the draft's pull request.
 

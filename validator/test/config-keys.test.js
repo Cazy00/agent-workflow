@@ -33,12 +33,21 @@ test('review names an optional second model and the paths that always need a dee
   assert.deepEqual(configWith(t, c => ({ ...c, review: good }))().review, good);
   assert.ok(configWith(t, c => ({ ...c, review: { second_model: null } }))(), 'no second model');
   for (const [review, pattern] of [
-    [{ reviewer: 'x' }, /review may contain only second_model, deep_paths/],
+    [{ reviewer: 'x' }, /review may contain only second_model, deep_paths, reviewer_command/],
     [{ second_model: { tool: 'codex' } }, /review\.second_model\.model must be a plain name/],
     [{ second_model: { tool: 'codex', model: 'gpt 6' } }, /review\.second_model\.model must be a plain name/],
     [{ second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'extreme' } }, /max_effort must be one of low, medium, high, xhigh, max/],
     [{ deep_paths: 'src/**' }, /review\.deep_paths must be an array of glob strings/],
   ]) assert.throws(configWith(t, c => ({ ...c, review })), pattern);
+});
+
+test('MAINT-0021: review.reviewer_command is one line of at most 300 characters naming {role}', t => {
+  const good = { reviewer_command: 'review run --role {role} --level {level}' };
+  assert.deepEqual(configWith(t, c => ({ ...c, review: good }))().review, good);
+  const pattern = /review\.reviewer_command must be one line of at most 300 characters containing \{role\}/;
+  for (const bad of ['review run --level {level}', 'review run --role {role}\nrm -rf /', `review --role {role} ${'x'.repeat(290)}`, 7, '']) {
+    assert.throws(configWith(t, c => ({ ...c, review: { reviewer_command: bad } })), pattern, JSON.stringify(bad));
+  }
 });
 
 test('acceptance_evidence is true or false', t => {

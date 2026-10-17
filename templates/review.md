@@ -7,7 +7,8 @@ Candidate revision and diff base:
 Governing requirements, acceptance IDs and design:
 Implementer identity (tool and model):
 Reviewer identity (tool and model), separate context reference and actual harness launch options/metadata (no inherited conversation):
-Review level (light, standard or deep; `procedures/review.md`) and why:
+Review level (light, standard or deep, or a fix check; `procedures/review.md`) and why:
+Implementer's vendor and reviewer's vendor (they differ):
 Workflow version (the pin in `docs/workflow/config.json` at the candidate):
 Candidate HEAD/tree and worktree unchanged after review:
 Evidence collected through:
@@ -23,6 +24,8 @@ Acceptance mappings, execution, assertions, helpers, fixtures, setup, configurat
 Category: duplication · silenced error · scope · weakened test · security · boundary or convention · correctness · other.
 
 A blocking correctness or security finding carries a failing test, an exploit or exact steps, or says why none can be written, and states its exposure: what can go wrong, for whom. A finding with no exposure is not blocking.
+
+Severity: **blocking** (wrong behaviour a user or the owner would hit, a security hole, a way to lose data, or a gate that can be bypassed), **should fix** (real, low impact, fixed without another review) or **note** (style or ideas; never starts another round). At most the ten most important findings; no findings is a valid answer. A fix check answers one line per earlier finding instead: fixed, half-fixed or fix broke.
 
 | Finding | Category | Severity | Exposure | Evidence | Reproduction | Resolution / approved residual issue |
 |---|---|---|---|---|---|---|

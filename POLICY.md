@@ -550,7 +550,7 @@ The reviewer does **not** receive the implementer’s conversation or informal r
 
 Review covers scope, correctness, maintainability, security, regression risk, and whether tests still represent approved behaviour.
 
-Independence is of context and, where available, of model. A reviewer built on the implementer's model shares its blind spots; prefer one from a different model family, or give each reviewer a distinct focus such as security or conformance to the specification. A blocking correctness or security finding comes with a failing test, an exploit or exact reproduction steps where one can be written; one that cannot says so and is weighed as judgement.
+Independence is of context and of vendor: the reviewer runs on a model from a different vendor than the implementer's, in a separate context. A reviewer built on the implementer's model shares its blind spots, and the implementer's own checks never count as the review (MAINT-0021, the owner's review policy of 18 October 2026). A blocking correctness or security finding comes with a failing test, an exploit or exact reproduction steps where one can be written; one that cannot says so and is weighed as judgement.
 
 Collect review results through the review procedure. An implementer-written `reviewed: true` field cannot substitute for it. Where the pull request carries approval (enforced and owner-merge modes), the agent posts its evidence for the exact revision there (checks passed, tests run, the separate-context review and the disposition of each finding) and the integration gate fails without it; it is the agent's report, checked for completeness, not proof.
 

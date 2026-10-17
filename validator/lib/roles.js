@@ -34,11 +34,21 @@ export const secondModelLaunch = (s, name) => (s.tool === 'codex'
   ? `\`setsid nohup codex exec -m ${s.model} -c model_reasoning_effort=${s.effort} "${name}: …" > REVIEW_OUTPUT 2>&1 &\``
   : `pass the effort explicitly when you launch ${s.tool}: the config names no command for it, and its default effort may be lower`);
 
+// MAINT-0021: the reviewer role each review level runs at, and the command review.reviewer_command makes of it; null without one.
+export const ROLE_OF_LEVEL = { light: 'cheap', standard: 'standard', deep: 'strong', fixcheck: 'fixcheck', milestone: 'milestone' };
+export function reviewerCommand(config, level) {
+  const cmd = config.review?.reviewer_command;
+  const at = level ?? 'standard';
+  return cmd ? cmd.replaceAll('{role}', ROLE_OF_LEVEL[at] ?? 'standard').replaceAll('{level}', at) : null;
+}
+
 // A task's review level: the first word of its `review` field when that is a level, else deep when its scope reaches a path of
 // review.deep_paths (the rule the brief prints), else unread, which the caller treats as the default level, standard.
 export function reviewLevel(task, deepPaths = []) {
   const word = String(task?.review ?? '').trim().match(/^[a-z]+/i)?.[0].toLowerCase();
   if (LEVELS.includes(word)) return { level: word, why: `the task's review field starts with ${word}` };
+  // MAINT-0021: a test-only task needs no review (procedures/review.md); it is not an implementer effort level.
+  if (word === 'none') return { level: 'none', why: 'the task\'s review field starts with none: a test-only change' };
   // A scope entry is a path prefix: it reaches a glob that matches the path itself or a file under it, or a folder the glob
   // pins below it (v2.8.0 review X3: `src` reaches `src/auth/**`, which the probe of `src/x` missed; scope.js reachesBelow).
   const hit = list(task?.scope).map(s => String(s).replace(/\/+$/, '')).find(s => deepChanges(deepPaths, [s, `${s}/x`]).length || (deepPaths ?? []).some(g => reachesBelow(s, g)));

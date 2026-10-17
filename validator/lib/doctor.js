@@ -51,7 +51,7 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const second = config.review?.second_model;
   if (second?.tool) {
     const tool = run(second.tool, ['--version']);
-    add(`${second.tool} (review.second_model)`, tool.ok, tool.ok ? firstLine(tool.out) : `not found on PATH: deep reviews fall back to a fresh reviewer of your own tool, which review.fallback records`, 'deep and milestone reviews');
+    add(`${second.tool} (review.second_model)`, tool.ok, tool.ok ? firstLine(tool.out) : `not found on PATH: reviews take the next reviewer of another vendor, which review.fallback records, or stop at the gate`, 'deep and milestone reviews');
   }
   for (const p of config.preflight ?? []) {
     const r = run('bash', ['-c', p.run], 30000, quiet());

@@ -1,13 +1,13 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
 import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list, namesIn } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths, deepChanges } from './paths.js';
+import { classifyPaths, deepChanges, isTestOnlyPath } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
-import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
+import { evidenceErrors, fixedAfterError, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
 import { carriedFrom } from './carry.js';
 import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
@@ -180,15 +180,28 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       for (const [stage, from] of [['verification', deliveryEvidence.verification?.revision], ['review', deliveryEvidence.review?.context?.candidate]]) {
         if (typeof from !== 'string' || from === candidate.name) continue;
         const c = carriedFrom({ config, baseline, candidate, from });
-        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records, or put governing files back to the trusted branch's content`); }
-        else findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
+        if (c.ok) { carried[stage] = from; findings.push(`note: the ${stage} of ${from.slice(0, 12)} carries over: since then this candidate took only the trusted branch's changes and records, or put governing files back to the trusted branch's content`); continue; }
+        // MAINT-0021 (v2.10.0 review R2): fixes after a review need no new review, proven by tests; after a blocking finding at deep, one fix check.
+        const review = deliveryEvidence.review;
+        if (stage === 'review' && review?.fixes_after != null) {
+          const why = fixedAfterError({ review, candidate: candidate.name, from, isAncestor: r => candidate.kind === 'git' && candidate.isAncestor(r), carries: r => carriedFrom({ config, baseline, candidate, from: r }).ok });
+          if (!why) { carried[stage] = from; findings.push(`note: the review of ${from.slice(0, 12)} stands for the fixes after it (procedures/review.md *How many*)`); continue; }
+          findings.push(`delivery evidence: the review of ${from.slice(0, 12)} does not stand for the fixes after it: ${why}`);
+          continue;
+        }
+        findings.push(`delivery evidence: the ${stage} of ${from.slice(0, 12)} does not carry over (${c.why})`);
       }
       // MAINT-0016: a change to a path the project names in review.deep_paths needs a deep review (procedures/review.md);
       // a test file only where the glob names tests itself (MAINT-0018, lib/paths.js).
       const deep = deepChanges(config.review?.deep_paths, production);
+      // MAINT-0021: a test-only change needs no review: every production path a test path, no acceptance test, nothing deep.
+      // v2.10.0 review R1: only literal Git names qualify; a backslash in a name is no folder separator, whatever classifyPaths makes of it.
+      const literal = changed.every(p => !p.includes('\\') && !p.startsWith('./'));
+      const testOnly = literal && production.length > 0 && production.every(isTestOnlyPath) && !classes.some(c => c.acceptance_test) && deep.length === 0;
+      if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried }),
-        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly }),
+        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command }),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;

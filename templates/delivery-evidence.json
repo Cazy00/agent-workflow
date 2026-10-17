@@ -28,6 +28,10 @@
     "implementer": "<the tasks' owner, as recorded in the task records>",
     "level": "<light | standard | deep (procedures/review.md)>",
     "model": "<the reviewer's model>",
+    "vendor": "<the maker of the reviewer's model, e.g. OpenAI or Google>",
+    "implementer_vendor": "<the maker of the implementer's model>",
+    "fixes_after": "<only when the review is of an earlier revision and the code changed after it: { \"tests\": [the tests that failed without each blocking fix] }; otherwise leave this field out>",
+    "fix_check": "<only after a blocking finding at deep: { \"candidate\", \"reviewer\", \"model\", \"vendor\", \"report\" } of the fix check of this candidate; otherwise leave this field out>",
     "fallback": "<only when a deep review could not use review.second_model: why; otherwise leave this field out>",
     "separate_context": null,
     "context": {

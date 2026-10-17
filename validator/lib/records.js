@@ -89,7 +89,10 @@ function validateClientConfig(c) {
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PLAIN = /^[\w.@/:-]{1,80}$/;
 function validateReviewConfig(r) {
-  only(r, ['second_model', 'deep_paths'], 'review');
+  only(r, ['second_model', 'deep_paths', 'reviewer_command'], 'review');
+  // MAINT-0021: one command for every review level; the briefs print it with {role} (and {level}) filled in (roles.js).
+  const cmd = r.reviewer_command;
+  if (cmd !== undefined && !(typeof cmd === 'string' && cmd.length <= 300 && /^[^\x00-\x1f\x7f]+$/.test(cmd) && cmd.includes('{role}'))) throw new Error('review.reviewer_command must be one line of at most 300 characters containing {role}');
   const m = r.second_model;
   if (m != null) {
     only(m, ['tool', 'model', 'max_effort', 'final_model', 'final_effort'], 'review.second_model');

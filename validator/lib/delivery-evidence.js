@@ -37,7 +37,8 @@ const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verificatio
 
 // Agent-attested evidence for the exact candidate. Every problem is an error; nothing becomes `unverified`. A finding the
 // agent accepted rather than fixed needs a stated resolution, and ci.js leaves that candidate's merge to the owner.
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {} }) {
+// MAINT-0021: reviewOptional, for a test-only change (ci.js), lets the review be left out or name level none.
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {}, reviewOptional = false }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -66,10 +67,16 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
     if (stage === 'verification' && !s.checks.some(c => c?.result === 'passed')) errors.push('verification lists no check the agent ran and saw pass');
   }
   const r = evidence.review;
+  if (reviewOptional && (r == null || (isObject(r) && r.level === 'none'))) return errors;
   if (!isObject(r)) return [...errors, 'independent review evidence is missing'];
+  if (r.level === 'none') errors.push('review level none is only for a test-only change (procedures/review.md)');
   if (typeof r.reviewer !== 'string' || !r.reviewer.trim()) errors.push('review needs a reviewer');
   if (r.implementer !== owner) errors.push('review implementer must be the tasks\' owner');
   if (typeof r.reviewer === 'string' && [r.implementer, owner].some(v => typeof v === 'string' && r.reviewer.trim().toLowerCase() === v.trim().toLowerCase())) errors.push('reviewer must differ from the implementer');
+  // MAINT-0021: independence is of context and of vendor (POLICY *Independent review*). Both vendors are optional; given
+  // together, they must differ, compared trimmed and in any case.
+  for (const k of ['vendor', 'implementer_vendor']) if (r[k] !== undefined && (typeof r[k] !== 'string' || !r[k].trim())) errors.push(`review ${k.replace('_', ' ')} must be a non-empty text when given`);
+  if (typeof r.vendor === 'string' && typeof r.implementer_vendor === 'string' && r.vendor.trim() && r.vendor.trim().toLowerCase() === r.implementer_vendor.trim().toLowerCase()) errors.push('the reviewer\'s vendor must differ from the implementer\'s (procedures/review.md)');
   if (r.separate_context !== true) errors.push('review must be in a separate context');
   const x = r.context;
   if (!isObject(x)) errors.push('review context is missing');
@@ -100,20 +107,44 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
 // MAINT-0016: the review's level (procedures/review.md). A change to a path the project names in review.deep_paths needs a
 // deep review, by the configured second model or with the reason it could not be used (review.fallback); running out of
 // a second model is then a recorded fallback, not a stop.
-export const REVIEW_LEVELS = ['light', 'standard', 'deep'];
+export const REVIEW_LEVELS = ['none', 'light', 'standard', 'deep'];
 const BLOCKING = /^(?:blocking|critical|high)$/i;
 export const isBlocking = f => BLOCKING.test(String(f?.severity ?? '').trim());
-export function reviewLevelErrors({ review, deep = [], secondModel = null }) {
+export function reviewLevelErrors({ review, deep = [], secondModel = null, command = false }) {
   if (!isObject(review)) return [];
   const errors = [];
   if (review.level !== undefined && !REVIEW_LEVELS.includes(review.level)) errors.push(`review level must be one of ${REVIEW_LEVELS.join(', ')}`);
   for (const k of ['model', 'fallback']) if (review[k] !== undefined && (typeof review[k] !== 'string' || !review[k].trim())) errors.push(`review ${k} must be a non-empty text when given`);
   if (deep.length && review.level !== 'deep') errors.push(`it changes paths that need a deep review (review.deep_paths): ${deep.join(', ')}; this review's level is ${review.level ?? 'standard'}`);
   // MAINT-0020 (the owner, 17 October 2026): a task's review stays on `model`; final_model is the milestone review's alone.
-  // v2.9.0 final review S2: at any level and with a fallback too, which accepted it: a task review's fallback is the implementer's
-  // own tool (review.md), never the usage the owner keeps for the one last check of everything built.
+  // v2.9.0 final review S2: at any level and with a fallback too, which accepted it: a task review's fallback is another vendor's
+  // next model (review.md, MAINT-0021), never the usage the owner keeps for the one last check of everything built.
   const final = secondModel?.final_model;
-  if (final && final !== secondModel.model && typeof review.model === 'string' && review.model.trim() === final) errors.push(`a task's review is never by ${final}, review.second_model's final_model, which the owner keeps for the milestone review, even as a fallback: it is by ${secondModel.model}, or, where that cannot run, by a fresh reviewer of the implementer's own tool, and review.fallback says why`);
-  else if (deep.length && review.level === 'deep' && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model${final ? `; its final_model, ${final}, is for the milestone review only` : ''}), or says in review.fallback why it could not be`);
+  if (final && final !== secondModel.model && typeof review.model === 'string' && review.model.trim() === final) errors.push(`a task's review is never by ${final}, review.second_model's final_model, which the owner keeps for the milestone review, even as a fallback: it is by ${secondModel.model}, or, where that cannot run, by another vendor's next model, and review.fallback says why`);
+  // v2.10.0 review R4: with review.reviewer_command the command picks the deep reviewer, so second_model.model is not required.
+  else if (!command && deep.length && review.level === 'deep' && secondModel && review.model !== secondModel.model && !(typeof review.fallback === 'string' && review.fallback.trim())) errors.push(`a deep review is by ${secondModel.model} (review.second_model${final ? `; its final_model, ${final}, is for the milestone review only` : ''}), or says in review.fallback why it could not be`);
   return errors;
+}
+
+// MAINT-0021 (v2.10.0 review R2): the review of an earlier revision stands for the fixes after it (procedures/review.md *How
+// many*): review.fixes_after names the tests that failed without each blocking fix, and after a blocking finding at deep one
+// fix check of this candidate (review.fix_check) is required. Returns why it does not stand, or null. `isAncestor` and
+// `carries` come from ci.js, which holds the Git sources.
+export function fixedAfterError({ review, candidate, from, isAncestor, carries }) {
+  if (!isObject(review) || review.fixes_after == null) return null;
+  // v2.10.0 fix check R6: a malformed fixes_after never lets an earlier review stand.
+  if (!isObject(review.fixes_after)) return 'review.fixes_after must be an object: { "tests": [the tests that failed without each blocking fix] }';
+  if (!/^[0-9a-f]{40,64}$/.test(from ?? '') || !isAncestor(from)) return `${String(from).slice(0, 12)} is not an earlier revision of this candidate`;
+  const tests = review.fixes_after.tests ?? [];
+  if (!Array.isArray(tests) || tests.some(x => typeof x !== 'string' || !x.trim())) return 'review.fixes_after.tests must list the tests that prove the fixes';
+  const blocking = Array.isArray(review.findings) && review.findings.some(isBlocking);
+  if (blocking && !tests.length) return 'a blocking finding was fixed after the review: review.fixes_after.tests names the test that failed without each fix';
+  if (blocking && review.level === 'deep') {
+    const fc = review.fix_check;
+    const named = isObject(fc) && ['reviewer', 'model'].every(k => typeof fc[k] === 'string' && fc[k].trim()) && reference(fc.report);
+    const current = isObject(fc) && (fc.candidate === candidate || (/^[0-9a-f]{40,64}$/.test(fc.candidate ?? '') && carries(fc.candidate)));
+    if (!named || !current) return 'after a blocking finding at deep, the fixes need review.fix_check of this candidate (candidate, reviewer, model, an https report)';
+    if (typeof fc.vendor === 'string' && typeof review.implementer_vendor === 'string' && fc.vendor.trim().toLowerCase() === review.implementer_vendor.trim().toLowerCase()) return 'the fix check\'s vendor must differ from the implementer\'s';
+  }
+  return null;
 }

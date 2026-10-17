@@ -78,12 +78,18 @@ export function nextIds(sources, rd) {
 // it (roles.js reviewLevel: its review field, else its scope against review.deep_paths; v2.8.0 review). `wf next` prints only the
 // budget: the runs already used are left to v2.9.0's `wf usage` (P14), since the pull-request data `wf next` is given holds
 // only the open pull requests, without their descriptions or comments. `wf usage --milestone` counts them against this.
+// MAINT-0021: with review.reviewer_command every review is another vendor's, so the budget counts them all: one per light or
+// standard task, two per deep task (its review and one fix check), none for a test-only task, two for the milestone review.
 export function secondModelBudget(config, records, milestoneIds) {
-  if (!config.review?.second_model) return [];
+  const command = !!config.review?.reviewer_command;
+  if (!config.review?.second_model && !command) return [];
   const deepPaths = config.review?.deep_paths ?? [];
   return milestoneIds.map(id => {
-    const deepTasks = [...records.tasks.values()].filter(r => r.data?.milestone === id && reviewLevel(r.data, deepPaths).level === 'deep').length;
-    return { milestone: id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
+    const levels = [...records.tasks.values()].filter(r => r.data?.milestone === id).map(r => reviewLevel(r.data, deepPaths).level);
+    const deepTasks = levels.filter(l => l === 'deep').length;
+    if (!command) return { milestone: id, deep_tasks: deepTasks, runs: 2 * deepTasks + 1 };
+    const otherTasks = levels.filter(l => l !== 'deep' && l !== 'none').length;
+    return { milestone: id, deep_tasks: deepTasks, other_tasks: otherTasks, runs: otherTasks + 2 * deepTasks + 2 };
   });
 }
 
@@ -251,7 +257,7 @@ export function renderNext(n) {
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
-  if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`));
+  if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => (b.other_tasks !== undefined ? `${b.milestone}: review budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (one per light or standard task, two per deep task, two for the milestone review); keep two for the milestone review` : `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`)));
   if (n.next_ids) lines.push('', `Next free IDs here: ${Object.values(n.next_ids).join(', ')}; check the open pull requests too (wf status --pull-requests). Reviews are numbered on the pull requests.`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;

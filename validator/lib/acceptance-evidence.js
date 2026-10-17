@@ -14,6 +14,8 @@ const KEYS = ['schema', 'milestone', 'candidate', 'review', 'walkthrough', 'defe
 const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = v => typeof v === 'string' && v.trim() !== '';
 const https = v => { if (typeof v !== 'string' || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
+// MAINT-0020 P7(a): an address and build as compared, whatever the case of a URL's scheme and host and with no trailing slashes.
+const place = v => v.trim().replace(/\s+/g, ' ').replace(/[a-z][a-z\d+.-]*:\/\/[^\s/?#,;]+/gi, h => h.toLowerCase()).replace(/\/+(?=$|[\s,;])/g, '');
 
 // MAINT-0018: the files bin/wf-upgrade writes (adapters/upgrade.mjs INSTALLED, and the pin), the only workflow files an
 // upgrade brings in. A test keeps the two lists equal.
@@ -57,14 +59,33 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   else if (Object.hasOwn(w, 'not_applicable')) { if (!text(w.not_applicable) || Object.keys(w).length > 1) errors.push('a walkthrough that does not apply says only why, in not_applicable'); }
   else {
     errors.push(...covers(config, candidate, w.revision, 'the walkthrough\'s revision', baseline));
-    for (const k of ['environment', 'walker']) if (!text(w[k])) errors.push(`the walkthrough needs its ${k}`);
+    for (const k of ['environment', 'trial_environment', 'walker']) if (!text(w[k])) errors.push(`the walkthrough needs its ${k}`);
+    // MAINT-0020 P7(a): the walk is on the address and build the owner is given. In M-0005 the profile's trial-walk line started a
+    // development server, and the owner's trial ran on it too, 30 s to open (record §§ 3, 9). The walker measures the first load.
+    if (text(w.environment) && text(w.trial_environment) && place(w.environment) !== place(w.trial_environment)) errors.push(`the walkthrough ran on ${w.environment}, not the trial environment the owner is given (${w.trial_environment}): walk that address and build, never a development server`);
+    if (typeof w.first_load_seconds !== 'number' || !Number.isFinite(w.first_load_seconds) || w.first_load_seconds < 0) errors.push('the walkthrough needs first_load_seconds, the first page\'s load time the walker measured: a number, 0 or more');
     for (const k of ['languages', 'viewports']) if (!Array.isArray(w[k]) || !w[k].length || !w[k].every(text)) errors.push(`the walkthrough lists its ${k}`);
     if (!Array.isArray(w.steps) || !w.steps.length) errors.push('the walkthrough lists no steps');
     else w.steps.forEach((s, i) => {
       if (!isObject(s) || !['step', 'expected', 'observed'].every(k => text(s[k]))) errors.push(`walkthrough step ${i + 1} needs step, expected and observed`);
       else if (s.result !== 'passed') errors.push(`walkthrough step ${i + 1} did not pass: fix it, or correct the step, and walk it again`);
       else if (!https(s.screenshot)) errors.push(`walkthrough step ${i + 1} needs an https screenshot reference`);
+      else if (s.scenario !== undefined && !text(s.scenario)) errors.push(`walkthrough step ${i + 1}'s scenario must be a non-empty text when given`);
     });
+    // MAINT-0020 P7(b): each scenario first from its outcome sentence alone, from a fresh sign-in. In M-0005 the owner, starting
+    // cold, found that a new shop's Today never led to setup (T-0037); the walk followed the steps and could not. A stuck entry is a
+    // finding for the acceptance package, fixed or listed for the owner, not a failed walk.
+    const u = w.unguided, named = [...new Set((Array.isArray(w.steps) ? w.steps : []).map(s => s?.scenario).filter(text).map(s => s.trim()))];
+    if (!Array.isArray(u) || !u.length) errors.push('the walkthrough lists no unguided entries: before the steps, try each scenario from its outcome sentence alone, from a fresh sign-in, and record reached or stuck');
+    else {
+      u.forEach((g, i) => {
+        if (!isObject(g) || !['scenario', 'outcome'].every(k => text(g[k])) || !['reached', 'stuck'].includes(g.result)) errors.push(`unguided entry ${i + 1} needs scenario, outcome and a result, reached or stuck`);
+        else if (g.result === 'stuck' && !text(g.note)) errors.push(`unguided entry ${i + 1} got stuck: its note says where`);
+        else if (g.note !== undefined && !text(g.note)) errors.push(`unguided entry ${i + 1}'s note must be a non-empty text when given`);
+      });
+      const untried = named.filter(s => !u.some(g => typeof g?.scenario === 'string' && g.scenario.trim() === s));
+      if (untried.length) errors.push(`the walkthrough's steps name ${untried.join(', ')}, with no unguided entry: try each from its outcome sentence alone first`);
+    }
   }
   for (const k of ['deferred', 'tests_changed']) if (!Array.isArray(e[k]) || !e[k].every(text)) errors.push(`acceptance evidence ${k} must be a list of lines (empty when there is nothing)`);
   // Every finding the milestone's tasks accepted rather than fixed (their accepted_findings) is listed for the owner. Read

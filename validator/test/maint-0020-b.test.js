@@ -6,7 +6,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig } from '../lib/index.js';
-import { LAUNCH_ROLES, launchName, parseLaunchName } from '../lib/roles.js';
+import { DEFAULT_ROLES, LAUNCH_ROLES, launchName, parseLaunchName, resolveRoles } from '../lib/roles.js';
+import { acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
+import { INSTALLED } from '../../adapters/upgrade.mjs';
 import { MAX_SLICES, READ_ONCE, WAIT_COMMANDS, sliceTask, waitLine } from '../lib/lead-brief.js';
 import { HELPER_PEAK, READER, evaluateUsage } from '../lib/usage.js';
 import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
@@ -516,8 +518,8 @@ test('MAINT-0020 P3: the acceptance brief names its three helpers with their mod
   const [reviewer, acceptance, walker] = [1, 2, 3].map(n => helperLine(out, n));
   assert.ok(reviewer.startsWith('1. `M-0001 reviewer`: the milestone review of the whole milestone diff (procedures/review.md), by the second model (review.second_model, its final_model): model gpt-6.1-astra, effort xhigh: `setsid nohup codex exec -m gpt-6.1-astra -c model_reasoning_effort=xhigh "M-0001 reviewer: …" > REVIEW_OUTPUT 2>&1 &`.'), reviewer);
   assert.match(reviewer, /Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review\.fallback says why\.$/);
-  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, with the table `wf usage --milestone M-0001` prints: model haiku, effort low \(roles\.paperwork\)\.$/);
-  assert.match(walker, /^3\. `M-0001 walker`: the trial walk, on that environment with those steps, once the review's fixes are merged, in the background \(procedures\/accept-release\.md\): model opus, effort high \(roles\.walker\)\.$/);
+  assert.match(acceptance, /^2\. `M-0001 acceptance`: the owner's trial environment with demo data, and the acceptance package \(templates\/acceptance\.md\) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package and its evidence \(templates\/acceptance-evidence\.json\) from their results, fixing or listing for the owner what the walk found, with the table `wf usage --milestone M-0001` prints: model sonnet, effort medium \(roles\.acceptance\)\.$/);
+  assert.match(walker, /^3\. `M-0001 walker`: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report\. Once the review's fixes are merged, in the background \(procedures\/accept-release\.md\): model opus, effort high \(roles\.walker\)\.$/);
   assert.ok(out.includes('The next milestone\'s draft goes to a fresh helper, `M-0002 plan`, following procedures/readiness.md; it returns the draft\'s pull request.'), out);
   // Every name is the convention wf usage reads, the next milestone's plan helper included.
   assert.deepEqual([reviewer, acceptance, walker].map(l => parseLaunchName(l.match(/`(M-\d{4} [a-z]+)`/)[1]).role), ['reviewer', 'acceptance', 'walker']);
@@ -607,4 +609,81 @@ test('MAINT-0020 (the owner, 17 October 2026): the milestone review is accepted 
   assert.equal(refused.status, 1);
   assert.match(refused.out.findings.join(' | '), /delivery evidence: a deep review is by gpt-6\.1-sol \(review\.second_model; its final_model, gpt-6\.1-astra, is for the milestone review only\), or says in review\.fallback why it could not be/);
   for (const review of [{ model: 'gpt-6.1-sol' }, { model: 'gpt-6.1-astra', fallback: 'gpt-6.1-sol is out of quota here' }]) { const r = deep(review); assert.equal(r.status, 0, `${JSON.stringify(review)}: ${r.stdout}${r.stderr}`); }
+});
+
+// P7. M-0005's walk ran on a development server, which the profile's trial-walk line started, and followed the steps. The owner's
+// trial, on the same server, took 30 s to open and found, starting cold, that a new shop's Today never led to setup (T-0037).
+const REV = 'c'.repeat(40);
+const walkErrors = (edit = w => w) => acceptanceEvidenceErrors({ milestone: 'M-0001', config: {}, candidate: { name: REV, kind: 'dir' }, records: { tasks: new Map() }, evidence: {
+  schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: REV, deferred: [], tests_changed: [],
+  review: { reviewer: 'codex exec, fresh context', model: 'gpt-6.1-sol', revision: REV, report: 'https://github.com/o/r/pull/9#issuecomment-1' },
+  walkthrough: edit({
+    revision: REV, trial_environment: 'https://Staging.Example.com/shop/, build 1.4.0', environment: 'https://staging.example.com/shop, build 1.4.0', first_load_seconds: 2.4,
+    walker: 'trial-walker subagent', languages: ['en'], viewports: ['390x844'],
+    unguided: [{ scenario: 'AC-001-1', outcome: 'A new shop is set up from Today', result: 'reached' }],
+    steps: [{ step: '1. Open Today', scenario: 'AC-001-1', expected: 'the setup card', observed: 'the setup card', result: 'passed', screenshot: 'https://github.com/o/r/pull/9#step-1' }],
+  }),
+} });
+
+test('MAINT-0020 P7(a): the walk is on the address and build the owner is given, and records the first load', () => {
+  assert.deepEqual(walkErrors(), [], 'the same address and build, but for the host\'s case and a trailing slash');
+  for (const env of ['http://localhost:5173/shop, build 1.4.0', 'https://staging.example.com/Shop, build 1.4.0', 'https://staging.example.com/shop, build 1.4.1']) {
+    assert.deepEqual(walkErrors(w => ({ ...w, environment: env })), [`the walkthrough ran on ${env}, not the trial environment the owner is given (https://Staging.Example.com/shop/, build 1.4.0): walk that address and build, never a development server`], env);
+  }
+  assert.deepEqual(walkErrors(({ trial_environment, ...w }) => w), ['the walkthrough needs its trial_environment']);
+  for (const bad of [undefined, null, '2.4', -1, Number.NaN]) assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: bad })), ['the walkthrough needs first_load_seconds, the first page\'s load time the walker measured: a number, 0 or more'], String(bad));
+  assert.deepEqual(walkErrors(({ first_load_seconds, ...w }) => w).length, 1, 'missing');
+  for (const ok of [0, 31]) assert.deepEqual(walkErrors(w => ({ ...w, first_load_seconds: ok })), [], 'a slow first load is a finding for the package, not a failed walk');
+  assert.deepEqual(walkErrors(() => ({ not_applicable: 'the project has no user interface' })), [], 'a walk that does not apply is unchanged');
+  assert.match(walkErrors(() => ({ not_applicable: 'no user interface', first_load_seconds: 1 })).join(' | '), /a walkthrough that does not apply says only why, in not_applicable/);
+});
+
+test('MAINT-0020 P7(b): before the steps, each scenario they name is tried from its outcome alone; a stuck one has a note and fails nothing', () => {
+  for (const u of [undefined, [], 'AC-001-1']) assert.deepEqual(walkErrors(w => ({ ...w, unguided: u })), ['the walkthrough lists no unguided entries: before the steps, try each scenario from its outcome sentence alone, from a fresh sign-in, and record reached or stuck'], String(u));
+  const second = w => ({ ...w, steps: [...w.steps, { ...w.steps[0], step: '2. Add a product', scenario: 'AC-001-2' }] });
+  assert.deepEqual(walkErrors(second), ['the walkthrough\'s steps name AC-001-2, with no unguided entry: try each from its outcome sentence alone first']);
+  assert.deepEqual(walkErrors(w => ({ ...second(w), unguided: [...w.unguided, { scenario: ' AC-001-2 ', outcome: 'A product is added', result: 'reached' }] })), []);
+  // Steps that name no scenario: one entry is all the check can ask (SCHEMA.md).
+  assert.deepEqual(walkErrors(w => ({ ...w, steps: w.steps.map(({ scenario, ...s }) => s), unguided: [{ scenario: 'a new shop', outcome: 'The owner sets up a new shop', result: 'reached' }] })), []);
+  const stuck = extra => w => ({ ...w, unguided: [{ ...w.unguided[0], result: 'stuck', ...extra }] });
+  for (const note of [{}, { note: ' ' }]) assert.deepEqual(walkErrors(stuck(note)), ['unguided entry 1 got stuck: its note says where'], JSON.stringify(note));
+  assert.deepEqual(walkErrors(stuck({ note: 'Today shows an empty list and no way to the setup' })), [], 'stuck is a finding for the acceptance package, not a failed walk');
+  assert.deepEqual(walkErrors(w => ({ ...w, unguided: [{ ...w.unguided[0], note: '' }] })), ['unguided entry 1\'s note must be a non-empty text when given']);
+  for (const bad of [{ scenario: 'AC-001-1', outcome: 'x', result: 'passed' }, { scenario: 'AC-001-1', result: 'reached' }, { scenario: 'AC-001-1', outcome: ' ', result: 'stuck', note: 'x' }]) {
+    assert.deepEqual(walkErrors(w => ({ ...w, unguided: [bad] })), ['unguided entry 1 needs scenario, outcome and a result, reached or stuck'], JSON.stringify(bad));
+  }
+  assert.deepEqual(walkErrors(w => ({ ...w, steps: [{ ...w.steps[0], scenario: ' ' }] })), ['walkthrough step 1\'s scenario must be a non-empty text when given']);
+});
+
+test('MAINT-0020 P7: the walker, the procedure and the brief walk the owner\'s address and build, record the first load, and try each scenario without the steps first', t => {
+  const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+  const walker = read('templates/claude/agents/trial-walker.md');
+  for (const [name, text] of [['trial-walker.md', walker], ['accept-release.md', read('procedures/accept-release.md')], ['the brief', helperLine(closing(t).out, 3)]]) {
+    for (const said of [/the address and build the owner will be given/, /never a development server/, /the first page's load time/, /over 5 s,? is a finding/, /from its outcome (sentence )?alone, from a fresh sign-in/]) assert.match(text, said, name);
+  }
+  assert.match(read('templates/profile.md'), /the address and build the owner will be given, never a development server/, 'the profile\'s trial-walk line (record § 9)');
+  const w = JSON.parse(read('templates/acceptance-evidence.json')).walkthrough;
+  assert.deepEqual(Object.keys(w), ['revision', 'trial_environment', 'environment', 'first_load_seconds', 'walker', 'languages', 'viewports', 'unguided', 'steps']);
+  assert.deepEqual([Object.keys(w.unguided[0]), Object.keys(w.steps[0])], [['scenario', 'outcome', 'result', 'note'], ['step', 'scenario', 'expected', 'observed', 'result', 'screenshot']]);
+  // bin/wf-upgrade refreshes the walker where a project left it as its pinned release's copy, as for v2.7.0 (adapters/upgrade.mjs).
+  assert.ok(INSTALLED.some(i => i.path === '.claude/agents/trial-walker.md' && i.template === 'templates/claude/agents/trial-walker.md'));
+  const old = spawnSync('git', ['-C', root, 'show', 'v2.8.0:templates/claude/agents/trial-walker.md'], { encoding: 'utf8' });
+  if (old.status === 0) assert.notEqual(old.stdout, walker, 'v2.8.0\'s copy differs, so an upgrade from it takes this one');
+});
+
+test('MAINT-0020 P3: the acceptance helper has its own role, roles.acceptance, Sonnet at medium unless the config says otherwise', t => {
+  assert.deepEqual(DEFAULT_ROLES.acceptance, { model: 'sonnet', effort: 'medium' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8')).roles.acceptance, DEFAULT_ROLES.acceptance);
+  assert.deepEqual(resolveRoles({ roles: { acceptance: { effort: 'high' } } }).acceptance, { model: 'sonnet', effort: 'high' });
+  const rolesConfig = roles => {
+    const dir = tempDir(t);
+    fs.mkdirSync(path.join(dir, 'docs/workflow'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs/workflow/config.json'), JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(root, 'config.default.json'), 'utf8')), roles }));
+    return () => loadConfig(dirSource(dir)).roles;
+  };
+  assert.deepEqual(rolesConfig({ acceptance: { model: 'opus', effort: 'high' } })(), { acceptance: { model: 'opus', effort: 'high' } });
+  assert.throws(rolesConfig({ acceptance: { effort: 'maximum' } }), /roles\.acceptance\.effort must be one of low, medium, high, xhigh, max/);
+  assert.throws(rolesConfig({ acceptance: { model: 'opus 5' } }), /roles\.acceptance\.model must be a plain model name/);
+  assert.match(helperLine(closing(t, { roles: { acceptance: { model: 'opus', effort: 'high' } } }).out, 2), /: model opus, effort high \(roles\.acceptance\)\.$/);
+  assert.match(helperLine(closing(t, { roles: { paperwork: { model: 'opus', effort: 'max' } } }).out, 2), /: model sonnet, effort medium \(roles\.acceptance\)\.$/, 'roles.paperwork no longer sets it');
 });

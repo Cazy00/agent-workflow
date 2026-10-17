@@ -103,7 +103,7 @@ function validateReviewConfig(r) {
 // MAINT-0020 P4: a model and an effort for each role (procedures/execute.md). M-0005 ran 46 of 51 helpers at the session's xhigh
 // and every role on the coordinator's model. A model is the harness's own alias or ID, passed as given; null leaves it to the
 // session. An effort is one of EFFORTS, null for the session's own, or one per review level.
-export const ROLES = ['lead', 'implementer', 'paperwork', 'walker'];
+export const ROLES = ['lead', 'implementer', 'paperwork', 'walker', 'acceptance'];
 export const LEVELS = ['light', 'standard', 'deep'];
 const MODEL = /^[\w.@/:[\]-]{1,80}$/;
 function validateRolesConfig(r) {

@@ -205,7 +205,7 @@ test('MAINT-0020 P4: the config names a model and an effort for the four roles, 
   const roles = { lead: { model: 'opus[1m]', effort: 'max' }, implementer: { model: null, effort: null }, walker: { effort: { light: 'low', standard: 'medium', deep: 'high' } } };
   assert.deepEqual(configIn(t, c => ({ ...c, roles }))().roles, roles, 'a partial config is valid, and null leaves it to the session');
   for (const [bad, pattern] of [
-    [{ reviewer: { model: 'opus' } }, /roles may contain only lead, implementer, paperwork, walker/],
+    [{ reviewer: { model: 'opus' } }, /roles may contain only lead, implementer, paperwork, walker, acceptance/],
     [{ lead: { effort: 'maximum' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
     [{ lead: { effort: 'minimal' } }, /roles\.lead\.effort must be one of low, medium, high, xhigh, max/],
     [{ implementer: { effort: { light: 'low', standard: 'high' } } }, /roles\.implementer\.effort by review level needs light, standard, deep/],

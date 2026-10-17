@@ -35,6 +35,7 @@ export function renderAcceptanceBrief({ baseline, candidate = baseline, mileston
   const second = secondModelOf(config, { milestone: true }); // the owner's rule of 17 October 2026: final_model, else model
   const name = role => `\`${launchName(milestone, role)}\``;
   const next = `M-${String(Number(milestone.slice(2)) + 1).padStart(4, '0')}`;
+  // MAINT-0020 P7: the walker walks what the owner will trial, each scenario once without the steps (acceptance-evidence.js).
   return `# ${milestone} acceptance
 
 ${m.outcome ?? ''}
@@ -56,8 +57,8 @@ ${bullets([
 
 ## Helpers
 1. ${name('reviewer')}: the milestone review of the whole milestone diff (procedures/review.md), ${second ? `by the second model (review.second_model${config.review.second_model.final_model ? ', its final_model' : ''}): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(milestone, 'reviewer'))}. Where it cannot run, a fresh reviewer of your own tool at effort max, with a security focus, and review.fallback says why.` :'by a fresh reviewer of your own tool (no review.second_model): model inherit, effort max.'}
-2. ${name('acceptance')}: the owner's trial environment with demo data, and the acceptance package (templates/acceptance.md) with its trial steps; once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, with the table \`wf usage --milestone ${milestone}\` prints: ${setting(roles.paperwork, 'paperwork')}.
-3. ${name('walker')}: the trial walk, on that environment with those steps, once the review's fixes are merged, in the background (procedures/accept-release.md): ${setting(roles.walker, 'walker')}.
+2. ${name('acceptance')}: the owner's trial environment with demo data, and the acceptance package (templates/acceptance.md) naming its address and build, with its trial steps; once the review and the walk are back, a fresh one completes the package${evidence ? ' and its evidence (templates/acceptance-evidence.json)' : ''} from their results, fixing or listing for the owner what the walk found, with the table \`wf usage --milestone ${milestone}\` prints: ${setting(roles.acceptance, 'acceptance')}.
+3. ${name('walker')}: the trial walk on that environment, the address and build the owner will be given, never a development server: each scenario first from its outcome sentence alone, from a fresh sign-in, then those steps; it records the first page's load time, and over 5 s is a finding to report. Once the review's fixes are merged, in the background (procedures/accept-release.md): ${setting(roles.walker, 'walker')}.
 
 The next milestone's draft goes to a fresh helper, \`${launchName(next, 'plan')}\`, following procedures/readiness.md; it returns the draft's pull request.
 

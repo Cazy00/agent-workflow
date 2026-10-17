@@ -12,6 +12,8 @@ export const DEFAULT_ROLES = {
   implementer: { model: null, effort: { light: 'medium', standard: 'high', deep: 'xhigh' } },
   paperwork: { model: 'haiku', effort: 'low' },
   walker: { model: 'sonnet', effort: 'medium' },
+  // MAINT-0020 P3: the acceptance helper writes the package the owner reads and trials from, too much for paperwork's Haiku at low.
+  acceptance: { model: 'sonnet', effort: 'medium' },
 };
 // A role the config names only in part keeps the default for the rest; a given effort replaces the default's whole.
 export const resolveRoles = config => Object.fromEntries(ROLES.map(r => [r, { ...DEFAULT_ROLES[r], ...(config.roles?.[r] ?? {}) }]));

@@ -11,12 +11,17 @@
   },
   "walkthrough": {
     "revision": "<full commit hash walked>",
-    "environment": "<how the app ran: local build, demo data seed, browser>",
+    "trial_environment": "<the address and build the owner is given, as the acceptance package names them>",
+    "environment": "<the address and build walked: the trial_environment, never a development server>",
+    "first_load_seconds": "<the first page's load time the walker measured, a number; over 5 is a finding to report>",
     "walker": "<the trial-walker agent and its context identifier>",
     "languages": ["<each language walked>"],
     "viewports": ["<each screen size walked, e.g. 1366x900, 390x844>"],
+    "unguided": [
+      { "scenario": "<each scenario, tried before the steps>", "outcome": "<its outcome sentence, all the walker read>", "result": "<reached | stuck, from a fresh sign-in>", "note": "<where it got stuck: a finding to fix or list for the owner; optional when reached>" }
+    ],
     "steps": [
-      { "step": "<the trial step, as the owner will read it>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
+      { "step": "<the trial step, as the owner will read it>", "scenario": "<optional: the scenario it serves, which unguided then lists>", "expected": "<what the step says should happen>", "observed": "<what the walker saw>", "result": "passed", "screenshot": "<https link to the screenshot>" }
     ]
   },
   "deferred": ["<each item wf ci deferred to this acceptance, and every accepted_findings entry of the milestone's tasks, in plain words>"],

@@ -15,9 +15,11 @@ export function renderAcceptanceBrief({ baseline, candidate = baseline, mileston
   const records = loadAll(candidate, rd), trusted = loadAll(baseline, rd);
   const m = records.milestones.get(milestone)?.data;
   if (!m) throw new Error(`milestone ${milestone} not found`);
-  // Its tasks as the candidate has them, else as the trusted branch does; planned are those its approved `tasks:` names.
+  // Its tasks as the candidate has them, else as the trusted branch does; planned are those its approved `tasks:` names, or
+  // without that list those with no found_from (next.js reads found tasks so).
   const tasks = [...new Map([...trusted.tasks, ...records.tasks]).values()].map(r => r.data).filter(t => t?.id && t.milestone === milestone).sort(byId);
-  const planned = list(trusted.milestones.get(milestone)?.data?.tasks ?? m.tasks);
+  const listed = trusted.milestones.get(milestone)?.data?.tasks ?? m.tasks;
+  const planned = listed == null ? tasks.filter(t => !t.found_from).map(t => t.id) : list(listed);
   const status = id => tasks.find(t => t.id === id)?.status ?? 'no record';
   const found = tasks.filter(t => !planned.includes(t.id));
   // The findings owed at acceptance, read from both sides as the acceptance evidence's check reads them (acceptance-evidence.js);

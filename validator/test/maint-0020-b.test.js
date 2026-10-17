@@ -475,12 +475,12 @@ test('MAINT-0020 P1: wf usage flags an implementer or fix whose peak context pas
 // The owner's rule (17 October 2026): reviews alongside development use review.second_model.model at high effort; only the
 // milestone review, the one last check of everything built, may use final_model.
 const SECOND = { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'xhigh' };
-const closing = (t, { second = { ...SECOND, final_model: 'gpt-6.1-astra', final_effort: 'xhigh' }, roles = { walker: { model: 'opus', effort: 'high' } } } = {}) => {
+const closing = (t, { second = { ...SECOND, final_model: 'gpt-6.1-astra', final_effort: 'xhigh' }, roles = { walker: { model: 'opus', effort: 'high' } }, listed = true } = {}) => {
   const p = project(t, { configEdit: c => ({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true }, roles, ...(second ? { review: { second_model: second } } : {}) }) });
   const task = fs.readFileSync(path.join(p.repo, taskPath), 'utf8');
   // T-0001 planned and Done, accepting two findings; T-0003 a found task carrying one of them (P11); T-0004 planned with no
   // record; T-0002 is another milestone's, and its finding is not owed here.
-  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active\ntasks: [T-0001, T-0004]\nmeasure: The owner imports a list'));
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', `status: Active${listed ? '\ntasks: [T-0001, T-0004]' : ''}\nmeasure: The owner imports a list`));
   p.edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace('deferred_inputs: []', 'deferred_inputs: []\naccepted_findings: [R-0001/N1, R-0003/F1]'));
   p.write('docs/workflow/tasks/T-0003.md', task.replaceAll('T-0001', 'T-0003').replace('status: Ready', 'status: Done').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0003/F1'));
   p.write('docs/workflow/tasks/T-0002.md', task.replaceAll('T-0001', 'T-0002').replace('milestone: M-0001', 'milestone: M-0002').replace('deferred_inputs: []', 'deferred_inputs: []\naccepted_findings: [R-0009/X1]'));
@@ -504,6 +504,9 @@ test('MAINT-0020 P3: the acceptance brief prints the milestone, its planned and 
     '- Left for the owner by approval.defer_to_acceptance: those findings, and each task pull request\'s `deferred` from `wf ci` (acceptance tests changed, scenarios that waited on found work), in the evidence\'s `deferred` and `tests_changed`',
   ]) assert.ok(out.split('\n').includes(line), `${line}\n---\n${out}`);
   assert.doesNotMatch(out, /R-0009|T-0002/, 'another milestone\'s task and finding are not this one\'s');
+  // A milestone without a tasks: list: a task with a found_from is found, the others planned.
+  const unlisted = closing(t, { listed: false }).out.split('\n');
+  assert.ok(unlisted.includes('- Planned tasks: T-0001 (Done)') && unlisted.includes('- Found tasks: T-0003 (Done), found from R-0003/F1'), unlisted.join('\n'));
   assert.match(out, /you post their results on the acceptance pull request; do not write the package or walk the trial yourself, so your context grows by their results only/);
   assert.match(out, /Each helper returns text and links \(its posted comment, its commits, the screenshots\), not the files it read;/);
 });

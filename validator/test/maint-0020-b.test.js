@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirSource, loadConfig } from '../lib/index.js';
 import { LAUNCH_ROLES, launchName, parseLaunchName } from '../lib/roles.js';
 import { MAX_SLICES, sliceTask } from '../lib/lead-brief.js';
-import { HELPER_PEAK } from '../lib/usage.js';
+import { HELPER_PEAK, READER, evaluateUsage } from '../lib/usage.js';
 import { cli, project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0020, v2.9.0: what M-0005 of mateen-systems measured on v2.7.0, the second part. Later slices append their tests here.
@@ -141,6 +141,24 @@ test('MAINT-0020 P14: a write after a wait outlived its cache\'s lifetime and wr
   assert.match(text, /by the tool call before them: Agent 61 K, Bash 30 K\n {2}Bash "Run the unit tests": 1 call\(s\), 30 K\n/);
 });
 
+test('MAINT-0020 P14 (v2.9.0 review S1-1): a call\'s five-minute and one-hour writes are each judged by their own cache\'s lifetime, and 20 K applies to their sum', () => {
+  const reading = (w5, w1, minutes) => ({ schema: READER, harness: 'claude-code', notes: [], agents: [{ id: 'm', session: 's', parent: null, kind: 'main', description: null, calls: [
+    { id: 'a', at: at(0), model: null, effort: null, input: 1, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, output: 1, after: null },
+    { id: 'b', at: at(minutes), model: null, effort: null, input: 1, cache_read: 0, cache_write_5m: w5, cache_write_1h: w1, output: 1, after: { tool: 'Bash', description: 'wait' } },
+  ] }] });
+  const after = (w5, w1, minutes) => { const u = evaluateUsage({ readings: [reading(w5, w1, minutes)] }); return [u.writes_after_wait.calls, u.writes_after_wait.tokens, u.agents[0].after_wait.tokens]; };
+  // A ten-minute gap outlives the five-minute cache only: whichever write count is larger, only the five-minute writes were rebuilt.
+  assert.deepEqual(after(25000, 30000, 10), [1, 25000, 25000], 'more one-hour writes than five-minute: the five-minute ones still count');
+  assert.deepEqual(after(30000, 25000, 10), [1, 30000, 30000], 'reversed: the one-hour ones do not');
+  assert.deepEqual(after(15000, 15000, 10), [0, 0, 0], '30 K written, 15 K of it after a lapse: under 20 K');
+  assert.deepEqual(after(10000, 40000, 10), [0, 0, 0]);
+  // A gap over an hour outlives both, and 20 K applies to the sum of the two.
+  assert.deepEqual(after(12000, 12000, 70), [1, 24000, 24000]);
+  assert.deepEqual(after(5000, 30000, 70), [1, 35000, 35000]);
+  assert.deepEqual(after(12000, 5000, 70), [0, 0, 0]);
+  assert.deepEqual(after(0, 30000, 30), [0, 0, 0], 'one-hour writes after half an hour: the cache held');
+});
+
 test('MAINT-0020 P14: agents are attributed by launch name, by the words of older descriptions (inferred), and by their parent', t => {
   const u = setup(t).json();
   const who = d => { const a = agent(u, d); return [a.task, a.role, a.attribution, a.task_from]; };
@@ -260,6 +278,30 @@ test('MAINT-0020 P5(a), P14: wf usage --milestone counts the runs used against t
   assert.match(fs.readFileSync(path.join(root, 'validator/cli.js'), 'utf8'), /secondModelBudget\(config, records, \[o\.milestone\]\)/);
 });
 
+test('MAINT-0020 P5(a), P14 (v2.9.0 review S1-2): a run naming only a review counts for the milestone of the task that cites it', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } } }) });
+  const task = fs.readFileSync(path.join(p.repo, taskPath), 'utf8');
+  // T-0001 (M-0001) accepted a finding of R-0001; T-0003 (M-0001) is a found task fixing one of R-0003; T-0002 (M-0002) cites R-0002.
+  p.edit(taskPath, x => x.replace('deferred_inputs: []', 'deferred_inputs: []\naccepted_findings: [R-0001/F1]'));
+  p.write('docs/workflow/tasks/T-0002.md', task.replaceAll('T-0001', 'T-0002').replace('milestone: M-0001', 'milestone: M-0002').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0002/F1'));
+  p.write('docs/workflow/tasks/T-0003.md', task.replaceAll('T-0001', 'T-0003').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0003/F1'));
+  const codex = path.join(p.temp, 'codex');
+  codexLogs(codex, [
+    { started: at(0), cwd: '/tmp/a', prompt: 'A second look at R-0001', tokens: true },
+    { started: at(1), cwd: '/tmp/b', prompt: 'A second look at R-0002', tokens: true },
+    { started: at(2), cwd: '/tmp/c', prompt: 'A second look at R-0003', tokens: true },
+    { started: at(3), cwd: '/work/.review-T-0001', prompt: 'Review', tokens: true },
+    { started: at(4), cwd: '/tmp/d', prompt: 'A second look at R-0004', tokens: true },
+    { started: at(5), cwd: '/tmp/e', prompt: 'A second look at R-0001', refused: true },
+  ]);
+  const r = p.run(['usage', '--since', at(-1), '--until', at(60), '--codex-dir', codex, '--milestone', 'M-0001']);
+  assert.equal(r.status, 0, r.stderr);
+  const s = r.out.second_model;
+  assert.deepEqual([s.matched, s.unmatched, s.by_task], [5, 1, { 'R-0001': 1, 'R-0002': 1, 'R-0003': 1, 'T-0001': 1 }], 'R-0004 is cited by no record: unmatched');
+  // R-0001 (T-0001's) and R-0003 (T-0003's) reach M-0001 with the run of T-0001; R-0002 is another milestone's; the refused one is not counted.
+  assert.deepEqual([s.milestone.used, s.milestone.task_runs, s.milestone.review_runs, s.milestone.refused], [3, 3, 0, 1]);
+});
+
 test('MAINT-0020 P14: --outcome prints the selected task\'s usage block for its session outcome', t => {
   const { usageRun } = setup(t);
   const r = usageRun('--task', 'T-0007', '--outcome');
@@ -298,10 +340,15 @@ test('MAINT-0020 P14: the harness readers are adapters behind one contract, so t
   assert.equal(records.status, 0, records.stderr);
   const usage = spawnSync(process.execPath, [path.join(dir, 'validator/cli.js'), 'usage', '--since', at(0), '--codex-dir', dir], { encoding: 'utf8', env: { ...process.env, HOME: dir } });
   assert.equal(usage.status, 2);
-  assert.match(usage.stderr, /usage needs adapters\/usage\/codex\.mjs of the workflow installation/);
+  assert.match(usage.stderr, /usage needs adapters\/usage\/codex\.mjs of the workflow installation \(run it from a full one: the project's scripts\/wf, or node validator\/cli\.js in a workflow checkout; bin\/wf extracts only validator\/\)/);
+  assert.match(fs.readFileSync(path.join(root, 'SCHEMA.md'), 'utf8'), /`usage` runs from a full installation \(the project's `scripts\/wf`, or `node validator\/cli\.js` in a workflow checkout\): `bin\/wf` extracts only `validator\/`/);
   // Each reader returns the reader contract; the aggregator refuses anything else.
   for (const file of ['claude-code.mjs', 'codex.mjs']) assert.match(fs.readFileSync(path.join(root, 'adapters/usage', file), 'utf8'), /export const SCHEMA = 'agent-workflow\/usage-reader@1';[\s\S]*export function read\(paths/);
   assert.match(fs.readFileSync(path.join(root, 'validator/lib/usage.js'), 'utf8'), /Replacing or adding a reader changes only that reader and its line in cli\.js/);
+  // Behaviour, not only declarations (v2.9.0 review S1-4): a result of another schema, or none, is refused, not aggregated.
+  const reading = { schema: READER, harness: 'claude-code', agents: [], notes: [] };
+  assert.equal(evaluateUsage({ readings: [reading] }).schema, 'agent-workflow/usage@1');
+  for (const bad of [{ ...reading, schema: 'agent-workflow/usage-reader@2' }, { ...reading, schema: undefined }, undefined]) assert.throws(() => evaluateUsage({ readings: [reading, bad] }), /a usage reader returned .*, not agent-workflow\/usage-reader@1/, String(bad?.schema));
 });
 
 // P1. M-0005's four implementing helpers grew to 571–814 K and spent 37 % of the cache reads; a quarter to a half of their reading

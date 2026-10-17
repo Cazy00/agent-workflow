@@ -19,8 +19,10 @@ import { parseLaunchName } from './roles.js';
 export const READER = 'agent-workflow/usage-reader@1';
 export const SCHEMA = 'agent-workflow/usage@1';
 const FIELDS = ['input', 'cache_read', 'cache_write_5m', 'cache_write_1h', 'output']; // also the price keys (records.js PRICE_KEYS)
-// A call writes after a wait when the gap since its agent's previous call outlived the cache its writes use and it wrote more than
-// REBUILD: M-0005's helpers rebuilt 19.4 M of their 31.5 M written tokens so (record § 9, F11).
+// A call writes after a wait when the gap since its agent's previous call outlived the cache its writes use and those writes total
+// more than REBUILD: M-0005's helpers rebuilt 19.4 M of their 31.5 M written tokens so (record § 9, F11). Each lifetime is judged on
+// its own writes (v2.9.0 review S1-1): a call's five-minute writes count after a gap over 300 s, its one-hour writes after one over
+// 3600 s, and REBUILD applies to their sum, so no mix of the two reads as zero or as all of it by which is larger.
 const LIFETIME = { cache_write_5m: 300, cache_write_1h: 3600 }, REBUILD = 20000;
 // MAINT-0020 P1: the peak context an implementing helper (implementer or fix) should stay under; M-0005's four largest reached
 // 571–814 K. Slices (wf brief --lead) are the cut; this flags a recurrence, since no gate can read a harness's token counts.
@@ -74,8 +76,7 @@ function measure(a, inWindow, seen, prices, waits) {
   for (const c of a.calls ?? []) {
     if (seen.has(c.id)) continue;
     seen.add(c.id);
-    const lifetime = c.cache_write_1h > c.cache_write_5m ? LIFETIME.cache_write_1h : LIFETIME.cache_write_5m;
-    const waited = prev && (time(c.at) - time(prev.at)) / 1000 > lifetime && written(c) > REBUILD;
+    const gap = prev ? (time(c.at) - time(prev.at)) / 1000 : 0, rebuilt = Object.entries(LIFETIME).reduce((n, [k, seconds]) => n + (gap > seconds ? c[k] : 0), 0);
     prev = c;
     if (!inWindow(c.at)) continue;
     m.calls++;
@@ -84,7 +85,7 @@ function measure(a, inWindow, seen, prices, waits) {
     m.first_call ??= c.at; m.last_call = c.at;
     if (c.model) models[c.model] = (models[c.model] ?? 0) + 1;
     if (c.effort) efforts[c.effort] = (efforts[c.effort] ?? 0) + 1;
-    if (waited) { m.after_wait.calls++; m.after_wait.tokens += written(c); waits.push({ task: a.task, tool: c.after?.tool ?? null, description: c.after?.description ?? null, tokens: written(c) }); }
+    if (rebuilt > REBUILD) { m.after_wait.calls++; m.after_wait.tokens += rebuilt; waits.push({ task: a.task, tool: c.after?.tool ?? null, description: c.after?.description ?? null, tokens: rebuilt }); }
     if (prices) { const p = priceOf(prices, c.model); if (p) m.cost += costOf(p, c); else m.unpriced_calls++; }
   }
   return { ...m, model: most(models), effort: most(efforts), cost: m.cost == null ? null : cents(m.cost) };
@@ -107,14 +108,15 @@ function sum(agents, priced) {
 }
 const group = (agents, key, name, priced) => [...new Set(agents.map(key))].map(k => ({ [name]: k, ...sum(agents.filter(a => key(a) === k), priced) }));
 
-// The project's IDs a second-model run can name: its records' tasks and milestones, and the reviews their findings cite; with
-// --milestone, the milestone's tasks (null without records: every matched run then counts).
+// The project's IDs a second-model run can name: its records' tasks and milestones, and the reviews their findings cite; `reviews`
+// maps each such review to the tasks citing it (accepted_findings, found_from), so a run naming only a review reaches a milestone
+// through them (v2.9.0 review S1-2); with --milestone, the milestone's tasks (null without records: every matched run then counts).
 export function usageProject(records, milestone = null) {
-  if (!records) return { ids: new Set(), tasksOf: null };
-  const ids = new Set([...records.tasks.keys(), ...records.milestones.keys()].filter(id => ID.test(id)));
-  for (const r of records.tasks.values()) for (const f of [...list(r.data?.accepted_findings), r.data?.found_from]) { const review = String(f ?? '').match(/^R-\d{4}/)?.[0]; if (review) ids.add(review); }
+  if (!records) return { ids: new Set(), tasksOf: null, reviews: new Map() };
+  const ids = new Set([...records.tasks.keys(), ...records.milestones.keys()].filter(id => ID.test(id))), reviews = new Map();
+  for (const r of records.tasks.values()) for (const f of [...list(r.data?.accepted_findings), r.data?.found_from]) { const review = String(f ?? '').match(/^R-\d{4}/)?.[0]; if (review) { ids.add(review); reviews.set(review, (reviews.get(review) ?? new Set()).add(r.data?.id)); } }
   const tasksOf = milestone ? new Set([...[...records.tasks.values()].filter(r => r.data?.milestone === milestone).map(r => r.data.id), ...list(records.milestones.get(milestone)?.data?.tasks)]) : null;
-  return { ids, tasksOf };
+  return { ids, tasksOf, reviews };
 }
 
 // The window the readers are read for: as given, else the span of the calls read so far (the Claude sessions'), so Codex runs
@@ -138,7 +140,9 @@ function secondModel(runs, { window, project, milestone, budget, prices }) {
   for (const r of counted) by_task[r.named] = (by_task[r.named] ?? 0) + 1;
   let m = null;
   if (milestone) {
-    const mine = out.filter(r => r.matched && (r.named === milestone || (project.tasksOf ? project.tasksOf.has(r.named) : true)));
+    // A run is the milestone's when it names the milestone, one of its tasks, or a review one of those tasks cites.
+    const ofMilestone = id => id === milestone || !project.tasksOf || project.tasksOf.has(id) || [...(project.reviews?.get(id) ?? [])].some(t => project.tasksOf.has(t));
+    const mine = out.filter(r => r.matched && ofMilestone(r.named));
     const used = mine.filter(r => !r.refused), review = used.filter(r => r.named === milestone).length, taskRuns = used.length - review;
     const warning = !budget ? null : used.length >= budget.runs ? `the budget is spent: ${used.length} of ${budget.runs} runs used` : !review && taskRuns + 1 >= budget.runs ? `one more task run would use the milestone review's reserve (${taskRuns} of ${budget.runs - 1} task runs used)` : null;
     m = { id: milestone, budget: budget?.runs ?? null, deep_tasks: budget?.deep_tasks ?? null, used: used.length, task_runs: taskRuns, review_runs: review, refused: mine.length - used.length, warning };
@@ -146,7 +150,7 @@ function secondModel(runs, { window, project, milestone, budget, prices }) {
   return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, by_task, milestone: m };
 }
 
-export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null }, budget = null, notes = [] }) {
+export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null, reviews: new Map() }, budget = null, notes = [] }) {
   for (const r of readings) if (r?.schema !== READER) throw new Error(`a usage reader returned ${r?.schema ?? 'nothing'}, not ${READER}`);
   const window = usageWindow(readings, since, until);
   const inWindow = at => (!since || time(at) >= time(since)) && (!until || time(at) <= time(until));

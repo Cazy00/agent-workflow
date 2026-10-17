@@ -45,7 +45,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
   usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001]: per agent, task and role, what the
-    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone); --json for usage@1, --outcome for a session outcome's usage; grants nothing
+    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone); --json for usage@1, --outcome for a session outcome's usage; grants nothing;
+    runs from a full installation (the project's scripts/wf, or node validator/cli.js in a workflow checkout), not bin/wf, which extracts only validator/
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
@@ -222,7 +223,8 @@ async function main() {
     return result.ok ? 0 : 1;
   }
   // MAINT-0020 P14: what the harnesses' own records say each agent used (lib/usage.js); it grants nothing and no gate reads it. A
-  // reader per harness (adapters/usage/) is loaded only here, so a validator extracted alone (bin/wf) still runs every other command.
+  // reader per harness (adapters/usage/) is loaded only here, so a validator extracted alone (bin/wf) still runs every other command;
+  // usage is no gate, so bin/wf is not changed to extract the readers (v2.9.0 review S1-3): it runs from a full installation.
   if (cmd === 'usage') {
     for (const k of ['since', 'until']) if (o[k] !== undefined && Number.isNaN(Date.parse(o[k]))) throw new WfError(`--${k} must be an ISO time, such as 2026-10-16T06:08:00Z`);
     if (o.task !== undefined && !/^T-\d{4}$/.test(o.task)) throw new WfError('usage --task needs T-0001');
@@ -239,7 +241,7 @@ async function main() {
       const paths = [o[option] ?? fallback].flat().filter(Boolean);
       if (!paths.length) continue;
       let reader;
-      try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation: ${e.message}`); }
+      try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation (run it from a full one: the project's scripts/wf, or node validator/cli.js in a workflow checkout; bin/wf extracts only validator/): ${e.message}`); }
       try { readings.push(reader.read(paths, usageWindow(readings, o.since, o.until))); } catch (e) { throw new WfError(e.message); }
     }
     const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: usageProject(records, o.milestone), budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and runs are matched to the IDs the transcripts name'] });

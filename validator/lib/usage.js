@@ -132,24 +132,30 @@ export function usageWindow(readings, since = null, until = null) {
 }
 
 // v2.9.0 final review S1: a run is this project's when it ran in the repository or one of its worktrees, or in or below a folder
-// whose name usage.folders allows, or when its first prompt names the repository. Codex keeps every project's runs in one folder,
-// and IDs alone (T-0001, M-0001) are any project's: another project's runs used this one's budget.
+// whose name usage.folders allows. Codex keeps every project's runs in one folder, and IDs alone (T-0001, M-0001) are any
+// project's: another project's runs used this one's budget. v2.9.0 final check A2: a known folder decides, since a prompt names a
+// project in passing ("update this project to the new agent-workflow version", run in another one, used this one's budget); only
+// a run with no folder is this project's by its first prompt naming the repository.
 const inside = (dir, root) => { const rel = path.relative(root, dir); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
+const hasFolder = run => typeof run.cwd === 'string' && run.cwd !== '';
+const namesIt = (run, names) => (run.prompt_names ?? []).some(n => names.includes(n));
 export function projectOf(run, { folders = [], folder_names = [], names = [] } = {}) {
-  const cwd = typeof run.cwd === 'string' && path.isAbsolute(run.cwd) ? path.resolve(run.cwd) : null;
-  if (cwd && (folders.some(f => inside(cwd, path.resolve(f))) || cwd.split(path.sep).filter(Boolean).some(seg => folder_names.some(g => matchGlob(g, seg))))) return 'folder';
-  return (run.prompt_names ?? []).some(n => names.includes(n)) ? 'prompt' : null;
+  if (!hasFolder(run)) return namesIt(run, names) ? 'prompt' : null;
+  const cwd = path.isAbsolute(run.cwd) ? path.resolve(run.cwd) : null; // a relative folder is known, and none of this project's
+  return cwd && (folders.some(f => inside(cwd, path.resolve(f))) || cwd.split(path.sep).filter(Boolean).some(seg => folder_names.some(g => matchGlob(g, seg)))) ? 'folder' : null;
 }
 
 function secondModel(runs, { window, project, milestone, budget, prices }) {
   const inWindow = at => at && (!window.since || time(at) >= time(window.since)) && (!window.until || time(at) <= time(window.until));
   const out = runs.filter(r => inWindow(r.started)).map(r => {
     // The run's ID, once it is this project's: from its folder first, a task before a milestone before a review, else from its
-    // first prompt. A run naming the project's IDs and nothing else of it is another project's (ids_only).
+    // first prompt. A run naming the project's IDs and nothing else of it is another project's (ids_only); one naming the project
+    // in its first prompt from a folder outside it is too (named_outside, v2.9.0 final check A2).
     const pick = ids => { const mine = ids.filter(id => project.ids.has(id)); return mine.find(i => i[0] === 'T') ?? mine.find(i => i[0] === 'M') ?? mine[0] ?? null; };
     const by = projectOf(r, project), fromCwd = pick(r.ids?.cwd ?? []), id = fromCwd ?? pick(r.ids?.prompt ?? []), named = by ? id : null;
+    const outside = !by && hasFolder(r) && namesIt(r, project.names ?? []);
     const price = priceOf(prices, r.model);
-    return { harness: r.harness, id: r.id, started: r.started, model: r.model, effort: r.effort, matched_by: by, named, named_in: named ? (fromCwd ? 'cwd' : 'prompt') : null, task: named && named[0] !== 'R' ? named : null, matched: !!by, ids_only: !by && !!id, refused: !!r.refused, ...r.total, cost: prices ? (price ? cents(costOf(price, r.total)) : null) : null };
+    return { harness: r.harness, id: r.id, started: r.started, model: r.model, effort: r.effort, matched_by: by, named, named_in: named ? (fromCwd ? 'cwd' : 'prompt') : null, task: named && named[0] !== 'R' ? named : null, matched: !!by, ids_only: !by && !!id && !outside, named_outside: outside, refused: !!r.refused, ...r.total, cost: prices ? (price ? cents(costOf(price, r.total)) : null) : null };
   });
   const counted = out.filter(r => r.matched && !r.refused);
   const by_task = {};
@@ -163,7 +169,7 @@ function secondModel(runs, { window, project, milestone, budget, prices }) {
     const warning = !budget ? null : used.length >= budget.runs ? `the budget is spent: ${used.length} of ${budget.runs} runs used` : !review && taskRuns + 1 >= budget.runs ? `one more task run would use the milestone review's reserve (${taskRuns} of ${budget.runs - 1} task runs used)` : null;
     m = { id: milestone, budget: budget?.runs ?? null, deep_tasks: budget?.deep_tasks ?? null, used: used.length, task_runs: taskRuns, review_runs: review, refused: mine.length - used.length, warning };
   }
-  return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, ids_only: out.filter(r => r.ids_only).length, by_task, milestone: m };
+  return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, ids_only: out.filter(r => r.ids_only).length, named_outside: out.filter(r => r.named_outside).length, by_task, milestone: m };
 }
 
 export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null, reviews: new Map() }, budget = null, notes = [] }) {
@@ -193,6 +199,7 @@ export function evaluateUsage({ readings, since = null, until = null, task = nul
   if (task && !agents.length) notesOut.push(`no agent of ${task} has a call in the window`);
   if (milestone && !budget) notesOut.push(`no second-model budget for ${milestone}: the config here sets no review.second_model, or there is no project config`);
   if (second.ids_only) notesOut.push(`${second.ids_only} second-model run(s) name this project's IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (${(project.names ?? []).join(', ') || 'no name here'}): counted as other projects', not here`);
+  if (second.named_outside) notesOut.push(`${second.named_outside} second-model run(s) name this project in their first prompt (${(project.names ?? []).join(', ')}) but ran in a folder outside it (the repository, its worktrees, usage.folders): counted as other projects', not here; if they are this project's, add their folder's name to usage.folders`);
   if (second.runs.length && !(project.folders ?? []).length && !(project.names ?? []).length) notesOut.push('no Git repository and no config repository here: no second-model run can be this project\'s');
   return {
     schema: SCHEMA, window, filter: { task, milestone }, priced, agents, by_role: byRole, by_task: byTask, totals,
@@ -229,7 +236,7 @@ export function renderUsage(u) {
   lines.push('', `Writes after a wait longer than the cache's lifetime (over 20 K written): ${w.calls} call(s), ${tok(w.tokens)}; helpers ${tok(w.tokens - c.tokens)} in ${w.calls - c.calls}, the coordinator ${tok(c.tokens)} in ${c.calls}.`);
   if (w.calls) lines.push(`  by the tool call before them: ${w.by_tool.map(e => `${e.tool ?? 'a message'} ${tok(e.tokens)}`).join(', ')}`, ...w.by_call.filter(e => e.description).slice(0, 5).map(e => `  ${e.tool} "${e.description}": ${e.calls} call(s), ${tok(e.tokens)}`));
   const s = u.second_model;
-  lines.push('', `Second-model runs in the window: ${s.matched} of this project (run in its folders, or naming it in their first prompt)${s.refused ? `, ${s.refused} of them refused at the usage limit` : ''}; ${s.unmatched} of other projects${s.ids_only ? `, ${s.ids_only} of them naming this project's IDs` : ''}.`);
+  lines.push('', `Second-model runs in the window: ${s.matched} of this project (run in its folders, or with no folder and naming it in their first prompt)${s.refused ? `, ${s.refused} of them refused at the usage limit` : ''}; ${s.unmatched} of other projects${s.ids_only ? `, ${s.ids_only} of them naming this project's IDs` : ''}.`);
   if (Object.keys(s.by_task).length) lines.push(`  run: ${Object.entries(s.by_task).sort().map(([k, n]) => `${k} ${n}`).join(', ')}`);
   if (s.refused) lines.push(`  refused: ${s.runs.filter(r => r.matched && r.refused).map(r => `${r.named} at ${r.started}`).join(', ')}`);
   const m = s.milestone;

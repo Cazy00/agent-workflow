@@ -239,8 +239,8 @@ async function main() {
     const dir = path.resolve(o.repo ?? process.cwd()), here = dirSource(dir);
     const config = here.read('docs/workflow/config.json') == null ? null : loadConfig(here);
     const records = config ? loadAll(here, config.records_dir ?? 'docs/workflow') : null;
-    // v2.9.0 final review S1: where this project is, so a second-model run is its own only when it ran there or its first prompt
-    // names it (lib/usage.js projectOf): the repository and its worktrees (each as Git gives it and as its real path), the folder
+    // v2.9.0 final review S1: where this project is, so a second-model run is its own only when it ran there or, with no folder,
+    // its first prompt names it (lib/usage.js projectOf, v2.9.0 final check A2): the repository and its worktrees (each as Git gives it and as its real path), the folder
     // names usage.folders allows, and the names config repository and the main worktree's folder give it. Outside Git, no folder.
     const listed = gitRunner(dir)('worktree', 'list', '--porcelain');
     const trees = listed.status === 0 ? listed.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9)) : [];

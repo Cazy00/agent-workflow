@@ -65,7 +65,7 @@ function claudeSession(dir) {
   return path.join(dir, `${id}.jsonl`);
 }
 
-// Codex logs: this project's by folder and by prompt, another project's, refused, and outside the window. The harness's wrapping
+// Codex logs: this project's by folder and, with no folder, by prompt (v2.9.0 final check A2), another project's, refused, and outside the window. The harness's wrapping
 // names the fixtures' repositories too (repo, fixture/project), which is not the first prompt (v2.9.0 final review S1).
 function codexLogs(dir, runs) {
   for (const [i, r] of runs.entries()) {
@@ -85,7 +85,7 @@ function codexLogs(dir, runs) {
 }
 const RUNS = repo => [
   { started: at(20), cwd: path.join(repo, '.review-T-0007'), prompt: 'Review T-0007 against M-0001', tokens: true },
-  { started: at(25), cwd: '/tmp/a', prompt: 'A second look at R-0012 of repo', tokens: true },
+  { started: at(25), cwd: null, prompt: 'A second look at R-0012 of repo', tokens: true },
   { started: at(26), cwd: '/tmp/b', prompt: 'Review T-0099', tokens: true },
   { started: at(27), cwd: path.join(repo, '.review-T-0008'), prompt: 'Review it', refused: true },
   // Another project's review of its own T-0007, in its worktree: this project's ID, not its run (v2.9.0 final review S1).
@@ -240,7 +240,7 @@ test('MAINT-0020 P14: Codex runs in the window are this project\'s by their fold
   assert.deepEqual(['input', 'cache_read', 'output', 'model', 'effort'].map(k => s.runs[0][k]), [200, 800, 50, 'gpt-6.1-sol', 'high'], 'Codex\'s input_tokens holds the cached ones');
   assert.ok(u.notes.includes('1 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (repo): counted as other projects\', not here'), u.notes.join(' | '));
   const text = usageRun().stdout;
-  assert.match(text, /Second-model runs in the window: 3 of this project \(run in its folders, or naming it in their first prompt\), 1 of them refused at the usage limit; 2 of other projects, 1 of them naming this project's IDs\.\n {2}run: R-0012 1, T-0007 1\n {2}refused: T-0008 at /);
+  assert.match(text, /Second-model runs in the window: 3 of this project \(run in its folders, or with no folder and naming it in their first prompt\), 1 of them refused at the usage limit; 2 of other projects, 1 of them naming this project's IDs\.\n {2}run: R-0012 1, T-0007 1\n {2}refused: T-0008 at /);
   // A window given explicitly; without a Claude session the runs alone, which need --since.
   const alone = spawnSync(process.execPath, [cli, 'usage', '--codex-dir', codex], { encoding: 'utf8' });
   assert.equal(alone.status, 2);
@@ -298,12 +298,12 @@ test('MAINT-0020 P5(a), P14 (v2.9.0 review S1-2): a run naming only a review cou
   p.write('docs/workflow/tasks/T-0003.md', task.replaceAll('T-0001', 'T-0003').replace('deferred_inputs: []', 'deferred_inputs: []\nfound_from: R-0003/F1'));
   const codex = path.join(p.temp, 'codex');
   codexLogs(codex, [
-    { started: at(0), cwd: '/tmp/a', prompt: 'A second look at R-0001 of fixture/project', tokens: true },
-    { started: at(1), cwd: '/tmp/b', prompt: 'A second look at R-0002 of fixture/project', tokens: true },
-    { started: at(2), cwd: '/tmp/c', prompt: 'A second look at R-0003 of Project.', tokens: true },
+    { started: at(0), cwd: null, prompt: 'A second look at R-0001 of fixture/project', tokens: true },
+    { started: at(1), cwd: null, prompt: 'A second look at R-0002 of fixture/project', tokens: true },
+    { started: at(2), cwd: null, prompt: 'A second look at R-0003 of Project.', tokens: true },
     { started: at(3), cwd: p.repo, prompt: 'T-0001 reviewer: review', tokens: true },
-    { started: at(4), cwd: '/tmp/d', prompt: 'A second look at R-0004 of fixture/project', tokens: true },
-    { started: at(5), cwd: '/tmp/e', prompt: 'A second look at R-0001 of fixture/project', refused: true },
+    { started: at(4), cwd: null, prompt: 'A second look at R-0004 of fixture/project', tokens: true },
+    { started: at(5), cwd: null, prompt: 'A second look at R-0001 of fixture/project', refused: true },
   ]);
   const r = p.run(['usage', '--since', at(-1), '--until', at(60), '--codex-dir', codex, '--milestone', 'M-0001']);
   assert.equal(r.status, 0, r.stderr);
@@ -335,8 +335,8 @@ test('v2.9.0 final review S1: another project\'s runs naming the same IDs use no
   assert.deepEqual(u.second_model.milestone, { id: 'M-0001', budget: 3, deep_tasks: 1, used: 1, task_runs: 1, review_runs: 0, refused: 0, warning: null });
   assert.deepEqual(u.second_model.runs.map(r => [r.matched_by, r.named, r.ids_only]), [['folder', 'T-0001', false], [null, null, true], [null, null, true], [null, null, true], [null, null, true]]);
   assert.ok(u.notes.includes('4 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (fixture/project, project): counted as other projects\', not here'), u.notes.join(' | '));
-  // This project's own: in the repository (naming no ID: of no task), in a folder usage.folders allows, or naming the repository.
-  const ours = usage([[worktree, 'T-0001 reviewer: review'], [p.repo, 'A look around'], ['/tmp/project-review-T-0001/src', 'Review'], ['/tmp/x', 'Milestone review of M-0001 for Fixture/Project'], ...others]);
+  // This project's own: in the repository (naming no ID: of no task), in a folder usage.folders allows, or with no folder naming the repository.
+  const ours = usage([[worktree, 'T-0001 reviewer: review'], [p.repo, 'A look around'], ['/tmp/project-review-T-0001/src', 'Review'], [null, 'Milestone review of M-0001 for Fixture/Project'], ...others]);
   assert.deepEqual(ours.second_model.runs.slice(0, 4).map(r => [r.matched_by, r.named]), [['folder', 'T-0001'], ['folder', null], ['folder', 'T-0001'], ['prompt', 'M-0001']]);
   assert.deepEqual([ours.second_model.milestone.used, ours.second_model.milestone.task_runs, ours.second_model.milestone.review_runs, ours.second_model.milestone.warning], [3, 2, 1, 'the budget is spent: 3 of 3 runs used']);
   assert.deepEqual([ours.second_model.matched, ours.second_model.unmatched, ours.second_model.ids_only], [4, 4, 4]);
@@ -901,4 +901,29 @@ test('v2.9.0 review S4-6: wf next\'s task hand-over keeps the selected candidate
   assert.equal(brief.status, 0, brief.stderr);
   assert.match(brief.stdout, /^# T-0001: The title on its claim branch$/m);
   assert.equal(p.run(['next', '--baseline', p.baseline]).out.next.run[1], `wf brief --lead --task T-0001 --baseline ${p.baseline}  (the task lead's brief)`, 'the working tree: no --candidate');
+});
+
+// The final check of v2.8.0 + v2.9.0 (Astra, of 057ca07).
+test('v2.9.0 final check A2: a run\'s known folder decides whose it is, whatever its first prompt says; the prompt counts only a run with no folder', t => {
+  const p = project(t, { configEdit: c => ({ ...c, repository: 'fixture/agent-workflow', review: { second_model: { tool: 'codex', model: 'gpt-6.1-sol', max_effort: 'high' } } }) });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep'));
+  p.commit('one deep task');
+  const codex = path.join(p.temp, 'codex');
+  const usage = runs => {
+    fs.rmSync(codex, { recursive: true, force: true });
+    codexLogs(codex, runs.map(([cwd, prompt], i) => ({ started: at(i), cwd, prompt, tokens: true })));
+    const r = p.run(['usage', '--since', at(-1), '--until', at(60), '--codex-dir', codex, '--milestone', 'M-0001']);
+    assert.equal(r.status, 0, r.stderr);
+    return r.out;
+  };
+  // The repro: another project's run, in its own folder, mentions this one's name and its T-0001 in passing.
+  const u = usage([['/projects/other', 'T-0001: update this project to the new agent-workflow version']]);
+  assert.deepEqual(u.second_model.runs.map(r => [r.matched_by, r.named, r.task, r.matched, r.ids_only, r.named_outside]), [[null, null, null, false, false, true]]);
+  assert.deepEqual([u.second_model.matched, u.second_model.unmatched, u.second_model.ids_only, u.second_model.named_outside, u.second_model.milestone.used], [0, 1, 0, 1, 0]);
+  assert.ok(u.notes.includes('1 second-model run(s) name this project in their first prompt (fixture/agent-workflow, agent-workflow, project) but ran in a folder outside it (the repository, its worktrees, usage.folders): counted as other projects\', not here; if they are this project\'s, add their folder\'s name to usage.folders'), u.notes.join(' | '));
+  // The same prompt with no folder is this project's, of the task it names; a run in the repository is, whatever its prompt.
+  const none = usage([[null, 'T-0001: update this project to the new agent-workflow version'], [null, 'Review T-0001 of other-project'], [p.repo, 'Review T-0001 of other-project']]);
+  assert.deepEqual(none.second_model.runs.map(r => [r.matched_by, r.named, r.ids_only, r.named_outside]), [['prompt', 'T-0001', false, false], [null, null, true, false], ['folder', 'T-0001', false, false]]);
+  assert.deepEqual([none.second_model.matched, none.second_model.named_outside, none.second_model.milestone.used], [2, 0, 2]);
+  assert.ok(!none.notes.some(n => n.includes('name this project in their first prompt')), none.notes.join(' | '));
 });

@@ -117,6 +117,20 @@ function validateRolesConfig(r) {
   }
 }
 
+// MAINT-0020 P14: optional list prices for `wf usage`'s estimate, per million tokens, keyed by a model ID prefix. Without them it
+// prints tokens only (templates/pilot.md: no dollar conversion without account evidence). No gate reads them.
+export const PRICE_KEYS = ['input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'];
+function validateUsageConfig(u) {
+  only(u, ['prices'], 'usage');
+  if (u.prices === undefined) return;
+  if (!plainObject(u.prices) || !Object.keys(u.prices).length) throw new Error('usage.prices maps a model ID prefix to its prices per million tokens');
+  for (const [model, p] of Object.entries(u.prices)) {
+    if (!MODEL.test(model)) throw new Error(`usage.prices key "${model}" must be a plain model ID prefix`);
+    only(p, PRICE_KEYS, `usage.prices.${model}`);
+    for (const k of PRICE_KEYS) if (typeof p[k] !== 'number' || !Number.isFinite(p[k]) || p[k] < 0) throw new Error(`usage.prices.${model}.${k} must be a price per million tokens: a number, 0 or more`);
+  }
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
@@ -142,6 +156,7 @@ export function loadConfig(source) {
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
     if (config.roles !== undefined) validateRolesConfig(config.roles);
+    if (config.usage !== undefined) validateUsageConfig(config.usage);
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
     // access or tool it names is there (for example ssh to the staging host). No gate runs them.
     if (config.preflight !== undefined && (!Array.isArray(config.preflight) || config.preflight.some(c => !plainObject(c) || typeof c.name !== 'string' || !c.name.trim() || typeof c.run !== 'string' || !c.run.trim() || Object.keys(c).some(k => !['name', 'run', 'why'].includes(k))))) throw new Error('preflight entries need a name and a run command (and optionally why)');

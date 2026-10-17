@@ -4,7 +4,7 @@
 // implements, what the lead must not edit, the task's own records and the commands with their revisions. It grants nothing.
 import { list, loadAll, loadConfig } from './records.js';
 import { ACCEPTANCE } from './acceptance-files.js';
-import { effortOf, resolveRoles, reviewLevel } from './roles.js';
+import { effortOf, launchName, resolveRoles, reviewLevel } from './roles.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 export function renderLeadBrief({ baseline, candidate = baseline, task }) {
@@ -29,6 +29,8 @@ export function renderLeadBrief({ baseline, candidate = baseline, task }) {
   const roles = resolveRoles(config);
   const { level, why } = reviewLevel(t, deep);
   const setting = (role, at) => `model ${role.model ?? 'inherit'}, effort ${effortOf(role, at) ?? 'inherit'}`;
+  // MAINT-0020 P14: each helper's launch name (roles.js), which `wf usage` reads to attribute its cost to the task and role.
+  const name = role => `\`${launchName(task, role)}\``;
   // MAINT-0020 P13: friction starts empty and `wf session` refuses it empty, so "none" is a statement the lead makes (F13: all
   // 13 outcomes of M-0005 kept a pre-filled "none").
   const session = { outcome: 'ready-for-review', workflow: { version: pin.version ?? '', revision: pin.revision ?? '' }, implementer: 'helper', summary: '', candidate: '', evidence: ['<the pull request>'], next_action: '', friction: '', models: Object.fromEntries(['lead', 'implementer', 'paperwork'].map(r => [r, { model: '', effort: '' }])) };
@@ -45,6 +47,8 @@ ${bullets([
     `the implementer and each fix round: ${setting(roles.implementer, level)} (review level ${level ?? 'standard, not read'}: ${why})`,
     `the paperwork helper: ${setting(roles.paperwork)}`,
   ])}
+
+Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.
 
 ## The task's records
 - Task record: ${rd}/tasks/${task}.md (status ${t.status ?? '?'}; scope ${list(t.scope).join(', ') || '—'})

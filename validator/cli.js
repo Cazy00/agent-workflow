@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import os from 'node:os';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +20,8 @@ import { trustedBranchState, withDerivedBaselines } from './lib/derived.js';
 import { evaluateCloseout } from './lib/closeout.js';
 import { readPayloads, renderBrief } from './lib/brief.js';
 import { runAttest } from './lib/attest.js';
-import { evaluateNext, renderNext } from './lib/next.js';
+import { evaluateNext, renderNext, secondModelBudget } from './lib/next.js';
+import { evaluateUsage, outcomeUsage, renderUsage, usageProject, usageWindow } from './lib/usage.js';
 import { renderLeadBrief } from './lib/lead-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
@@ -28,8 +30,8 @@ import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/w
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'claude-session', 'codex-dir', 'since', 'until'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -42,6 +44,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
+  usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001]: per agent, task and role, what the
+    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone); --json for usage@1, --outcome for a session outcome's usage; grants nothing
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
   next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
@@ -74,12 +78,13 @@ async function main() {
     if (a === '--lead') { o.lead = true; continue; }
     if (a === '--merged') { o.merged = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
+    if (a === '--outcome') { o.outcome = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
       const value = argv[++i];
       if (name === 'changed') o.changed.push(value);
-      else if (['required-check', 'evidence', 'protect'].includes(name)) (o[name] ??= []).push(value);
+      else if (['required-check', 'evidence', 'protect', 'claude-session'].includes(name)) (o[name] ??= []).push(value);
       else if (o[name] !== undefined) throw new WfError(`duplicate option: ${a}`);
       else o[name] = value;
     } else if (!cmd) cmd = a;
@@ -88,7 +93,8 @@ async function main() {
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
-  if ((o.dryRun || o.milestone !== undefined) && cmd !== 'prune') throw new WfError('--dry-run and --milestone are only for prune');
+  if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage)');
+  if ((o.outcome || ['claude-session', 'codex-dir', 'since', 'until'].some(k => o[k] !== undefined)) && cmd !== 'usage') throw new WfError('--claude-session, --codex-dir, --since, --until and --outcome are only for usage');
   if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
@@ -214,6 +220,33 @@ async function main() {
     const result = checkDelivery({ repository: o.repository, revision: o.candidate, workflow: o['workflow-file'], branch: o.branch, event: o.event, requiredChecks: o['required-check'] });
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
+  }
+  // MAINT-0020 P14: what the harnesses' own records say each agent used (lib/usage.js); it grants nothing and no gate reads it. A
+  // reader per harness (adapters/usage/) is loaded only here, so a validator extracted alone (bin/wf) still runs every other command.
+  if (cmd === 'usage') {
+    for (const k of ['since', 'until']) if (o[k] !== undefined && Number.isNaN(Date.parse(o[k]))) throw new WfError(`--${k} must be an ISO time, such as 2026-10-16T06:08:00Z`);
+    if (o.task !== undefined && !/^T-\d{4}$/.test(o.task)) throw new WfError('usage --task needs T-0001');
+    if (o.milestone !== undefined && !/^M-\d{4}$/.test(o.milestone)) throw new WfError('usage --milestone needs M-0001');
+    if (o.outcome && !o.task) throw new WfError('usage --outcome needs --task T-0001: the block is that task\'s');
+    if (!o['claude-session'] && !o.since) throw new WfError('usage needs --claude-session SESSION.jsonl, or --since ISO to count the second model\'s runs alone');
+    // The project's config and records, from the working tree, when there is a project here: prices, IDs and the budget.
+    const here = dirSource(path.resolve(o.repo ?? process.cwd()));
+    const config = here.read('docs/workflow/config.json') == null ? null : loadConfig(here);
+    const records = config ? loadAll(here, config.records_dir ?? 'docs/workflow') : null;
+    const readers = [['claude-session', 'claude-code.mjs', null], ['codex-dir', 'codex.mjs', path.join(os.homedir(), '.codex', 'sessions')]];
+    const readings = [];
+    for (const [option, file, fallback] of readers) {
+      const paths = [o[option] ?? fallback].flat().filter(Boolean);
+      if (!paths.length) continue;
+      let reader;
+      try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation: ${e.message}`); }
+      try { readings.push(reader.read(paths, usageWindow(readings, o.since, o.until))); } catch (e) { throw new WfError(e.message); }
+    }
+    const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: usageProject(records, o.milestone), budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and runs are matched to the IDs the transcripts name'] });
+    if (o.outcome) console.log(JSON.stringify(outcomeUsage(result), null, 2));
+    else if (o.json) console.log(JSON.stringify(result, null, 2));
+    else process.stdout.write(renderUsage(result));
+    return 0;
   }
   const repo = path.resolve(o.repo ?? process.cwd()); // Git calls find the real root themselves (lib/git.js)
   const source = spec => {

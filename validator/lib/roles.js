@@ -30,6 +30,16 @@ export function reviewLevel(task, deepPaths = []) {
   return { level: null, why: 'its review field names no level (light, standard or deep) and its scope reaches no review.deep_paths; standard is the default' };
 }
 
+// MAINT-0020 P14: the launch-name convention. A helper's description starts with its task or milestone and its role, then free
+// text ("T-0025 implementer shop time zone"), so `wf usage` attributes its cost; M-0005's two studies sorted 51 helpers by hand.
+// `wf brief --lead` prints the names; a description that does not follow it is read by keywords and marked inferred (usage.js).
+export const LAUNCH_ROLES = { task: ['lead', 'implementer', 'fix', 'reviewer', 'paperwork'], milestone: ['walker', 'acceptance', 'reviewer'] };
+export const launchName = (id, role) => `${id} ${role}`;
+export function parseLaunchName(description) {
+  const m = String(description ?? '').match(/^(T-\d{4}|M-\d{4}) ([a-z]+)(?=$|[\s:,.;(—–-])/);
+  return m && LAUNCH_ROLES[m[1][0] === 'T' ? 'task' : 'milestone'].includes(m[2]) ? { id: m[1], role: m[2] } : null;
+}
+
 // Notes for a session outcome's `models` ({ role: { model, effort } }, what each role was launched with). A model alias and the
 // ID that contains it are the same (`sonnet`, `claude-sonnet-5-5`), and a role set to inherit has no model to differ from.
 const isObject = v => v && typeof v === 'object' && !Array.isArray(v);

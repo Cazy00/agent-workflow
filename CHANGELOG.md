@@ -22,7 +22,7 @@ MAINT-0020, second part: the rest of what M-0005 of mateen-systems measured (rec
   - A local production build counts when that is what the owner is given. No environment for the owner is a blocker for the plan's question.
   - In M-0005 the owner, starting cold, found what the guided walk could not (T-0037), on a development server that took 30 s to open.
 - **Smaller:** `wf next`'s `wf brief --lead` and `--acceptance` keep the selected `--candidate`. A Draft found task takes a place in the allowance once any task's `accepted_findings` names its `found_from`, so P11's carriers stay within `found_tasks`; removing such a carrier, or changing its `milestone` or `found_from`, is the owner's merge until its milestone is accepted (the final check's A1).
-- **Reviews:** each slice was reviewed as it landed, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) or, out of quota, by a fresh Claude reviewer; FINAL_REVIEW.
+- **Reviews:** each slice was reviewed as it landed, by Codex (`gpt-6.1-sol`, high effort, passed explicitly) or, out of quota, by a fresh Claude reviewer; a fresh Claude final review at max effort, then the owner's final check on Astra at high effort; both found findings, fixed and re-reviewed.
 
 Corpus: 42,979 → 44,815 words; `SCHEMA.md` 8,102 → 9,107 (the new evidence and config fields), `accept-release.md` 775 → 967, `review.md` 1,413 → 1,509, `execute.md` 2,286 → 2,317, `readiness.md` unchanged. MAINT-0020 in all added 2,868 words, more than its estimate of 400–600, mostly in SCHEMA's reference text; IDEA-16 (the corpus keeps growing) has the follow-up.
 

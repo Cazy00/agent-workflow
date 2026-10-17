@@ -116,6 +116,16 @@ test('MAINT-0021: a test-only change may leave the review out or name level none
   assert.deepEqual(reviewLevelErrors({ review: { ...evidence().review, level: 'none' } }), []);
 });
 
+test('MAINT-0021: the reviewer is from another vendor when both vendors are given', () => {
+  const e = evidence(); e.review.vendor = 'OpenAI'; e.review.implementer_vendor = 'Anthropic';
+  assert.deepEqual(errorsFor(e), []);
+  e.review.vendor = ' anthropic ';
+  assert.match(errorsFor(e).join(), /the reviewer's vendor must differ from the implementer's/);
+  e.review.vendor = ''; assert.match(errorsFor(e).join(), /review vendor must be a non-empty text/);
+  const one = evidence(); one.review.vendor = 'Google';
+  assert.deepEqual(errorsFor(one), [], 'one vendor alone is not compared');
+});
+
 test('blocking, critical and high are blocking severities; should fix, note, medium and low are not', () => {
   for (const s of ['blocking', 'Blocking', 'critical', 'high']) assert.equal(isBlocking({ severity: s }), true, s);
   for (const s of ['should fix', 'note', 'medium', 'low', undefined]) assert.equal(isBlocking({ severity: s }), false, String(s));

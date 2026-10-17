@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evidence, project } from './helpers/maint-0018.js';
+import { isTestOnlyPath } from '../lib/paths.js';
 
 // MAINT-0021: the owner's review policy of 18 October 2026. A test-only change needs no review; the reviewer is another
 // vendor's; one review on the final code; a fix check only after a blocking finding at deep or milestone; one reviewer
@@ -47,4 +48,9 @@ test('MAINT-0021: a deep test path is not test-only', t => {
   const r = ci(p, head, noReview(head));
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.out.findings.join(' | '), /independent review evidence is missing/);
+});
+
+test('MAINT-0021: a test-only path is anything in a test folder, or a test file', () => {
+  for (const p of ['tests/fixtures/a.json', 'test/helpers.py', 'src/__tests__/x.snap', 'src/a.test.ts', 'pkg/a_test.go']) assert.equal(isTestOnlyPath(p), true, p);
+  for (const p of ['src/a.js', 'docs/tests.md', 'src/testsuite/a.js', 'contest/a.js', 'tests.json']) assert.equal(isTestOnlyPath(p), false, p);
 });

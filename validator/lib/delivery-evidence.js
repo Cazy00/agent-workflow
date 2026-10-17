@@ -73,6 +73,10 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   if (typeof r.reviewer !== 'string' || !r.reviewer.trim()) errors.push('review needs a reviewer');
   if (r.implementer !== owner) errors.push('review implementer must be the tasks\' owner');
   if (typeof r.reviewer === 'string' && [r.implementer, owner].some(v => typeof v === 'string' && r.reviewer.trim().toLowerCase() === v.trim().toLowerCase())) errors.push('reviewer must differ from the implementer');
+  // MAINT-0021: independence is of context and of vendor (POLICY *Independent review*). Both vendors are optional; given
+  // together, they must differ, compared trimmed and in any case.
+  for (const k of ['vendor', 'implementer_vendor']) if (r[k] !== undefined && (typeof r[k] !== 'string' || !r[k].trim())) errors.push(`review ${k.replace('_', ' ')} must be a non-empty text when given`);
+  if (typeof r.vendor === 'string' && typeof r.implementer_vendor === 'string' && r.vendor.trim() && r.vendor.trim().toLowerCase() === r.implementer_vendor.trim().toLowerCase()) errors.push('the reviewer\'s vendor must differ from the implementer\'s (procedures/review.md)');
   if (r.separate_context !== true) errors.push('review must be in a separate context');
   const x = r.context;
   if (!isObject(x)) errors.push('review context is missing');

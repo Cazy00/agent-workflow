@@ -28,6 +28,8 @@
     "implementer": "<the tasks' owner, as recorded in the task records>",
     "level": "<light | standard | deep (procedures/review.md)>",
     "model": "<the reviewer's model>",
+    "vendor": "<the maker of the reviewer's model, e.g. OpenAI or Google>",
+    "implementer_vendor": "<the maker of the implementer's model>",
     "fallback": "<only when a deep review could not use review.second_model: why; otherwise leave this field out>",
     "separate_context": null,
     "context": {

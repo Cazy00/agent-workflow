@@ -4,7 +4,7 @@ import { parseFrontMatter } from './frontmatter.js';
 import { classifyPaths, deepChanges } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
-import { evaluateReadiness, foundRoom, OUTCOMES } from './readiness.js';
+import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
 
 import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
@@ -372,18 +372,28 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // task's `milestone`, or setting it back to Draft, passed, and the next change then dropped its findings or record unseen. So
     // any change to a record Done there is the owner's, and an entry moved off its milestone counts as dropped. A task in no
     // milestone goes at once (execute.md); a task's own Done commit changes a record not yet Done there.
-    const dropped = [], removedDone = [], changedDone = [];
+    // v2.9.0 final check A1: so is the carrier a merged carry relies on, a found task there (foundRoom's) whose found_from an
+    // accepted_findings entry names: removing the Draft T-0002 that carried Done T-0001's R-0001/F1 passed alone, and freed its
+    // place in found_tasks. Removing it, or changing its milestone or found_from, is the owner's; its claim, work and Done commit
+    // change neither, and a Done one is judged above.
+    const dropped = [], removedDone = [], changedDone = [], carriers = [], relied = reliedOn([baselineRecords, candidateRecords]);
     for (const { path: p, data: d } of baselineRecords.tasks.values()) {
-      if (!d?.id || !d.milestone || ACCEPTED.includes(baselineRecords.milestones.get(d.milestone)?.data?.status)) continue;
+      const ms = baselineRecords.milestones.get(d?.milestone)?.data;
+      if (!d?.id || !d.milestone || ACCEPTED.includes(ms?.status)) continue;
       const now = candidateRecords.tasks.get(d.id)?.data;
       if (d.status === 'Done' && !candidate.exists(p)) removedDone.push(d.id);
       else if (d.status === 'Done' && candidate.read(p) !== baseline.read(p)) changedDone.push(d.id);
+      else if (d.status !== 'Done' && d.found_from && relied.has(d.found_from) && ms?.tasks != null && !list(ms.tasks).includes(d.id)) {
+        const moved = !now ? ['removed'] : ['milestone', 'found_from'].filter(k => now[k] !== d[k]);
+        if (moved.length) carriers.push(`${d.id} (${moved.join(', ')})`);
+      }
       const gone = list(d.accepted_findings).filter(e => now?.milestone !== d.milestone || !list(now.accepted_findings).includes(e));
       if (gone.length) dropped.push(`${d.id} (${gone.join(', ')})`);
     }
     if (dropped.length) ownerReasons.push(`it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${dropped.join(', ')}`);
     if (removedDone.length) ownerReasons.push(`it removes Done task records of a milestone not yet accepted, which its acceptance reads: ${removedDone.join(', ')}`);
     if (changedDone.length) ownerReasons.push(`it changes Done task records of a milestone not yet accepted, which its acceptance reads: ${changedDone.join(', ')}`);
+    if (carriers.length) ownerReasons.push(`it removes, or changes the milestone or found_from of, found tasks that carry accepted findings of a milestone not yet accepted: ${carriers.join(', ')}`);
     const hold = milestoneHold({ checkpoint, milestones: baselineRecords.milestones });
     for (const id of selected) {
       const m = candidateRecords.tasks.get(id)?.data?.milestone;

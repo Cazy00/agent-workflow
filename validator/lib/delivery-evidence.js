@@ -131,7 +131,9 @@ export function reviewLevelErrors({ review, deep = [], secondModel = null, comma
 // fix check of this candidate (review.fix_check) is required. Returns why it does not stand, or null. `isAncestor` and
 // `carries` come from ci.js, which holds the Git sources.
 export function fixedAfterError({ review, candidate, from, isAncestor, carries }) {
-  if (!isObject(review) || !isObject(review.fixes_after)) return null;
+  if (!isObject(review) || review.fixes_after == null) return null;
+  // v2.10.0 fix check R6: a malformed fixes_after never lets an earlier review stand.
+  if (!isObject(review.fixes_after)) return 'review.fixes_after must be an object: { "tests": [the tests that failed without each blocking fix] }';
   if (!/^[0-9a-f]{40,64}$/.test(from ?? '') || !isAncestor(from)) return `${String(from).slice(0, 12)} is not an earlier revision of this candidate`;
   const tests = review.fixes_after.tests ?? [];
   if (!Array.isArray(tests) || tests.some(x => typeof x !== 'string' || !x.trim())) return 'review.fixes_after.tests must list the tests that prove the fixes';

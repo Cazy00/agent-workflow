@@ -155,3 +155,13 @@ test('MAINT-0021 review R2: after a blocking finding at deep the fixes need one 
   const stale = f.run(f.e({ ...base, fix_check: { ...check, candidate: f.reviewed } }));
   assert.equal(stale.status, 1);
 });
+
+// v2.10.0 fix check (R6): a malformed fixes_after never lets an earlier review stand.
+test('MAINT-0021 fix check R6: fixes_after that is not an object is refused', t => {
+  const f = fixed(t);
+  for (const bad of ['tests pass', ['src/a.test.js'], 0, true]) {
+    const r = f.run(f.e({ level: 'light', fixes_after: bad }));
+    assert.equal(r.status, 1, JSON.stringify(bad));
+    assert.match(r.out.findings.join(' | '), /review\.fixes_after must be an object/, JSON.stringify(bad));
+  }
+});

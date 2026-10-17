@@ -198,7 +198,7 @@ export function evaluateUsage({ readings, since = null, until = null, task = nul
   if (priced && unpriced) notesOut.push(`${unpriced} call(s) of models usage.prices does not name are left out of the estimate`);
   if (task && !agents.length) notesOut.push(`no agent of ${task} has a call in the window`);
   if (milestone && !budget) notesOut.push(`no second-model budget for ${milestone}: the config here sets no review.second_model, or there is no project config`);
-  if (second.ids_only) notesOut.push(`${second.ids_only} second-model run(s) name this project's IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (${(project.names ?? []).join(', ') || 'no name here'}): counted as other projects', not here`);
+  if (second.ids_only) notesOut.push(`${second.ids_only} second-model run(s) name this project's IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (${(project.names ?? []).join(', ') || 'no name here'}): counted as other projects', not here. A review in a worktree removed before this ran is not remembered: review in a folder usage.folders names`);
   if (second.named_outside) notesOut.push(`${second.named_outside} second-model run(s) name this project in their first prompt (${(project.names ?? []).join(', ')}) but ran in a folder outside it (the repository, its worktrees, usage.folders): counted as other projects', not here; if they are this project's, add their folder's name to usage.folders`);
   if (second.runs.length && !(project.folders ?? []).length && !(project.names ?? []).length) notesOut.push('no Git repository and no config repository here: no second-model run can be this project\'s');
   return {

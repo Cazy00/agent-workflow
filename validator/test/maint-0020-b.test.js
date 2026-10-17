@@ -238,7 +238,7 @@ test('MAINT-0020 P14: Codex runs in the window are this project\'s by their fold
   ], 'the wrapper\'s IDs and names (AGENTS.md, environment) are not the prompt; a tool output saying "usage limit" is not a refusal');
   assert.deepEqual([s.matched, s.refused, s.unmatched, s.ids_only, s.by_task], [3, 1, 2, 1, { 'T-0007': 1, 'R-0012': 1 }]);
   assert.deepEqual(['input', 'cache_read', 'output', 'model', 'effort'].map(k => s.runs[0][k]), [200, 800, 50, 'gpt-6.1-sol', 'high'], 'Codex\'s input_tokens holds the cached ones');
-  assert.ok(u.notes.includes('1 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (repo): counted as other projects\', not here'), u.notes.join(' | '));
+  assert.ok(u.notes.includes('1 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (repo): counted as other projects\', not here. A review in a worktree removed before this ran is not remembered: review in a folder usage.folders names'), u.notes.join(' | '));
   const text = usageRun().stdout;
   assert.match(text, /Second-model runs in the window: 3 of this project \(run in its folders, or with no folder and naming it in their first prompt\), 1 of them refused at the usage limit; 2 of other projects, 1 of them naming this project's IDs\.\n {2}run: R-0012 1, T-0007 1\n {2}refused: T-0008 at /);
   // A window given explicitly; without a Claude session the runs alone, which need --since.
@@ -334,7 +334,7 @@ test('v2.9.0 final review S1: another project\'s runs naming the same IDs use no
   const u = usage([[worktree, 'T-0001 reviewer: review'], ...others]);
   assert.deepEqual(u.second_model.milestone, { id: 'M-0001', budget: 3, deep_tasks: 1, used: 1, task_runs: 1, review_runs: 0, refused: 0, warning: null });
   assert.deepEqual(u.second_model.runs.map(r => [r.matched_by, r.named, r.ids_only]), [['folder', 'T-0001', false], [null, null, true], [null, null, true], [null, null, true], [null, null, true]]);
-  assert.ok(u.notes.includes('4 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (fixture/project, project): counted as other projects\', not here'), u.notes.join(' | '));
+  assert.ok(u.notes.includes('4 second-model run(s) name this project\'s IDs but ran outside its folders (the repository, its worktrees, usage.folders) and do not name it in their first prompt (fixture/project, project): counted as other projects\', not here. A review in a worktree removed before this ran is not remembered: review in a folder usage.folders names'), u.notes.join(' | '));
   // This project's own: in the repository (naming no ID: of no task), in a folder usage.folders allows, or with no folder naming the repository.
   const ours = usage([[worktree, 'T-0001 reviewer: review'], [p.repo, 'A look around'], ['/tmp/project-review-T-0001/src', 'Review'], [null, 'Milestone review of M-0001 for Fixture/Project'], ...others]);
   assert.deepEqual(ours.second_model.runs.slice(0, 4).map(r => [r.matched_by, r.named]), [['folder', 'T-0001'], ['folder', null], ['folder', 'T-0001'], ['prompt', 'M-0001']]);

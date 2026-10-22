@@ -44,7 +44,9 @@ pull request cannot choose its own cadence.
   - the owner accepts the milestone in a pull request that `wf ci` leaves to the owner.
 
   A project that deploys the trusted branch before acceptance runs that code unreviewed until then,
-  so it keeps the task cadence.
+  so it keeps the task cadence. Setting the task cadence again before a milestone's acceptance is
+  the owner's config change, and it drops the base check for that milestone: its earlier tasks then
+  rest on a milestone review that `wf ci` no longer holds to the whole diff.
 - **Independence of vendor.** Under `separate-session` a model of the implementer's vendor reviews.
   It is still a separate context: a new session with none of the implementer's conversation, never
   a subagent of the implementer's session.

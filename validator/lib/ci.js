@@ -202,13 +202,13 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       // task needs no review while its milestone is authorised there; the milestone's one review covers it (acceptance-evidence.js).
       // Only the review is waived: verification, integration and the acceptance tests' owner approval stay.
       const milestoneOf = id => candidateRecords.tasks.get(id)?.data?.milestone ?? baselineRecords.tasks.get(id)?.data?.milestone;
-      const byMilestone = config.review?.cadence === 'milestone' && selected.every(id => ['Authorised', 'Active'].includes(baselineRecords.milestones.get(milestoneOf(id))?.data?.status));
-      if (byMilestone) findings.push(`note: review.cadence milestone: no task review is needed; the milestone review covers this change (procedures/review.md)${deep.length ? `; its security focus includes the deep paths changed here: ${deep.join(', ')}` : ''}`);
+      const milestoneCadence = config.review?.cadence === 'milestone' && selected.every(id => ['Authorised', 'Active'].includes(baselineRecords.milestones.get(milestoneOf(id))?.data?.status));
+      if (milestoneCadence) findings.push(`note: review.cadence milestone: no task review is needed; the milestone review covers this change (procedures/review.md)${deep.length ? `; its security focus includes the deep paths changed here: ${deep.join(', ')}` : ''}`);
       else if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
       const r = deliveryEvidence.review;
-      const waived = byMilestone && (r == null || r?.level === 'none');
+      const waived = milestoneCadence && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || byMilestone, sameVendor: config.review?.same_vendor }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
         ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);

@@ -184,7 +184,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
         // MAINT-0021 (v2.10.0 review R2): fixes after a review need no new review, proven by tests; after a blocking finding at deep, one fix check.
         const review = deliveryEvidence.review;
         if (stage === 'review' && review?.fixes_after != null) {
-          const why = fixedAfterError({ review, candidate: candidate.name, from, isAncestor: r => candidate.kind === 'git' && candidate.isAncestor(r), carries: r => carriedFrom({ config, baseline, candidate, from: r }).ok });
+          const why = fixedAfterError({ review, candidate: candidate.name, from, isAncestor: r => candidate.kind === 'git' && candidate.isAncestor(r), carries: r => carriedFrom({ config, baseline, candidate, from: r }).ok, sameVendor: config.review?.same_vendor });
           if (!why) { carried[stage] = from; findings.push(`note: the review of ${from.slice(0, 12)} stands for the fixes after it (procedures/review.md *How many*)`); continue; }
           findings.push(`delivery evidence: the review of ${from.slice(0, 12)} does not stand for the fixes after it: ${why}`);
           continue;
@@ -208,7 +208,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const r = deliveryEvidence.review;
       const waived = byMilestone && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || byMilestone }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || byMilestone, sameVendor: config.review?.same_vendor }),
         ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);

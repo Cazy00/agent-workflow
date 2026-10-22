@@ -39,11 +39,26 @@ test('MAINT-0022: a candidate that sets cadence milestone still needs its review
   assert.doesNotMatch(findings(r), /review\.cadence milestone: no task review/);
 });
 
+// The implementer's vendor reviewing, with the fresh session recorded or not.
+const sameVendor = (head, fresh = true) => { const e = evidence(head); Object.assign(e.review, { vendor: 'Anthropic', implementer_vendor: 'Anthropic' }); e.review.context.fresh_session = fresh; return e; };
+
 test('MAINT-0022: without the new keys v2.10.0 holds', t => {
   const p = project(t);
   p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
   assert.match(findings(ci(p, head, noReview(head))), /independent review evidence is missing/);
   assert.match(findings(ci(p, head, levelNone(head))), /review level none is only for a test-only change/);
+  assert.match(findings(ci(p, head, sameVendor(head))), /the reviewer's vendor must differ from the implementer's/);
+});
+
+// Task 3. A reviewer of the implementer's vendor, from a fresh session, where the trusted branch's config allows it.
+test('MAINT-0022: same vendor needs a fresh session', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { same_vendor: 'separate-session' } }) });
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
+  const ok = ci(p, head, sameVendor(head));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const stale = ci(p, head, sameVendor(head, false));
+  assert.equal(stale.status, 1, stale.stdout + stale.stderr);
+  assert.match(findings(stale), /review\.same_vendor separate-session accepts that only with review\.context\.fresh_session true/);
 });
 
 test('MAINT-0022: no waiver outside an authorised milestone', t => {

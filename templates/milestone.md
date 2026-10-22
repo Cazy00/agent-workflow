@@ -21,12 +21,14 @@ stop_conditions:
 release_authority:
 tasks: []
 found_tasks: 3
+plan_review:
 prerequisites: []
 ---
 # M-0000 — coherent journey or demonstrable technical outcome
 
 ## Outcome and exclusions
 `workflow_version:` above is the workflow release the milestone runs under, set to the pin (`docs/workflow/config.json`) when it is authorised; it moves only with the owner's decision, in the pull request that moves the pin (`bin/wf-upgrade` sets it).
+Optional `plan_review:` above: under `review.cadence: milestone`, the link to the plan's one quick review, posted on its pull request before authorisation (`procedures/readiness.md`).
 Optional `measure:` above: the one sentence that shows this milestone worked, checkable by a non-technical person. Optional `client_title`, `client_outcome` and `client_measure`: the same three in the client's words and language, for the client page (`wf status --client`); each one left empty shows the record's own.
 
 ## Acceptance scenarios and demonstration

@@ -131,5 +131,14 @@
       "When the code changes after a review, keep that review in the delivery evidence and add review.fixes_after.tests (the tests that failed without each blocking fix); after a blocking finding at deep, add review.fix_check of the candidate.",
       "An older pin refuses review.reviewer_command and the review level none."
     ]
+  },
+  "v2.11.0": {
+    "notes": [
+      "Nothing changes until the project sets review.cadence, review.same_vendor or review.plan_command. review.reviewer_command may now name {level} alone, for a reviewer that takes levels (codereview run --level {level} …).",
+      "The review diet (optional): review.cadence milestone needs a pull-request mode and acceptance_evidence: true. Its tasks need no review; the acceptance evidence's milestone review then names its base (at or before every task's start_revision) and the review.deep_paths globs the milestone changed (deep_paths), and may carry one fix_check. Set it in a pull request the owner merges; a milestone already Authorised or Active gets its plan review and plan_review link in that same pull request, since readiness requires the link before its next task starts.",
+      "review.same_vendor separate-session accepts a reviewer of the implementer's vendor run as a fresh session: the delivery evidence adds review.context.fresh_session true (review.fix_check.fresh_session for a fix check; review.fresh_session in the acceptance evidence).",
+      "review.plan_command (one line with {file}) is the plan review's command, for example codereview plan --file {file} --author-vendor V --project P; wf next prints it for a Draft milestone under the milestone cadence.",
+      "An older pin refuses review.cadence, review.same_vendor, review.plan_command and a reviewer_command without {role}."
+    ]
   }
 }

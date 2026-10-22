@@ -2,6 +2,25 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.11.0
+
+MAINT-0022: the review diet for projects (`docs/proposals/MAINT-0022-review-diet.md`; the owner's review diet of 22 October 2026). Three optional `review` keys, read from the trusted branch's config; without them v2.10.0 holds.
+- **`review.cadence: milestone`**, in a pull-request mode with `acceptance_evidence`: one review per milestone.
+  - A task needs no review while its milestone is Authorised or Active. Verification, integration and the acceptance tests' owner approval still apply.
+  - The milestone gets one review of its whole diff, with a security focus on `review.deep_paths`. The acceptance evidence's milestone review names its `base`, at or before every task's `start_revision`, and the deep globs the diff reached (`deep_paths`).
+  - One `fix_check` covers the fixes. Code after it needs a new review or the owner.
+  - Before authorisation the plan gets one quick review, linked from the milestone record (`plan_review`), which readiness requires before a task starts.
+  - `wf brief`, `wf next` (a budget of two runs per milestone, and the plan review for a Draft milestone) and `wf evidence` follow it.
+- **`review.same_vendor: separate-session`**: a reviewer of the implementer's vendor counts when the evidence records a fresh session (`fresh_session: true`): a new process with none of the implementer's conversation. This covers the task review, its fix check and the milestone review.
+- **`review.plan_command`** (one line with `{file}`) names the plan review's command. `review.reviewer_command` may name `{level}` alone, so a reviewer that takes levels can be the command.
+- **Reviews:**
+  - The plan had one quick review (Opus), which found one blocking problem: nothing checked that the milestone review covered the whole milestone. It also found seven should-fix items. All were taken before the build; the plan lists them.
+  - The release gets one deep review; the PR lists it.
+
+Words: `review.md` 1,916 → 2,099, `readiness.md` 1,128 → 1,219, `accept-release.md` 967 → 990, `POLICY.md` 6,172 → 6,229, `SCHEMA.md` 9,388 → 9,716, `templates/milestone.md` 330 → 353.
+
+Moving a project to this pin: `upgrades.json`. Nothing changes until the project sets one of the new keys.
+
 ## v2.10.0
 
 MAINT-0021: review what needs it, once, by another vendor (`docs/proposals/MAINT-0021-review-policy.md`; the owner's review policy of 18 October 2026).

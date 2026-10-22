@@ -88,11 +88,19 @@ function validateClientConfig(c) {
 // MAINT-0020 (the owner, 17 October 2026): final_model and final_effort, at most max_effort, for the milestone review only (roles.js).
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PLAIN = /^[\w.@/:-]{1,80}$/;
+const oneLine = (v, ...marks) => typeof v === 'string' && v.length <= 300 && /^[^\x00-\x1f\x7f]+$/.test(v) && marks.some(m => v.includes(m));
+const httpsLink = v => { if (typeof v !== 'string' || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
 function validateReviewConfig(r) {
-  only(r, ['second_model', 'deep_paths', 'reviewer_command'], 'review');
-  // MAINT-0021: one command for every review level; the briefs print it with {role} (and {level}) filled in (roles.js).
-  const cmd = r.reviewer_command;
-  if (cmd !== undefined && !(typeof cmd === 'string' && cmd.length <= 300 && /^[^\x00-\x1f\x7f]+$/.test(cmd) && cmd.includes('{role}'))) throw new Error('review.reviewer_command must be one line of at most 300 characters containing {role}');
+  only(r, ['second_model', 'deep_paths', 'reviewer_command', 'cadence', 'same_vendor', 'plan_command'], 'review');
+  // MAINT-0021: one command for every review level; the briefs print it with {role} and {level} filled in (roles.js).
+  // MAINT-0022: {level} alone is enough too, so a command that takes levels (codereview run --level {level}) can be it.
+  if (r.reviewer_command !== undefined && !oneLine(r.reviewer_command, '{role}', '{level}')) throw new Error('review.reviewer_command must be one line of at most 300 characters containing {role} or {level}');
+  // MAINT-0022, the owner's review diet of 22 October 2026: one review per milestone, a reviewer of the implementer's vendor
+  // from a fresh session, and the command that reviews a milestone's plan ({file}, its record). loadConfig checks the
+  // milestone cadence against the approval mode.
+  if (r.cadence !== undefined && !['task', 'milestone'].includes(r.cadence)) throw new Error('review.cadence must be task or milestone');
+  if (r.same_vendor !== undefined && !['never', 'separate-session'].includes(r.same_vendor)) throw new Error('review.same_vendor must be never or separate-session');
+  if (r.plan_command !== undefined && !oneLine(r.plan_command, '{file}')) throw new Error('review.plan_command must be one line of at most 300 characters containing {file}');
   const m = r.second_model;
   if (m != null) {
     only(m, ['tool', 'model', 'max_effort', 'final_model', 'final_effort'], 'review.second_model');
@@ -163,6 +171,8 @@ export function loadConfig(source) {
       if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone or plan, where the agent merges its own pull requests`);
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
+    // MAINT-0022: the milestone's one review is checked only in the acceptance evidence of a pull-request mode (ci.js).
+    if (config.review?.cadence === 'milestone' && !(['enforced', 'owner-merge'].includes(config.approval?.label) && config.acceptance_evidence === true)) throw new Error('review.cadence milestone needs a pull-request mode (approval label enforced or owner-merge) and acceptance_evidence: true, so wf ci checks the milestone\'s one review');
     if (config.roles !== undefined) validateRolesConfig(config.roles);
     if (config.usage !== undefined) validateUsageConfig(config.usage);
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
@@ -204,6 +214,8 @@ export function loadRecord(source, relPath, expected) {
   }
   // MAINT-0020 P6(b): up to three found tasks fix the milestone's own review or trial findings without asking (§ 10).
   if (expected === 'milestone' && data.found_tasks != null && !(typeof data.found_tasks === 'string' && /^[0-3]$/.test(data.found_tasks))) errors.push(`found_tasks must be 0, 1, 2 or 3, the found tasks allowed without asking the owner (MAINT-0020 § 10); a further task goes in tasks: with the owner's approval (got "${data.found_tasks}")`);
+  // MAINT-0022: under review.cadence milestone the plan's one quick review, posted before its tasks start (readiness.js).
+  if (expected === 'milestone' && data.plan_review != null && data.plan_review !== '' && !httpsLink(data.plan_review)) errors.push('plan_review must be the https link to the review of the milestone\'s plan (procedures/readiness.md)');
   if (expected === 'decision') {
     for (const f of ['supersedes', 'superseded_by']) if (data[f] && !ID_RE.decision.test(data[f])) errors.push(`${f} must be a decision id`);
   }

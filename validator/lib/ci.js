@@ -198,10 +198,18 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       // v2.10.0 review R1: only literal Git names qualify; a backslash in a name is no folder separator, whatever classifyPaths makes of it.
       const literal = changed.every(p => !p.includes('\\') && !p.startsWith('./'));
       const testOnly = literal && production.length > 0 && production.every(isTestOnlyPath) && !classes.some(c => c.acceptance_test) && deep.length === 0;
-      if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
+      // MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone, from the trusted branch's config, a
+      // task needs no review while its milestone is authorised there; the milestone's one review covers it (acceptance-evidence.js).
+      // Only the review is waived: verification, integration and the acceptance tests' owner approval stay.
+      const milestoneOf = id => candidateRecords.tasks.get(id)?.data?.milestone ?? baselineRecords.tasks.get(id)?.data?.milestone;
+      const byMilestone = config.review?.cadence === 'milestone' && selected.every(id => ['Authorised', 'Active'].includes(baselineRecords.milestones.get(milestoneOf(id))?.data?.status));
+      if (byMilestone) findings.push(`note: review.cadence milestone: no task review is needed; the milestone review covers this change (procedures/review.md)${deep.length ? `; its security focus includes the deep paths changed here: ${deep.join(', ')}` : ''}`);
+      else if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
+      const r = deliveryEvidence.review;
+      const waived = byMilestone && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly }),
-        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || byMilestone }),
+        ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;

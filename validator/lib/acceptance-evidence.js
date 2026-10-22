@@ -3,9 +3,9 @@
 // walked in a browser before the owner tries it (procedures/accept-release.md), and what the agent decided for the owner's
 // acceptance. Like the delivery evidence it is the agent's own report: its completeness and its binding to the code being
 // accepted are checked here, not its truth.
-import { classifyPaths } from './paths.js';
+import { classifyPaths, deepChanges } from './paths.js';
 import { list, loadConfig } from './records.js';
-import { parseMarked } from './delivery-evidence.js';
+import { parseMarked, sameVendorError } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
@@ -43,6 +43,47 @@ function configAt(candidate, rev) {
   try { return loadConfig(candidate.atRevision(rev)); } catch { return null; }
 }
 
+const vendorErrors = (r, config, who, field) => {
+  const errors = [];
+  for (const k of ['vendor', 'implementer_vendor']) if (r[k] !== undefined && !text(r[k])) errors.push(`${who}'s ${k.replace('_', ' ')} must be a non-empty text when given`);
+  if (r.fresh_session !== undefined && typeof r.fresh_session !== 'boolean') errors.push(`${who}'s fresh_session must be true or false when given`);
+  const same = sameVendorError({ vendor: r.vendor, implementer: r.implementer_vendor, fresh: r.fresh_session, sameVendor: config.review?.same_vendor, who, field });
+  return same ? [...errors, same] : errors;
+};
+const SHA = /^[0-9a-f]{40,64}$/;
+// MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone the milestone review is the only review of
+// its tasks' code (ci.js). Its `base` comes at or before every task's start, so base..revision holds all of it (plan review F1), on
+// either side's task records, so a candidate cannot move a start later; it lists the review.deep_paths that diff reaches, its
+// security focus (F4); and one fix check may follow it, whose revision then covers the code changed after the review. No round
+// three: code after the fix check fails covers, as code after an uncovered review does.
+function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }) {
+  const errors = [];
+  const at = rev => { try { return candidate.atRevision(rev); } catch { return null; } };
+  if (!SHA.test(r.base ?? '')) errors.push('the milestone review needs its base, the full commit hash its diff starts from (review.cadence milestone)');
+  else if (candidate.kind !== 'git' || !SHA.test(r.revision ?? '') || !at(r.revision)?.isAncestor(r.base)) errors.push(`the milestone review's base ${r.base.slice(0, 12)} is not an earlier revision of the reviewed one`);
+  else {
+    const started = [records].flat().flatMap(x => [...x.tasks.values()]).map(x => x.data).filter(d => d?.milestone === milestone && d.status !== 'Draft');
+    for (const d of started) {
+      const start = String(d.start_revision ?? '');
+      const source = SHA.test(start) ? at(start) : null;
+      if (!source) errors.push(`${d.id}'s start_revision ${start.slice(0, 12) || '(none)'} is not a commit of this repository, so the milestone review's base cannot be checked against it`);
+      else if (!source.isAncestor(r.base)) errors.push(`the milestone review's base ${r.base.slice(0, 12)} comes after ${d.id}'s start_revision ${start.slice(0, 12)}: under review.cadence milestone it reviews the whole milestone diff, from a base at or before every task's start`);
+    }
+    const production = classifyPaths(config, at(r.revision).changedPaths(r.base)).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
+    const reached = (config.review?.deep_paths ?? []).filter(g => deepChanges([g], production).length);
+    const listed = Array.isArray(r.deep_paths) && r.deep_paths.every(text) ? r.deep_paths : null;
+    if (r.deep_paths !== undefined && !listed) errors.push('the milestone review\'s deep_paths must be a list of review.deep_paths globs');
+    else if (reached.some(g => !(listed ?? []).includes(g))) errors.push(`the milestone review's deep_paths must list the review.deep_paths the milestone changed, its security focus: ${reached.join(', ')}`);
+  }
+  const fc = r.fix_check;
+  if (fc === undefined) return [...errors, ...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline)];
+  if (!isObject(fc) || !['reviewer', 'model'].every(k => text(fc[k])) || !https(fc.report)) errors.push('the milestone review\'s fix check needs its reviewer, model and an https report');
+  if (!isObject(fc)) return errors;
+  if (!SHA.test(fc.revision ?? '') || fc.revision === r.revision || !SHA.test(r.revision ?? '') || !at(fc.revision)?.isAncestor(r.revision)) errors.push('the milestone review\'s fix check must come after the review\'s revision: one fix check of the fixes to its findings');
+  errors.push(...vendorErrors({ ...fc, implementer_vendor: r.implementer_vendor }, config, 'the milestone review\'s fix check', 'review.fix_check.fresh_session'));
+  return [...errors, ...covers(config, candidate, fc.revision, 'the milestone review\'s fix check revision', baseline)];
+}
+
 export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null }) {
   if (!isObject(e)) return ['acceptance evidence is missing'];
   const errors = [];
@@ -63,7 +104,10 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     if (r.fallback !== undefined && !text(r.fallback)) errors.push('the milestone review\'s fallback must be a non-empty text when given');
     else if (second && text(r.model) && !by.includes(r.model) && r.fallback === undefined) errors.push(`the milestone review is by ${by.join(' or ')} (review.second_model), or says in fallback why it could not be`);
     if (!https(r.report)) errors.push('the milestone review needs an https reference to its report');
-    errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline));
+    // MAINT-0022: the reviewer's vendor, as in the delivery evidence (delivery-evidence.js sameVendorError).
+    errors.push(...vendorErrors(r, config, 'the milestone review', 'review.fresh_session'));
+    if (config.review?.cadence === 'milestone') errors.push(...onlyReviewErrors({ r, milestone, config, candidate, baseline, records }));
+    else errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline));
   }
   const w = e.walkthrough;
   if (!isObject(w)) errors.push('the trial walkthrough is missing');

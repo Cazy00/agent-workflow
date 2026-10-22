@@ -50,6 +50,7 @@ export function dirSource(root) {
       return fs.readdirSync(dir, { withFileTypes: true }).filter(f => f.isFile()).map(f => `${relDir}/${f.name}`);
     },
     isAncestor() { return null; },
+    firstParentVersions() { return null; },
     changedSince() { return null; },
     changedPaths() { return null; },
     blob() { return null; },
@@ -118,6 +119,14 @@ export function gitSource(repo, revision) {
     versions(rel) {
       safePath(rel);
       const r = git('log', '--full-history', '--format=%H', '--diff-filter=AM', rev, '--', rel);
+      if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
+      return r.stdout.split('\n').filter(Boolean);
+    },
+    // MAINT-0022: the commits of this revision's own first-parent line (the trusted branch's history, never a side branch before
+    // its merge) that changed rel, newest first: where a record's state landed on the branch.
+    firstParentVersions(rel) {
+      safePath(rel);
+      const r = git('log', '--first-parent', '--full-history', '--format=%H', rev, '--', rel);
       if (r.status !== 0) throw new Error(`cannot read the history of ${rel} at ${rev}`);
       return r.stdout.split('\n').filter(Boolean);
     },

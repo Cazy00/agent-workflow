@@ -323,7 +323,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const before = m?.id ? baselineRecords.milestones.get(m.id)?.data?.status : null;
     if (m?.id && IN_PROGRESS.includes(m.status) && (before == null || before === 'Draft') && (m.workflow_version == null || m.workflow_version === '')) { findings.push(`${m.id} is authorised here without workflow_version: set workflow_version: ${pinNow} in its record, the workflow release it will run under (templates/milestone.md)`); fail = true; }
   }
-  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
+  // MAINT-0022 (v2.11.0 review S1): under review.cadence milestone a milestone that goes straight to Released carries it too, since it
+  // holds the milestone's one review.
+  const closed = config.review?.cadence === 'milestone' ? ['Accepted', 'Released'] : ['Accepted'];
+  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && closed.includes(m.status) && !closed.includes(baselineRecords.milestones.get(m.id)?.data?.status)).map(m => m.id);
   if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
     const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, baseline, records: [baselineRecords, candidateRecords] });
     for (const e of errors) findings.push(`acceptance evidence: ${e}`);

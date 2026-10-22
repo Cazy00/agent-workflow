@@ -93,7 +93,7 @@ Tell each implementing helper, a fix round's too: ${READ_ONCE}; put the files an
 A governing clarification nothing waits on goes into the milestone's acceptance pull request; one this task needs is the owner's decision first.
 
 ## Review
-${deep.length ? `A change to these paths needs a deep review (review.deep_paths): ${deep.join(', ')}. Otherwise the level follows the change (procedures/review.md).` : 'The level follows the change (procedures/review.md).'} One review of the final code, at most one review of a fix. After merging the trusted branch into the task branch, run \`wf ci\` first and review only what it says does not carry over.
+${byMilestone(config) ? 'No task review under review.cadence milestone: the milestone review covers this task, and its evidence leaves review out or names level none (procedures/review.md *Cadence*). Verification and integration evidence still apply.' : `${deep.length ? `A change to these paths needs a deep review (review.deep_paths): ${deep.join(', ')}. Otherwise the level follows the change (procedures/review.md).` : 'The level follows the change (procedures/review.md).'} One review of the final code, at most one review of a fix. After merging the trusted branch into the task branch, run \`wf ci\` first and review only what it says does not carry over.`}
 
 ## Commands
 ${bullets([

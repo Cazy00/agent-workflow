@@ -40,7 +40,7 @@ const ENUMS = {
 };
 const ID_RE = { milestone: /^M-\d{4}$/,  task: /^T-\d{4}$/, decision: /^D-\d{4}$/, feedback: /^F-\d{4}$/ };
 export const DEFERRED_RE = /^(D-\d{4})@(implement|verify|integrate|accept|release)$/;
-const FINDING = /^[\w.-]+\/[\w.-]+$/; // REVIEW/FINDING, as R-0030/N1
+export const FINDING = /^[\w.-]+\/[\w.-]+$/; // REVIEW/FINDING, as R-0030/N1
 
 // The client page's settings (`wf status --client`). A theme's values reach CSS, so each is checked to be only what it
 // says: a hex colour, a plain font name, a repository path, a number. Paths are read through the source, which refuses

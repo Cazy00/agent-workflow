@@ -112,15 +112,15 @@ going to work out."
 6. **Deep paths keep their focus** (F4): a milestone diff that reaches a deep glob needs it in the
    review's `deep_paths`. Pinned by `MAINT-0022: the milestone review names the deep paths it
    reached`.
-3. **Cadence milestone without its check.** Config with cadence milestone but no
+7. **Cadence milestone without its check.** Config with cadence milestone but no
    `acceptance_evidence`, or in manual mode, is refused at load. Pinned in `config-keys.test.js`.
-7. **The fix check covers only what follows the review** (F6). A `fix_check.revision` that is not
+8. **The fix check covers only what follows the review** (F6). A `fix_check.revision` that is not
    after `review.revision`, or not in the candidate's history (a side branch), or followed by code,
    fails. Pinned by `MAINT-0022: the milestone's fix check covers the fixes, and nothing after it`.
-8. **Same vendor without a fresh session** fails under `separate-session`, in task evidence, its
+9. **Same vendor without a fresh session** fails under `separate-session`, in task evidence, its
    fix check and the acceptance evidence. Pinned by `MAINT-0022: same vendor needs a fresh
    session`.
-9. **Readiness reads `plan_review` from the trusted branch**, not the candidate. Pinned by
+10. **Readiness reads `plan_review` from the trusted branch**, not the candidate. Pinned by
    `MAINT-0022: the plan review is read from the trusted branch`.
 
 ---
@@ -329,7 +329,7 @@ The plan review (`codereview plan`, `claude:opus`, verdict fail, 22 October 2026
 
 | Finding | Severity | Disposition |
 |---|---|---|
-| F1: nothing checks that the milestone review covers the whole milestone | blocking | Taken: `review.base` at or before every task's `start_revision` (Global Constraints, Task 4, Review Focus 3). |
+| F1: nothing checks that the milestone review covers the whole milestone | blocking | Taken: `review.base` at or before every task's `start_revision` (Global Constraints, Task 4, Review Focus 3; the deep review later anchored it on history, see the record). |
 | F2: the waiver applies to tasks outside a live milestone | should fix | Taken: only while the task's milestone is Authorised or Active on the trusted branch (Task 2, Review Focus 4). |
 | F3: what `reviewOptional` skips | should fix | Taken: only the `review` block; listed in Global Constraints; the acceptance-test owner approval is pinned (Review Focus 5); `review.md` says the milestone review is the semantic review. |
 | F4: deep paths lose their gate | should fix | Taken: `review.deep_paths` must list the deep globs the milestone diff reaches (Review Focus 6). A list rather than `level: deep`, because it names what the reviewer was told to focus on. |

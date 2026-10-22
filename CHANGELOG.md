@@ -7,19 +7,20 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 MAINT-0022: the review diet for projects (`docs/proposals/MAINT-0022-review-diet.md`; the owner's review diet of 22 October 2026). Three optional `review` keys, read from the trusted branch's config; without them v2.10.0 holds.
 - **`review.cadence: milestone`**, in a pull-request mode with `acceptance_evidence`: one review per milestone.
   - A task needs no review while its milestone is Authorised or Active. Verification, integration and the acceptance tests' owner approval still apply.
-  - The milestone gets one review of its whole diff, with a security focus on `review.deep_paths`. The acceptance evidence's milestone review names its `base`, at or before every task's `start_revision`, and the deep globs the diff reached (`deep_paths`).
-  - One `fix_check` covers the fixes. Code after it needs a new review or the owner.
+  - The milestone gets one review of its whole diff, with a security focus on `review.deep_paths`. The acceptance evidence's milestone review names its `base`, at or before the milestone's authorisation in the trusted branch's history, and the deep globs the reviewed and fixed code reached (`deep_paths`).
+  - One `fix_check` covers the fixes: every task not Done at the review's revision must be a found task fixing one of its findings. Code after it needs a new review or the owner.
+  - A milestone that goes straight to Released carries the acceptance evidence too.
   - Before authorisation the plan gets one quick review, linked from the milestone record (`plan_review`), which readiness requires before a task starts.
   - `wf brief`, `wf next` (a budget of two runs per milestone, and the plan review for a Draft milestone) and `wf evidence` follow it.
 - **`review.same_vendor: separate-session`**: a reviewer of the implementer's vendor counts when the evidence records a fresh session (`fresh_session: true`): a new process with none of the implementer's conversation. This covers the task review, its fix check and the milestone review.
 - **`review.plan_command`** (one line with `{file}`) names the plan review's command. `review.reviewer_command` may name `{level}` alone, so a reviewer that takes levels can be the command.
 - **Reviews:**
   - The plan had one quick review (Opus), which found one blocking problem: nothing checked that the milestone review covered the whole milestone. It also found seven should-fix items. All were taken before the build; the plan lists them.
-  - The release gets one deep review; the PR lists it.
+  - The release had one deep review (Opus, receipt `rv227981d99071078c`) and a Codex second look. Both found that the milestone review's coverage rested on task records a later change can edit, and that a fix check could stand in for the review. The base is now anchored on the trusted branch's history, and the fix check's range holds only fixes. Opus also raised: release straight to Released, which the gate did not catch, and the plan review asked at later stages. All are fixed, each with a test. One fix check followed; the PR lists it.
 
-Words: `review.md` 1,916 → 2,099, `readiness.md` 1,128 → 1,219, `accept-release.md` 967 → 990, `POLICY.md` 6,172 → 6,229, `SCHEMA.md` 9,388 → 9,716, `templates/milestone.md` 330 → 353.
+Words: `review.md` 1,916 → 2,100, `readiness.md` 1,128 → 1,219, `accept-release.md` 967 → 990, `POLICY.md` 6,172 → 6,229, `SCHEMA.md` 9,388 → 9,774, `templates/milestone.md` 330 → 353.
 
-Moving a project to this pin: `upgrades.json`. Nothing changes until the project sets one of the new keys.
+Moving a project to this pin: `upgrades.json`. Nothing changes until the project sets one of the new keys, except that a milestone review naming equal `vendor` and `implementer_vendor` in the acceptance evidence is refused, as the policy already required.
 
 ## v2.10.0
 

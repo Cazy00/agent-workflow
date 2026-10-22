@@ -184,7 +184,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
         // MAINT-0021 (v2.10.0 review R2): fixes after a review need no new review, proven by tests; after a blocking finding at deep, one fix check.
         const review = deliveryEvidence.review;
         if (stage === 'review' && review?.fixes_after != null) {
-          const why = fixedAfterError({ review, candidate: candidate.name, from, isAncestor: r => candidate.kind === 'git' && candidate.isAncestor(r), carries: r => carriedFrom({ config, baseline, candidate, from: r }).ok });
+          const why = fixedAfterError({ review, candidate: candidate.name, from, isAncestor: r => candidate.kind === 'git' && candidate.isAncestor(r), carries: r => carriedFrom({ config, baseline, candidate, from: r }).ok, sameVendor: config.review?.same_vendor });
           if (!why) { carried[stage] = from; findings.push(`note: the review of ${from.slice(0, 12)} stands for the fixes after it (procedures/review.md *How many*)`); continue; }
           findings.push(`delivery evidence: the review of ${from.slice(0, 12)} does not stand for the fixes after it: ${why}`);
           continue;
@@ -198,10 +198,18 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       // v2.10.0 review R1: only literal Git names qualify; a backslash in a name is no folder separator, whatever classifyPaths makes of it.
       const literal = changed.every(p => !p.includes('\\') && !p.startsWith('./'));
       const testOnly = literal && production.length > 0 && production.every(isTestOnlyPath) && !classes.some(c => c.acceptance_test) && deep.length === 0;
-      if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
+      // MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone, from the trusted branch's config, a
+      // task needs no review while its milestone is authorised there; the milestone's one review covers it (acceptance-evidence.js).
+      // Only the review is waived: verification, integration and the acceptance tests' owner approval stay.
+      const milestoneOf = id => candidateRecords.tasks.get(id)?.data?.milestone ?? baselineRecords.tasks.get(id)?.data?.milestone;
+      const milestoneCadence = config.review?.cadence === 'milestone' && selected.every(id => ['Authorised', 'Active'].includes(baselineRecords.milestones.get(milestoneOf(id))?.data?.status));
+      if (milestoneCadence) findings.push(`note: review.cadence milestone: no task review is needed; the milestone review covers this change (procedures/review.md)${deep.length ? `; its security focus includes the deep paths changed here: ${deep.join(', ')}` : ''}`);
+      else if (testOnly) findings.push('note: a test-only change: no review is needed (procedures/review.md)');
+      const r = deliveryEvidence.review;
+      const waived = milestoneCadence && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly }),
-        ...reviewLevelErrors({ review: deliveryEvidence.review, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
+        ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
       if (errors.length) fail = true; else attested = deliveryEvidence;
@@ -315,7 +323,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const before = m?.id ? baselineRecords.milestones.get(m.id)?.data?.status : null;
     if (m?.id && IN_PROGRESS.includes(m.status) && (before == null || before === 'Draft') && (m.workflow_version == null || m.workflow_version === '')) { findings.push(`${m.id} is authorised here without workflow_version: set workflow_version: ${pinNow} in its record, the workflow release it will run under (templates/milestone.md)`); fail = true; }
   }
-  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && m.status === 'Accepted' && baselineRecords.milestones.get(m.id)?.data?.status !== 'Accepted').map(m => m.id);
+  // MAINT-0022 (v2.11.0 review S1): under review.cadence milestone a milestone that goes straight to Released carries it too, since it
+  // holds the milestone's one review.
+  const closed = config.review?.cadence === 'milestone' ? ['Accepted', 'Released'] : ['Accepted'];
+  const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && closed.includes(m.status) && !closed.includes(baselineRecords.milestones.get(m.id)?.data?.status)).map(m => m.id);
   if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
     const errors = acceptanceEvidence == null ? [`the acceptance evidence for ${id} is missing: post it in the pull request description (procedures/accept-release.md)`] : acceptanceEvidenceErrors({ evidence: acceptanceEvidence, milestone: id, config, candidate, baseline, records: [baselineRecords, candidateRecords] });
     for (const e of errors) findings.push(`acceptance evidence: ${e}`);

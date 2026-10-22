@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { evidenceErrors, isBlocking, reviewLevelErrors } from '../lib/delivery-evidence.js';
+import { evidenceErrors, fixedAfterError, isBlocking, reviewLevelErrors } from '../lib/delivery-evidence.js';
 
 // The agent's delivery evidence (lib/delivery-evidence.js), the only evidence check in the pull-request modes: every gap
 // is an error, never an `unverified` item (MAINT-0010; kept from the routine lane's tests by the MAINT-0011 review, S3).
@@ -124,6 +124,33 @@ test('MAINT-0021: the reviewer is from another vendor when both vendors are give
   e.review.vendor = ''; assert.match(errorsFor(e).join(), /review vendor must be a non-empty text/);
   const one = evidence(); one.review.vendor = 'Google';
   assert.deepEqual(errorsFor(one), [], 'one vendor alone is not compared');
+});
+
+// MAINT-0022 (the owner's review diet, 22 October 2026): with review.same_vendor separate-session, a reviewer of the implementer's
+// vendor counts when the evidence records a fresh session: a new process with none of the implementer's conversation.
+test('MAINT-0022: same vendor needs separate-session and a fresh session', () => {
+  const same = (fresh) => { const e = evidence(); e.review.vendor = 'Anthropic'; e.review.implementer_vendor = 'anthropic'; if (fresh !== undefined) e.review.context.fresh_session = fresh; return e; };
+  const never = /the reviewer's vendor must differ from the implementer's \(procedures\/review\.md\)/;
+  const unfresh = /the reviewer is of the implementer's vendor: review\.same_vendor separate-session accepts that only with review\.context\.fresh_session true, a new session with none of the implementer's conversation \(procedures\/review\.md\)/;
+  assert.match(errorsFor(same(true)).join(), never, 'never, the default');
+  assert.match(errorsFor(same(true), { sameVendor: 'never' }).join(), never);
+  assert.deepEqual(errorsFor(same(true), { sameVendor: 'separate-session' }), []);
+  for (const fresh of [undefined, false]) assert.match(errorsFor(same(fresh), { sameVendor: 'separate-session' }).join(), unfresh, String(fresh));
+  assert.match(errorsFor(same('yes'), { sameVendor: 'separate-session' }).join(), /review context fresh_session must be true or false when given/);
+  const other = evidence(); other.review.context.fresh_session = true;
+  assert.deepEqual(errorsFor(other), [], 'fresh_session alone changes nothing');
+});
+
+test('MAINT-0022: a fix check of the implementer\'s vendor needs separate-session and a fresh session', () => {
+  const review = fresh => ({
+    level: 'deep', implementer_vendor: 'Anthropic', findings: [{ id: 'F1', severity: 'blocking' }], fixes_after: { tests: ['test/a.test.js'] },
+    fix_check: { candidate: SHA, reviewer: 'codereview', model: 'claude:opus', vendor: 'anthropic', report: 'https://github.com/o/r/pull/7#issuecomment-3', ...(fresh === undefined ? {} : { fresh_session: fresh }) },
+  });
+  const after = (fresh, sameVendor) => fixedAfterError({ review: review(fresh), candidate: SHA, from: OTHER, isAncestor: () => true, carries: () => false, ...(sameVendor ? { sameVendor } : {}) });
+  assert.match(after(true), /the fix check's vendor must differ from the implementer's/, 'never, the default');
+  assert.equal(after(true, 'separate-session'), null);
+  assert.match(after(undefined, 'separate-session'), /the fix check is of the implementer's vendor: review\.same_vendor separate-session accepts that only with review\.fix_check\.fresh_session true/);
+  assert.match(after('yes', 'separate-session'), /review\.fix_check\.fresh_session must be true or false when given/);
 });
 
 test('blocking, critical and high are blocking severities; should fix, note, medium and low are not', () => {

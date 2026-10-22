@@ -1,0 +1,274 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
+import { gitSource, loadAll } from '../lib/index.js';
+import { acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
+
+// MAINT-0022: the owner's review diet of 22 October 2026, for projects. review.cadence milestone: tasks need no review, the
+// milestone gets one review of its whole diff with a security focus on review.deep_paths, one fix check, no round three;
+// review.same_vendor separate-session: a reviewer of the implementer's vendor counts from a fresh session; the milestone's
+// plan gets one quick review before its tasks start. Without the new keys, v2.10.0 holds.
+
+const diet = (more = {}) => c => ({ ...c, acceptance_evidence: true, review: { cadence: 'milestone', deep_paths: ['src/auth/**'], ...more } });
+// The milestone's plan review on the trusted branch, which readiness needs under the cadence (Task 4).
+const planLink = 'plan_review: https://github.com/fixture/project/pull/2#issuecomment-1\n';
+const withLink = ({ edit }) => edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised\n', `status: Authorised\n${planLink}`));
+const noReview = head => { const e = evidence(head); delete e.review; return e; };
+const levelNone = head => { const e = evidence(head); e.review = { level: 'none' }; return e; };
+const ci = (p, head, e) => p.run(['ci', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: e });
+const findings = r => r.out?.findings.join(' | ') ?? r.stdout + r.stderr;
+
+// Task 2. No task review under the milestone cadence, while the task's milestone is authorised; only the review is waived.
+test('MAINT-0022: under cadence milestone a task merges with no review', t => {
+  const p = project(t, { configEdit: diet(), baselineEdit: withLink });
+  p.write('src/a.js', 'export const result = 1;\n'); p.write('src/auth/session.js', 'export const session = 1;\n');
+  const head = p.commit('T-0001: the work, a deep path among it');
+  for (const e of [noReview(head), levelNone(head)]) {
+    const r = ci(p, head, e);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(findings(r), /independent review evidence is missing|need a deep review/);
+    assert.match(findings(r), /note: review\.cadence milestone: no task review is needed; the milestone review covers this change \(procedures\/review\.md\); its security focus includes the deep paths changed here: src\/auth\/session\.js/);
+  }
+  // A review given anyway is checked as given.
+  const given = evidence(head); given.review.level = 'standard';
+  assert.match(findings(ci(p, head, given)), /it changes paths that need a deep review \(review\.deep_paths\): src\/auth\/session\.js/);
+});
+
+test('MAINT-0022: a candidate that sets cadence milestone still needs its review', t => {
+  const p = project(t);
+  p.edit('docs/workflow/config.json', x => JSON.stringify(diet()(JSON.parse(x))));
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work, and the cadence');
+  const r = ci(p, head, noReview(head));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(findings(r), /independent review evidence is missing/);
+  assert.doesNotMatch(findings(r), /review\.cadence milestone: no task review/);
+});
+
+// The implementer's vendor reviewing, with the fresh session recorded or not.
+const sameVendor = (head, fresh = true) => { const e = evidence(head); Object.assign(e.review, { vendor: 'Anthropic', implementer_vendor: 'Anthropic' }); e.review.context.fresh_session = fresh; return e; };
+
+test('MAINT-0022: without the new keys v2.10.0 holds', t => {
+  const p = project(t);
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
+  assert.match(findings(ci(p, head, noReview(head))), /independent review evidence is missing/);
+  assert.match(findings(ci(p, head, levelNone(head))), /review level none is only for a test-only change/);
+  assert.match(findings(ci(p, head, sameVendor(head))), /the reviewer's vendor must differ from the implementer's/);
+});
+
+// Task 3. A reviewer of the implementer's vendor, from a fresh session, where the trusted branch's config allows it.
+test('MAINT-0022: same vendor needs a fresh session', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { same_vendor: 'separate-session' } }) });
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
+  const ok = ci(p, head, sameVendor(head));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const stale = ci(p, head, sameVendor(head, false));
+  assert.equal(stale.status, 1, stale.stdout + stale.stderr);
+  assert.match(findings(stale), /review\.same_vendor separate-session accepts that only with review\.context\.fresh_session true/);
+});
+
+test('MAINT-0022: no waiver outside an authorised milestone', t => {
+  const p = project(t, { configEdit: diet(), baselineEdit: ({ edit }) => edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Verified')) });
+  p.write('src/a.js', 'export const result = 1;\n'); const head = p.commit('T-0001: the work');
+  const r = ci(p, head, noReview(head));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(findings(r), /independent review evidence is missing/);
+});
+
+test('MAINT-0022: an acceptance-test change keeps its owner approval under the cadence', t => {
+  const p = project(t, { configEdit: c => diet()({ ...c, approval: { ...c.approval, defer_to_acceptance: true }, paths: { ...c.paths, acceptance_tests: ['src/acceptance/**', 'tests/acceptance-map.json'] } }), baselineEdit: withLink });
+  p.write('src/acceptance/a.test.js', 'test("a", () => {});\n'); p.write('src/a.js', 'export const result = 1;\n');
+  const head = p.commit('T-0001: the work and its acceptance test');
+  const r = ci(p, head, noReview(head));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.out.deferred.join(' | '), /it changes acceptance tests: src\/acceptance\/a\.test\.js/);
+});
+
+// Task 4. The milestone's one review: of the whole milestone diff, from a base at or before the trusted branch's authorisation of the
+// milestone (its own history, not records a later change can edit: deep review B2), with the deep paths it reached as its security
+// focus, and one fix check whose range holds only fixes of its findings (B1) and nothing after it.
+const RD = 'docs/workflow';
+const taskRecord = (id, status, more = '') => `---\nrecord: task\nid: ${id}\nmilestone: M-0001\nstatus: ${status}\n${more}---\n# ${id}\n`;
+const milestoneRecord = status => `---\nrecord: milestone\nid: M-0001\nstatus: ${status}\n---\n# M-0001\n`;
+function milestoneRepo(t, { planBranch = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-maint-0022-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const write = (p, text) => { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.writeFileSync(path.join(dir, p), text); };
+  const commit = m => { git('add', '-A'); git('commit', '-qm', m); return git('rev-parse', 'HEAD'); };
+  git('init', '-q', '-b', 'main'); git('config', 'user.name', 'T'); git('config', 'user.email', 't@example.invalid');
+  write('src/a.js', 'a\n'); write(`${RD}/milestones/M-0001.md`, milestoneRecord('Draft'));
+  write(`${RD}/tasks/T-0001.md`, taskRecord('T-0001', 'Draft')); write(`${RD}/tasks/T-0002.md`, taskRecord('T-0002', 'Draft'));
+  const before = commit('M-0001 planned');
+  write(`${RD}/milestones/M-0001.md`, milestoneRecord('Authorised'));
+  let authorised;
+  if (planBranch) { git('checkout', '-q', '-b', 'plan'); commit('M-0001 authorised on the plan branch'); git('checkout', '-q', 'main'); git('merge', '-q', '--no-ff', 'plan', '-m', 'merge the plan'); authorised = git('rev-parse', 'HEAD'); }
+  else authorised = commit('M-0001 authorised');
+  write('src/a.js', 'a, T-0001\n'); write(`${RD}/tasks/T-0001.md`, taskRecord('T-0001', 'Done')); const s2 = commit('T-0001 merged');
+  write('src/auth/session.js', 'T-0002\n'); write(`${RD}/tasks/T-0002.md`, taskRecord('T-0002', 'Done')); const reviewed = commit('T-0002 merged');
+  return { dir, git, write, commit, before, authorised, s2, reviewed, at: rev => gitSource(dir, rev) };
+}
+const accept = (r, note = '') => { r.write(`${RD}/milestones/M-0001.md`, `${milestoneRecord('Accepted')}${note}`); return r.commit('Accept M-0001'); };
+const acceptanceConfig = (review = { cadence: 'milestone', deep_paths: ['src/auth/**', 'src/billing/**'] }) => ({ paths: { production: ['src/**'], governing: [`${RD}/milestones/**`], planning: ['docs/**'] }, review });
+function acceptanceOf(reviewed, walked = reviewed, more = {}) {
+  return {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: walked,
+    review: { reviewer: 'codereview milestone', model: 'claude:opus', revision: reviewed, report: 'https://github.com/o/r/pull/9#issuecomment-1', ...more },
+    walkthrough: { not_applicable: 'the fixture has no user interface' },
+    deferred: [], tests_changed: [],
+  };
+}
+const acceptanceErrors = (r, head, e, { config = acceptanceConfig() } = {}) => acceptanceEvidenceErrors({ evidence: e, milestone: 'M-0001', config, candidate: r.at(head), baseline: r.at(head), records: [loadAll(r.at(head), RD)] }).join(' | ');
+
+test('MAINT-0022: the milestone review covers the whole milestone from its authorisation', t => {
+  for (const planBranch of [false, true]) {
+    const r = milestoneRepo(t, { planBranch }); const head = accept(r);
+    const at = base => acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { base, deep_paths: ['src/auth/**'] }));
+    assert.equal(at(r.authorised), '', `base at the authorisation (plan branch: ${planBranch})`);
+    assert.equal(at(r.before), '', 'base before it');
+    assert.match(at(r.s2), new RegExp(`the milestone review's base ${r.s2.slice(0, 12)} comes after M-0001's authorisation ${r.authorised.slice(0, 12)}, where the trusted branch first set it past Draft: under review\\.cadence milestone it reviews the whole milestone diff, from a base at or before the authorisation`));
+    assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { deep_paths: ['src/auth/**'] })), /the milestone review needs its base, the full commit hash its diff starts from \(review\.cadence milestone\)/);
+  }
+  // Codex R1 / deep review B2: a task record that moves its start_revision past its code changes nothing; the anchor is history.
+  const r = milestoneRepo(t);
+  r.write(`${RD}/tasks/T-0001.md`, taskRecord('T-0001', 'Done', `start_revision: ${r.s2}\n`)); const head = accept(r, '\n');
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { base: r.s2, deep_paths: ['src/auth/**'] })), /comes after M-0001's authorisation/);
+});
+
+test('MAINT-0022: the milestone review names the deep paths it reached', t => {
+  const r = milestoneRepo(t); const head = accept(r);
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { base: r.authorised })), /the milestone review's deep_paths must list the review\.deep_paths the milestone changed, its security focus: src\/auth\/\*\*/);
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { base: r.authorised, deep_paths: ['src/billing/**'] })), /must list the review\.deep_paths the milestone changed, its security focus: src\/auth\/\*\*/);
+  assert.equal(acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { base: r.authorised, deep_paths: ['src/auth/**'] })), '');
+});
+
+test('MAINT-0022: the milestone\'s fix check covers the fixes, and nothing after it', t => {
+  const r = milestoneRepo(t);
+  r.write('src/billing/total.js', 'fixed\n'); r.write(`${RD}/tasks/T-0004.md`, taskRecord('T-0004', 'Done', 'found_from: R-0009/F1\n'));
+  const fixed = r.commit('T-0004, the fix of the review\'s finding F1');
+  const head = accept(r);
+  const fix = (revision, more = {}, deep = ['src/auth/**', 'src/billing/**']) => ({ base: r.authorised, deep_paths: deep, fix_check: { revision, reviewer: 'codereview fixcheck', model: 'claude:sonnet', report: 'https://github.com/o/r/pull/9#issuecomment-2', ...more } });
+  assert.equal(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fix(fixed))), '');
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fix(fixed, {}, ['src/auth/**']))), /its security focus: src\/auth\/\*\*, src\/billing\/\*\*/, 'deep paths through the fix check\'s revision');
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed)), /the milestone review's revision [0-9a-f]{12} is followed by changes to src\/billing\/total\.js/, 'no fix check');
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fix(r.s2))), /the milestone review's fix check must come after the review's revision/);
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fix(fixed, { report: 'none' }))), /the milestone review's fix check needs its reviewer, model and an https report/);
+  // A fix check on a side branch is not in this pull request's history.
+  r.git('checkout', '-q', '-b', 'side', r.reviewed); r.write('src/a.js', 'side\n'); const side = r.commit('a side fix'); r.git('checkout', '-q', 'main');
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fix(side))), /the milestone review's fix check revision [0-9a-f]{12} is not in this pull request's history/);
+  // No round three: code after the fix check needs a new review or the owner, as code after an uncovered review does.
+  r.write('src/a.js', 'a, T-0001, fixed again\n'); const again = r.commit('a fix after the fix check'); const later = accept(r, 'again\n');
+  assert.match(acceptanceErrors(r, later, acceptanceOf(r.reviewed, again, fix(fixed))), /the milestone review's fix check revision [0-9a-f]{12} is followed by changes to src\/a\.js/);
+});
+
+// Deep review B1 / Codex R2: a fix check stands only for fixes of the review's findings, never for a task the review did not see.
+test('MAINT-0022: a fix check never stands in for the milestone review', t => {
+  const r = milestoneRepo(t); const head = accept(r);
+  const fix = { base: r.authorised, deep_paths: ['src/auth/**'], fix_check: { revision: r.reviewed, reviewer: 'x', model: 'y', report: 'https://github.com/o/r/pull/9#issuecomment-2' } };
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.s2, r.reviewed, fix)), /T-0002 was not Done at the milestone review's revision [0-9a-f]{12} and fixes none of its findings \(found_from\): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check/);
+  assert.match(acceptanceErrors(r, head, acceptanceOf(r.authorised, r.reviewed, { ...fix, base: r.authorised })), /T-0001 was not Done at the milestone review's revision/, 'a review of an empty diff');
+  // A trial finding's task comes after the walk, never inside the fix check's range.
+  const q = milestoneRepo(t);
+  q.write('src/a.js', 'trial fix\n'); q.write(`${RD}/tasks/T-0005.md`, taskRecord('T-0005', 'Done', 'found_from: trial\n')); const trial = q.commit('T-0005, a trial fix'); const qhead = accept(q);
+  assert.match(acceptanceErrors(q, qhead, acceptanceOf(q.reviewed, trial, { ...fix, base: q.authorised, fix_check: { ...fix.fix_check, revision: trial } })), /T-0005 was not Done at the milestone review's revision/);
+});
+
+test('MAINT-0022: without the new keys the acceptance evidence is read as in v2.10.0', t => {
+  const r = milestoneRepo(t);
+  r.write('src/a.js', 'a, T-0001, fixed\n'); const fixed = r.commit('the review\'s fix'); const head = accept(r);
+  const fixCheck = { fix_check: { revision: fixed, reviewer: 'x', model: 'y', report: 'https://github.com/o/r/pull/9#issuecomment-2' } };
+  const errors = acceptanceErrors(r, head, acceptanceOf(r.reviewed, fixed, fixCheck), { config: acceptanceConfig({ deep_paths: ['src/auth/**'] }) });
+  assert.match(errors, /the milestone review's revision [0-9a-f]{12} is followed by changes to src\/a\.js/);
+  assert.doesNotMatch(errors, /base|deep_paths|Done at/);
+});
+
+test('MAINT-0022: same vendor needs a fresh session in the milestone review too', t => {
+  const r = milestoneRepo(t); const head = accept(r);
+  const same = (sameVendor, fresh) => acceptanceErrors(r, head, acceptanceOf(r.reviewed, r.reviewed, { vendor: 'Anthropic', implementer_vendor: 'anthropic', ...(fresh === undefined ? {} : { fresh_session: fresh }) }), { config: acceptanceConfig({ same_vendor: sameVendor }) });
+  assert.match(same('never', true), /the milestone review's vendor must differ from the implementer's/);
+  assert.equal(same('separate-session', true), '');
+  assert.match(same('separate-session'), /the milestone review is of the implementer's vendor: review\.same_vendor separate-session accepts that only with review\.fresh_session true/);
+  assert.match(same('separate-session', 'yes'), /the milestone review's fresh_session must be true or false when given/);
+});
+
+// The plan's one quick review, linked from the milestone record on the trusted branch, before the milestone's tasks start.
+test('MAINT-0022: the plan review is read from the trusted branch', t => {
+  const readiness = (p, head) => p.run(['readiness', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001']);
+  const missing = /milestone M-0001 has no plan_review: with review\.cadence milestone its plan gets one quick review before its tasks start \(procedures\/readiness\.md\)/;
+  const p = project(t, { configEdit: diet() });
+  withLink(p); const head = p.commit('the plan review, added by the candidate');
+  const r = readiness(p, head);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stdout, missing);
+  const q = project(t, { configEdit: diet(), baselineEdit: withLink });
+  const ok = readiness(q, q.baseline);
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr); assert.doesNotMatch(ok.stdout, missing);
+  const plain = project(t);
+  assert.doesNotMatch(readiness(plain, plain.baseline).stdout, missing, 'the task cadence needs no plan review');
+});
+
+// Task 5. The briefs, wf next, the budget and wf evidence follow the cadence; the plan review's command is the project's.
+const wf = (p, ...args) => spawnSync(process.execPath, [cli, ...args, '--repo', p.repo], { encoding: 'utf8' });
+const codereview = { reviewer_command: 'codereview run --level {level} --author-vendor anthropic', plan_command: 'codereview plan --file {file} --author-vendor anthropic --project fixture' };
+
+test('MAINT-0022: briefs and budget under cadence milestone', t => {
+  const p = project(t, { configEdit: diet(codereview), baselineEdit: withLink });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep: sign-in'));
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active'));
+  const sha = p.commit('a deep task in an active milestone');
+  const lead = wf(p, 'brief', '--lead', '--task', 'T-0001', '--baseline', sha);
+  assert.equal(lead.status, 0, lead.stdout + lead.stderr);
+  assert.match(lead.stdout, /no task review \(review\.cadence milestone\): the milestone review covers this task \(procedures\/review\.md\)/);
+  assert.doesNotMatch(lead.stdout, /codereview run --level deep/);
+  const accept = wf(p, 'brief', '--acceptance', '--milestone', 'M-0001', '--baseline', sha);
+  assert.equal(accept.status, 0, accept.stdout + accept.stderr);
+  assert.match(accept.stdout, /its one review \(review\.cadence milestone: its tasks had none\), from a base at or before the milestone's authorisation on the trusted branch \(the evidence's review\.base\), with a security focus on review\.deep_paths \(src\/auth\/\*\*\)/);
+  assert.match(accept.stdout, /`codereview run --level milestone --author-vendor anthropic`; after findings, one fix check: `codereview run --level fixcheck --author-vendor anthropic`, recorded as review\.fix_check; no round three/);
+  const next = wf(p, 'next', '--baseline', sha);
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.match(next.stdout, /M-0001: review budget: 2 runs \(review\.cadence milestone: none per task; the milestone review and its one fix check\)/);
+  const evidenceOut = wf(p, 'evidence', '--baseline', sha, '--candidate', sha, '--task', 'T-0001', '--json');
+  assert.equal(evidenceOut.status, 0, evidenceOut.stdout + evidenceOut.stderr);
+  assert.deepEqual(JSON.parse(evidenceOut.stdout).review, { level: 'none' });
+});
+
+test('MAINT-0022: a level-only reviewer command', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { reviewer_command: codereview.reviewer_command, deep_paths: ['src/auth/**'] } }) });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep: sign-in'));
+  const sha = p.commit('a deep task');
+  const lead = wf(p, 'brief', '--lead', '--task', 'T-0001', '--baseline', sha);
+  assert.match(lead.stdout, /`codereview run --level deep --author-vendor anthropic`; after a blocking finding at deep, one fix check: `codereview run --level fixcheck --author-vendor anthropic`/);
+  const accept = wf(p, 'brief', '--acceptance', '--milestone', 'M-0001', '--baseline', sha);
+  assert.match(accept.stdout, /`codereview run --level milestone --author-vendor anthropic`; after a blocking finding, one fix check/);
+});
+
+test('MAINT-0022: wf next asks for the plan review of a Draft milestone', t => {
+  const draft = ({ edit }) => edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Draft'));
+  const planAction = (p, head) => { const r = wf(p, 'next', '--baseline', head, '--json'); assert.equal(r.status, 0, r.stdout + r.stderr); const n = JSON.parse(r.stdout); return [n.next, ...n.also].find(a => a.kind === 'plan' && a.item === 'M-0001'); };
+  const p = project(t, { configEdit: diet(codereview), baselineEdit: draft });
+  assert.match(planAction(p, p.baseline).run.join(' | '), /one quick plan review before the owner's authorisation \(review\.cadence milestone; procedures\/readiness\.md\): `codereview plan --file docs\/workflow\/milestones\/M-0001\.md --author-vendor anthropic --project fixture`; post it on the plan's pull request, put its link in the milestone's plan_review and change the plan before asking/);
+  const q = project(t, { configEdit: diet(), baselineEdit: draft });
+  assert.match(planAction(q, q.baseline).run.join(' | '), /one quick plan review before the owner's authorisation \(review\.cadence milestone; procedures\/readiness\.md\): by a reviewer as procedures\/review\.md \*Who reviews\* says, given the milestone record and its Draft task records/);
+  const plain = project(t, { baselineEdit: draft });
+  assert.doesNotMatch(planAction(plain, plain.baseline).run.join(' | '), /plan review/, 'the task cadence has none');
+});
+
+// Deep review S2: the plan review gates a live milestone's tasks, not the later stages of one already past them.
+test('MAINT-0022: the plan review is asked only of an authorised or active milestone', t => {
+  const missing = /has no plan_review/;
+  const p = project(t, { configEdit: diet(), baselineEdit: ({ edit }) => edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Verified')) });
+  const r = p.run(['readiness', '--baseline', p.baseline, '--candidate', p.baseline, '--task', 'T-0001', '--stage', 'accept']);
+  assert.doesNotMatch(r.stdout, missing, r.stdout);
+});
+
+// Deep review S1 / Codex R3: under the cadence a milestone that goes straight to Released carries the acceptance evidence too, which
+// holds its one review; without the cadence v2.10.0 holds.
+test('MAINT-0022: release without acceptance still needs the milestone review', t => {
+  const released = p => { p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Released')); return p.commit('M-0001 released'); };
+  const ci = p => { const head = released(p); return p.run(['ci', '--baseline', p.baseline, '--candidate', head]); };
+  const missing = /the acceptance evidence for M-0001 is missing/;
+  assert.match(findings(ci(project(t, { configEdit: diet(), baselineEdit: withLink }))), missing);
+  assert.doesNotMatch(findings(ci(project(t, { configEdit: c => ({ ...c, acceptance_evidence: true }) }))), missing);
+});

@@ -37,8 +37,9 @@ const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verificatio
 
 // Agent-attested evidence for the exact candidate. Every problem is an error; nothing becomes `unverified`. A finding the
 // agent accepted rather than fixed needs a stated resolution, and ci.js leaves that candidate's merge to the owner.
-// MAINT-0021: reviewOptional, for a test-only change (ci.js), lets the review be left out or name level none.
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {}, reviewOptional = false }) {
+// MAINT-0021: reviewOptional, for a test-only change (ci.js), lets the review be left out or name level none. MAINT-0022: and for
+// a task under review.cadence milestone; sameVendor is review.same_vendor (sameVendorError).
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {}, reviewOptional = false, sameVendor = 'never' }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -73,15 +74,16 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   if (typeof r.reviewer !== 'string' || !r.reviewer.trim()) errors.push('review needs a reviewer');
   if (r.implementer !== owner) errors.push('review implementer must be the tasks\' owner');
   if (typeof r.reviewer === 'string' && [r.implementer, owner].some(v => typeof v === 'string' && r.reviewer.trim().toLowerCase() === v.trim().toLowerCase())) errors.push('reviewer must differ from the implementer');
-  // MAINT-0021: independence is of context and of vendor (POLICY *Independent review*). Both vendors are optional; given
-  // together, they must differ, compared trimmed and in any case.
+  // MAINT-0021, MAINT-0022: the reviewer's vendor (sameVendorError).
   for (const k of ['vendor', 'implementer_vendor']) if (r[k] !== undefined && (typeof r[k] !== 'string' || !r[k].trim())) errors.push(`review ${k.replace('_', ' ')} must be a non-empty text when given`);
-  if (typeof r.vendor === 'string' && typeof r.implementer_vendor === 'string' && r.vendor.trim() && r.vendor.trim().toLowerCase() === r.implementer_vendor.trim().toLowerCase()) errors.push('the reviewer\'s vendor must differ from the implementer\'s (procedures/review.md)');
+  const vendorError = sameVendorError({ vendor: r.vendor, implementer: r.implementer_vendor, fresh: r.context?.fresh_session, sameVendor, who: 'the reviewer', field: 'review.context.fresh_session' });
+  if (vendorError) errors.push(vendorError);
   if (r.separate_context !== true) errors.push('review must be in a separate context');
   const x = r.context;
   if (!isObject(x)) errors.push('review context is missing');
   else {
     for (const k of ['provider', 'context_id']) if (typeof x[k] !== 'string' || !x[k].trim()) errors.push(`review context needs ${k}`);
+    if (x.fresh_session !== undefined && typeof x.fresh_session !== 'boolean') errors.push('review context fresh_session must be true or false when given');
     if (x.inherited_context !== false) errors.push('review context must not inherit the implementer\'s context');
     if (x.candidate !== revision && !(carried.review && x.candidate === carried.review)) errors.push('review was not of this candidate revision');
     if (!reference(x.launch_evidence)) errors.push('review context needs an https launch_evidence reference');
@@ -102,6 +104,16 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
   if (!sameSet(r.tasks, taskIds)) errors.push('review must cover exactly the candidate\'s tasks');
   if (!reference(r.report)) errors.push('review needs an https reference to its report');
   return errors;
+}
+
+// MAINT-0021: independence is of context and of vendor (POLICY *Independent review*). Both vendors are optional; given together,
+// they must differ, compared trimmed and in any case. MAINT-0022 (the owner's review diet, 22 October 2026): with review.same_vendor
+// separate-session the same vendor counts when the evidence records a fresh session (`fresh`): a new process started for the
+// review, with none of the implementer's conversation, never a subagent of the implementer's session or a resumed one.
+export function sameVendorError({ vendor, implementer, fresh, sameVendor = 'never', who, field }) {
+  if (!(typeof vendor === 'string' && typeof implementer === 'string' && vendor.trim() && vendor.trim().toLowerCase() === implementer.trim().toLowerCase())) return null;
+  if (sameVendor !== 'separate-session') return `${who === 'the reviewer' ? 'the reviewer\'s' : `${who}'s`} vendor must differ from the implementer's (procedures/review.md)`;
+  return fresh === true ? null : `${who} is of the implementer's vendor: review.same_vendor separate-session accepts that only with ${field} true, a new session with none of the implementer's conversation (procedures/review.md)`;
 }
 
 // MAINT-0016: the review's level (procedures/review.md). A change to a path the project names in review.deep_paths needs a
@@ -130,7 +142,7 @@ export function reviewLevelErrors({ review, deep = [], secondModel = null, comma
 // many*): review.fixes_after names the tests that failed without each blocking fix, and after a blocking finding at deep one
 // fix check of this candidate (review.fix_check) is required. Returns why it does not stand, or null. `isAncestor` and
 // `carries` come from ci.js, which holds the Git sources.
-export function fixedAfterError({ review, candidate, from, isAncestor, carries }) {
+export function fixedAfterError({ review, candidate, from, isAncestor, carries, sameVendor = 'never' }) {
   if (!isObject(review) || review.fixes_after == null) return null;
   // v2.10.0 fix check R6: a malformed fixes_after never lets an earlier review stand.
   if (!isObject(review.fixes_after)) return 'review.fixes_after must be an object: { "tests": [the tests that failed without each blocking fix] }';
@@ -144,7 +156,9 @@ export function fixedAfterError({ review, candidate, from, isAncestor, carries }
     const named = isObject(fc) && ['reviewer', 'model'].every(k => typeof fc[k] === 'string' && fc[k].trim()) && reference(fc.report);
     const current = isObject(fc) && (fc.candidate === candidate || (/^[0-9a-f]{40,64}$/.test(fc.candidate ?? '') && carries(fc.candidate)));
     if (!named || !current) return 'after a blocking finding at deep, the fixes need review.fix_check of this candidate (candidate, reviewer, model, an https report)';
-    if (typeof fc.vendor === 'string' && typeof review.implementer_vendor === 'string' && fc.vendor.trim().toLowerCase() === review.implementer_vendor.trim().toLowerCase()) return 'the fix check\'s vendor must differ from the implementer\'s';
+    if (fc.fresh_session !== undefined && typeof fc.fresh_session !== 'boolean') return 'review.fix_check.fresh_session must be true or false when given';
+    const vendor = sameVendorError({ vendor: fc.vendor, implementer: review.implementer_vendor, fresh: fc.fresh_session, sameVendor, who: 'the fix check', field: 'review.fix_check.fresh_session' });
+    if (vendor) return vendor;
   }
   return null;
 }

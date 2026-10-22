@@ -80,6 +80,10 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   const milestone = base.milestones.get(t.milestone)?.data;
   if (!milestone || !(laterStage ? ['Authorised', 'Active', 'Verified', 'Accepted', 'Released'] : ['Authorised', 'Active']).includes(milestone.status)) fail(`milestone ${t.milestone ?? '(missing)'} is not authorised for implementation on the baseline`);
   if (milestone) {
+    // MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone a milestone's plan gets one quick review
+    // before its tasks start, linked from its record on the trusted branch (records.js checks the link's form); a milestone past
+    // Active is past its tasks (v2.11.0 review S2).
+    if (config.review?.cadence === 'milestone' && ['Authorised', 'Active'].includes(milestone.status) && !milestone.plan_review) fail(`milestone ${t.milestone} has no plan_review: with review.cadence milestone its plan gets one quick review before its tasks start (procedures/readiness.md)`);
     for (const scope of list(t.scope)) if (!list(milestone.scope).some(s => scope === s || scope.startsWith(s.replace(/\/$/, '') + '/'))) fail(`task scope ${scope} is outside milestone authority`);
     for (const id of list(t.acceptance)) if (!list(milestone.acceptance).includes(id)) fail(`acceptance ${id} is outside milestone authority`);
   }

@@ -8,7 +8,7 @@ import { OUTCOMES, foundRoom } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
-import { reviewLevel } from './roles.js';
+import { byMilestone, planReviewCommand, reviewLevel } from './roles.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -80,7 +80,10 @@ export function nextIds(sources, rd) {
 // only the open pull requests, without their descriptions or comments. `wf usage --milestone` counts them against this.
 // MAINT-0021: with review.reviewer_command every review is another vendor's, so the budget counts them all: one per light or
 // standard task, two per deep task (its review and one fix check), none for a test-only task, two for the milestone review.
+// MAINT-0022: under review.cadence milestone, two runs per milestone (its one review and one fix check) and none per task; the plan
+// review runs before the authorisation, outside the authorised milestone's budget.
 export function secondModelBudget(config, records, milestoneIds) {
+  if (byMilestone(config)) return milestoneIds.map(id => ({ milestone: id, cadence: 'milestone', runs: 2 }));
   const command = !!config.review?.reviewer_command;
   if (!config.review?.second_model && !command) return [];
   const deepPaths = config.review?.deep_paths ?? [];
@@ -218,7 +221,9 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   // one `wf prune` commit, which rides in the pull request that prepares the next authorisation, or is an action of its own.
   const stale = [...records.milestones.values()].map(r => r.data).filter(m => m?.id && ACCEPTED.includes(m.status)).sort(byId).map(m => ({ id: m.id, n: prunable(records, m.id).remove.length })).filter(m => m.n);
   const prune = stale.map(m => `wf prune --milestone ${m.id}  (removes its ${m.n} Done task record${m.n === 1 ? '' : 's'} in one records-only commit${drafts.length ? '; it rides in this pull request' : ''})`);
-  drafts.forEach((m, i) => add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)', ...(i === 0 ? prune : [])] }));
+  // MAINT-0022: under review.cadence milestone the plan gets one quick review before the owner authorises it (readiness.md).
+  const planReview = m => (byMilestone(config) && !records.milestones.get(m.id)?.data?.plan_review ? [`one quick plan review before the owner's authorisation (review.cadence milestone; procedures/readiness.md): ${planReviewCommand(config, `${rd}/milestones/${m.id}.md`) ? `\`${planReviewCommand(config, `${rd}/milestones/${m.id}.md`)}\`` : 'by a reviewer as procedures/review.md *Who reviews* says, given the milestone record and its Draft task records'}; post it on the plan's pull request, put its link in the milestone's plan_review and change the plan before asking`] : []);
+  drafts.forEach((m, i) => add({ kind: 'plan', item: m.id, do: `Prepare ${m.id} for the owner's authorisation`, why: `Draft milestone with ${m.tasks.length} task record(s)${m.plan.uncovered.length ? `; acceptance ${m.plan.uncovered.join(', ')} is served by no task` : ''}`, read: [`${rd}/milestones/${m.id}.md`, PROCEDURE.plan], run: ['wf doctor  (put every gap in the plan\'s question to the owner, before authorisation)', ...planReview(m), ...(i === 0 ? prune : [])] }));
   for (const d of status.open_for_agent) add({ kind: 'decide', item: d.id, do: `Resolve ${d.id} within delegated authority, or propose it to its owner`, why: d.question ?? 'open decision', read: [`${rd}/decisions/${d.id}.md`, PROCEDURE.plan] });
   for (const m of milestones.filter(m => ['Authorised', 'Active'].includes(m.status) && m.tasks.length && m.tasks.every(t => t.status === 'Done') && !m.plan.uncovered.length && !m.plan.missing.length)) {
     // MAINT-0020 P3: its closing work goes to fresh helpers with this brief; M-0005's coordinator did it itself and reached 708 K.
@@ -257,7 +262,7 @@ export function renderNext(n) {
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
-  if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => (b.other_tasks !== undefined ? `${b.milestone}: review budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (one per light or standard task, two per deep task, two for the milestone review); keep two for the milestone review` : `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`)));
+  if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => (b.cadence === 'milestone' ? `${b.milestone}: review budget: ${b.runs} runs (review.cadence milestone: none per task; the milestone review and its one fix check)` : b.other_tasks !== undefined ? `${b.milestone}: review budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (one per light or standard task, two per deep task, two for the milestone review); keep two for the milestone review` : `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`)));
   if (n.next_ids) lines.push('', `Next free IDs here: ${Object.values(n.next_ids).join(', ')}; check the open pull requests too (wf status --pull-requests). Reviews are numbered on the pull requests.`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;

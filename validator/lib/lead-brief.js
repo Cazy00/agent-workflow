@@ -6,7 +6,7 @@
 // and spent 37 % of the cache reads, a quarter to a half of their reading a re-read of a file they had read (record §§ 1, 9).
 import { list, loadAll, loadConfig } from './records.js';
 import { ACCEPTANCE } from './acceptance-files.js';
-import { effortOf, launchName, resolveRoles, reviewerCommand, reviewLevel, secondModelLaunch, secondModelOf } from './roles.js';
+import { byMilestone, byWhom, effortOf, launchName, resolveRoles, reviewerCommand, reviewLevel, secondModelLaunch, secondModelOf } from './roles.js';
 
 const bullets = items => items.map(i => `- ${i}`).join('\n');
 // The slices of a task: its acceptance entries (else its scope entries), one slice each, at most MAX_SLICES, the entries beyond
@@ -67,8 +67,10 @@ ${bullets([
     // v2.9.0 final review S2: final_model is named only as the milestone's. MAINT-0021: the fallback is another vendor's next model, never the lead's own tool.
     // MAINT-0021: with review.reviewer_command, every level is reviewed by another vendor's model through that command, with no
     // fallback to the lead's own tool; it replaces the second model's line.
-    ...(reviewerCommand(config, level) && level !== 'none' ? [`the task's review (level ${level ?? 'standard'}, procedures/review.md), by another vendor's model: \`${reviewerCommand(config, level)}\`; after a blocking finding at deep, one fix check: \`${reviewerCommand(config, 'fixcheck')}\`. If no reviewer can run, the review is missing: stop at the gate`] : []),
-    ...(second && !reviewerCommand(config, level) ? [`a deep review and its fix review, by the second model (review.second_model): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}. Where it cannot run, the next reviewer of another vendor (procedures/review.md *Who reviews*), and review.fallback says why; with none, the review is missing: stop at the gate${final && final !== second.model ? `; never ${final}, its final_model, which is the milestone review's alone` : ''}`] : []),
+    // MAINT-0022: under review.cadence milestone the milestone's one review covers the task, which has none of its own.
+    ...(byMilestone(config) ? ['no task review (review.cadence milestone): the milestone review covers this task (procedures/review.md); the delivery evidence\'s review is level none'] : []),
+    ...(!byMilestone(config) && reviewerCommand(config, level) && level !== 'none' ? [`the task's review (level ${level ?? 'standard'}, procedures/review.md), ${byWhom(config)}: \`${reviewerCommand(config, level)}\`; after a blocking finding at deep, one fix check: \`${reviewerCommand(config, 'fixcheck')}\`. If no reviewer can run, the review is missing: stop at the gate`] : []),
+    ...(!byMilestone(config) && second && !reviewerCommand(config, level) ? [`a deep review and its fix review, by the second model (review.second_model): model ${second.model}, effort ${second.effort}: ${secondModelLaunch(second, launchName(task, 'reviewer'))}. Where it cannot run, the next reviewer of another vendor (procedures/review.md *Who reviews*), and review.fallback says why; with none, the review is missing: stop at the gate${final && final !== second.model ? `; never ${final}, its final_model, which is the milestone review's alone` : ''}`] : []),
   ])}
 
 Name each launch for \`wf usage\`: its description starts ${name('lead')} (yours), ${name('implementer')}, ${name('fix')} (each fix round), ${name('reviewer')} (a Claude reviewer) or ${name('paperwork')}, then a few words.

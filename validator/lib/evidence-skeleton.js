@@ -5,6 +5,7 @@
 import { list, loadAll, loadConfig } from './records.js';
 import { ACCEPTANCE_MAP } from './acceptance-files.js';
 import { carriedFrom } from './carry.js';
+import { byMilestone } from './roles.js';
 
 const AREAS = ['scope', 'correctness', 'maintainability', 'security', 'regression', 'test-fidelity'];
 export function evidenceSkeleton({ baseline, candidate, task, previous = null }) {
@@ -32,7 +33,9 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
     },
   };
   const notes = [];
-  for (const [stage, from] of [['verification', previous?.verification?.revision], ['review', previous?.review?.context?.candidate]]) {
+  // MAINT-0022: under review.cadence milestone the task has no review of its own; the milestone's one review covers it (ci.js).
+  if (byMilestone(config)) { evidence.review = { level: 'none' }; notes.push('review.cadence milestone: no task review; the milestone review covers this task, so review is level none'); }
+  for (const [stage, from] of [['verification', previous?.verification?.revision], ...(byMilestone(config) ? [] : [['review', previous?.review?.context?.candidate]])]) {
     if (typeof from !== 'string') continue;
     const c = carriedFrom({ config, baseline, candidate, from });
     if (c.ok) { evidence[stage] = previous[stage]; notes.push(`the ${stage} of ${from.slice(0, 12)} carries over`); }

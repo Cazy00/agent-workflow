@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { evidence, project } from './helpers/maint-0018.js';
+import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 import { gitSource } from '../lib/index.js';
 import { acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
 
@@ -183,4 +183,50 @@ test('MAINT-0022: the plan review is read from the trusted branch', t => {
   assert.equal(ok.status, 0, ok.stdout + ok.stderr); assert.doesNotMatch(ok.stdout, missing);
   const plain = project(t);
   assert.doesNotMatch(readiness(plain, plain.baseline).stdout, missing, 'the task cadence needs no plan review');
+});
+
+// Task 5. The briefs, wf next, the budget and wf evidence follow the cadence; the plan review's command is the project's.
+const wf = (p, ...args) => spawnSync(process.execPath, [cli, ...args, '--repo', p.repo], { encoding: 'utf8' });
+const codereview = { reviewer_command: 'codereview run --level {level} --author-vendor anthropic', plan_command: 'codereview plan --file {file} --author-vendor anthropic --project fixture' };
+
+test('MAINT-0022: briefs and budget under cadence milestone', t => {
+  const p = project(t, { configEdit: diet(codereview), baselineEdit: withLink });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep: sign-in'));
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Active'));
+  const sha = p.commit('a deep task in an active milestone');
+  const lead = wf(p, 'brief', '--lead', '--task', 'T-0001', '--baseline', sha);
+  assert.equal(lead.status, 0, lead.stdout + lead.stderr);
+  assert.match(lead.stdout, /no task review \(review\.cadence milestone\): the milestone review covers this task \(procedures\/review\.md\)/);
+  assert.doesNotMatch(lead.stdout, /codereview run --level deep/);
+  const accept = wf(p, 'brief', '--acceptance', '--milestone', 'M-0001', '--baseline', sha);
+  assert.equal(accept.status, 0, accept.stdout + accept.stderr);
+  assert.match(accept.stdout, /its one review \(review\.cadence milestone: its tasks had none\), from a base at or before every task's start \(the evidence's review\.base\), with a security focus on review\.deep_paths \(src\/auth\/\*\*\)/);
+  assert.match(accept.stdout, /`codereview run --level milestone --author-vendor anthropic`; after findings, one fix check: `codereview run --level fixcheck --author-vendor anthropic`, recorded as review\.fix_check; no round three/);
+  const next = wf(p, 'next', '--baseline', sha);
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.match(next.stdout, /M-0001: review budget: 2 runs \(review\.cadence milestone: none per task; the milestone review and its one fix check\)/);
+  const evidenceOut = wf(p, 'evidence', '--baseline', sha, '--candidate', sha, '--task', 'T-0001', '--json');
+  assert.equal(evidenceOut.status, 0, evidenceOut.stdout + evidenceOut.stderr);
+  assert.deepEqual(JSON.parse(evidenceOut.stdout).review, { level: 'none' });
+});
+
+test('MAINT-0022: a level-only reviewer command', t => {
+  const p = project(t, { configEdit: c => ({ ...c, review: { reviewer_command: codereview.reviewer_command, deep_paths: ['src/auth/**'] } }) });
+  p.edit(taskPath, x => x.replace(/^review: .*$/m, 'review: deep: sign-in'));
+  const sha = p.commit('a deep task');
+  const lead = wf(p, 'brief', '--lead', '--task', 'T-0001', '--baseline', sha);
+  assert.match(lead.stdout, /`codereview run --level deep --author-vendor anthropic`; after a blocking finding at deep, one fix check: `codereview run --level fixcheck --author-vendor anthropic`/);
+  const accept = wf(p, 'brief', '--acceptance', '--milestone', 'M-0001', '--baseline', sha);
+  assert.match(accept.stdout, /`codereview run --level milestone --author-vendor anthropic`; after a blocking finding, one fix check/);
+});
+
+test('MAINT-0022: wf next asks for the plan review of a Draft milestone', t => {
+  const draft = ({ edit }) => edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Draft'));
+  const planAction = (p, head) => { const r = wf(p, 'next', '--baseline', head, '--json'); assert.equal(r.status, 0, r.stdout + r.stderr); const n = JSON.parse(r.stdout); return [n.next, ...n.also].find(a => a.kind === 'plan' && a.item === 'M-0001'); };
+  const p = project(t, { configEdit: diet(codereview), baselineEdit: draft });
+  assert.match(planAction(p, p.baseline).run.join(' | '), /one quick plan review before the owner's authorisation \(review\.cadence milestone; procedures\/readiness\.md\): `codereview plan --file docs\/workflow\/milestones\/M-0001\.md --author-vendor anthropic --project fixture`; post it on the plan's pull request, put its link in the milestone's plan_review and change the plan before asking/);
+  const q = project(t, { configEdit: diet(), baselineEdit: draft });
+  assert.match(planAction(q, q.baseline).run.join(' | '), /one quick plan review before the owner's authorisation \(review\.cadence milestone; procedures\/readiness\.md\): by a reviewer as procedures\/review\.md \*Who reviews\* says, given the milestone record and its Draft task records/);
+  const plain = project(t, { baselineEdit: draft });
+  assert.doesNotMatch(planAction(plain, plain.baseline).run.join(' | '), /plan review/, 'the task cadence has none');
 });

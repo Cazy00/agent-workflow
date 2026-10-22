@@ -41,6 +41,13 @@ export function reviewerCommand(config, level) {
   const at = level ?? 'standard';
   return cmd ? cmd.replaceAll('{role}', ROLE_OF_LEVEL[at] ?? 'standard').replaceAll('{level}', at) : null;
 }
+// MAINT-0022: under review.cadence milestone a milestone's plan gets one quick review before its tasks start (readiness.md), by
+// review.plan_command with {file}, the milestone record, filled in; null without one.
+export const planReviewCommand = (config, file) => config.review?.plan_command?.replaceAll('{file}', file) ?? null;
+export const byMilestone = config => config.review?.cadence === 'milestone';
+// Who reviews, as the briefs say it: another vendor's model, or with review.same_vendor separate-session also the implementer's
+// vendor's run as a fresh session (delivery-evidence.js sameVendorError).
+export const byWhom = config => (config.review?.same_vendor === 'separate-session' ? 'by another vendor\'s model, or by one of the implementer\'s vendor run as a fresh session (review.same_vendor; the evidence records fresh_session)' : 'by another vendor\'s model');
 
 // A task's review level: the first word of its `review` field when that is a level, else deep when its scope reaches a path of
 // review.deep_paths (the rule the brief prints), else unread, which the caller treats as the default level, standard.

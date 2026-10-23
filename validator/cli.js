@@ -414,7 +414,7 @@ async function main() {
     const history = candidate.kind === 'git' ? gitHistory(repo, candidate.name, rd) : null;
     const view = evaluateStatus({ baseline, candidate, pullRequests, trustedBranch, history });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
-    for (const w of history?.warnings ?? []) process.stderr.write(`wf status: ${w}\n`);
+    if (history?.warnings.length) process.stderr.write('wf status: history could not be read from Git; the tasks of finished milestones may be missing\n');
     return 0;
   }
   if (cmd === 'next') {

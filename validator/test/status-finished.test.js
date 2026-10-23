@@ -100,19 +100,48 @@ test('a planned task is recovered by the plan even when its last version names n
   assert.match(text, /\*\*1 of 1 done\*\*/);
 });
 
+test('a task the plan names comes back only as finished work of this milestone, counted once', t => {
+  const p = project(t);
+  p.milestone('M-0001', 'Active', { tasks: ['T-0001', 'T-0002', 'T-0003'] });
+  p.milestone('M-0002', 'Active', { tasks: [] });
+  p.task('T-0001', 'Done', 'M-0001', 'Finished here');
+  p.task('T-0002', 'Draft', 'M-0001', 'Dropped before it started');
+  p.task('T-0003', 'Done', 'M-0001', 'Moved to the next milestone');
+  p.commit('work');
+  p.task('T-0003', 'Done', 'M-0002', 'Moved to the next milestone');
+  p.milestone('M-0001', 'Accepted', { tasks: ['T-0001', 'T-0002', 'T-0003'] });
+  p.milestone('M-0002', 'Accepted', { tasks: [] });
+  p.commit('accept both');
+  for (const id of ['T-0001', 'T-0002', 'T-0003']) p.remove(id);
+  p.commit('prune both');
+  const s = p.view();
+  const of = id => s.milestones.find(m => m.id === id).tasks.map(x => [x.id, x.status]);
+  assert.deepEqual(of('M-0001'), [['T-0001', 'Done']], 'the dropped Draft and the moved task are not M-0001\'s finished work');
+  assert.deepEqual(of('M-0002'), [['T-0003', 'Done']], 'the moved task is counted where its last record put it');
+  const text = renderStatus(s);
+  assert.match(text, /\*\*1 of 1 done\*\* · planned 3 · discovered 0$/m);
+  assert.deepEqual(s.waiting.filter(w => w.kind === 'plan'), []);
+});
+
+test('the status workflow checks out the whole history, which the finished milestones are read from', () => {
+  assert.match(fs.readFileSync(path.join(root, 'templates/github/wf-status.yml'), 'utf8'), /fetch-depth: 0/);
+});
+
 test('without history an accepted milestone says its records are gone, never "0 of 0 done"', t => {
   const p = pruned(t);
   for (const [label, s] of [['no history', p.view({ history: null })], ['a working-tree source', evaluateStatus({ baseline: dirSource(p.dir), history: null })]]) {
     const text = renderStatus(s);
     assert.match(text, /^\*\*Progress\*\* 🟩{10} \*\*Accepted\*\* · planned 2$/mu, label);
-    assert.match(text, /^No task records remain \(`wf prune` removes them after acceptance\); the pull requests are the record\.$/m, label);
+    assert.match(text, /^No task records are kept for an accepted milestone \(`wf prune` removes them\); the pull requests are the record\.$/m, label);
     assert.doesNotMatch(text, /0 of 0|No tasks yet/, label);
   }
   const shallow = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-finished-shallow-'));
   t.after(() => fs.rmSync(shallow, { recursive: true, force: true }));
   assert.equal(spawnSync('git', ['clone', '-q', '--depth', '1', `file://${p.dir}`, shallow]).status, 0);
-  const text = renderStatus(evaluateStatus({ baseline: gitSource(shallow, 'HEAD'), candidate: gitSource(shallow, 'HEAD'), history: gitHistory(shallow, 'HEAD', RD) }));
-  assert.match(text, /\*\*Accepted\*\*/, 'a shallow clone has nothing to read: the same message, with no warning');
+  const shallowHistory = gitHistory(shallow, 'HEAD', RD);
+  const text = renderStatus(evaluateStatus({ baseline: gitSource(shallow, 'HEAD'), candidate: gitSource(shallow, 'HEAD'), history: shallowHistory }));
+  assert.match(text, /^No task records are kept for an accepted milestone \(`wf prune` removes them\); the pull requests are the record\.$/m, 'a shallow clone has nothing to read: the same message');
+  assert.deepEqual(shallowHistory.warnings, [], 'and no warning');
 });
 
 test('a released milestone whose records are gone reads Released, with no release item', t => {
@@ -146,7 +175,7 @@ test('wf status reads history from a Git source, and says what is missing for th
   assert.deepEqual(json.milestones[0].tasks.map(x => x.id), ['T-0001', 'T-0002', 'T-0003']);
   const tree = run();
   assert.equal(tree.status, 0, tree.stdout + tree.stderr);
-  assert.match(tree.stdout, /No task records remain/);
+  assert.match(tree.stdout, /No task records are kept/);
 });
 
 test('history Git cannot read leaves the milestone as without history, with one warning on standard error', t => {
@@ -157,7 +186,7 @@ test('history Git cannot read leaves the milestone as without history, with one 
   const text = renderStatus(p.view({ history }));
   assert.equal(history.warnings.length, 1);
   assert.match(history.warnings[0], /history could not be read from Git/);
-  assert.match(text, /No task records remain/);
+  assert.match(text, /No task records are kept/);
 });
 
 test('an accepted milestone that declares nothing to release raises no release item', t => {
@@ -180,6 +209,10 @@ test('an accepted milestone with something to release still waits for the owner\
     'Reserved to the owner.',
     'Cazy00, by approving each pull request into main, and by releasing the database change by hand',
     'Cazy00 releases it by hand; nothing is deployed by the agent',
+    'Cazy00 releases it by hand after acceptance; until then nothing is released.',
+    'Nothing is deployed, except the database migration Cazy00 runs by hand.',
+    'Before acceptance nothing is deployed.',
+    'None, except the database migration Cazy00 runs by hand.',
     'None of the staging checks replace the owner\'s release.',
     'No deployment without the owner\'s approval.',
     '',
@@ -202,6 +235,6 @@ test('a milestone that is verified still waits for acceptance, and a released on
 });
 
 test('releasesNothing reads the milestone\'s release_authority', () => {
-  for (const yes of ['None', 'None.', ' none; staging only', 'None — nothing ships', 'Nothing is deployed', 'nothing will be released.', 'Reserved to the owner. Nothing is deployed; accepting the milestone ends it.', 'Nothing to release, the tool runs on the home server']) assert.equal(releasesNothing(yes), true, yes);
-  for (const no of [undefined, null, '', 'Reserved to the owner.', 'None of it ships without the owner', 'Nothing is deployed by the agent', 'No release before the owner signs', 'Production deploys from main']) assert.equal(releasesNothing(no), false, String(no));
+  for (const yes of ['None', 'None.', ' none; staging only', 'None — nothing ships', 'Nothing is deployed', 'nothing will be released.', 'Reserved to the owner. Nothing is deployed; accepting the milestone ends it.', 'Nothing to release; the tool runs on the home server']) assert.equal(releasesNothing(yes), true, yes);
+  for (const no of [undefined, null, '', 'Reserved to the owner.', 'None of it ships without the owner', 'Nothing is deployed by the agent', 'No release before the owner signs', 'Production deploys from main', 'Cazy00 releases it by hand after acceptance; until then nothing is released.', 'Nothing is deployed, except the database migration Cazy00 runs by hand.', 'Before acceptance nothing is deployed.', 'None, except the migration']) assert.equal(releasesNothing(no), false, String(no));
 });

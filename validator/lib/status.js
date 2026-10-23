@@ -18,10 +18,12 @@ const TITLE_TASK = /^(T-\d{4})\b/;
 const UNRECORDED = /^(\w+) is not recorded\b/;
 // A pull request title is untrusted text: in a code span GitHub renders no link, mention, image or HTML.
 const span = text => `\`${text.replaceAll('`', "'")}\``;
-// A milestone declares that it releases nothing in its `release_authority` (templates/milestone.md): the text starts with "None", or a
-// clause says nothing is deployed or released. Anything else, an empty field included, leaves the release step to the owner, so a
-// sentence that goes on ("nothing is deployed by the agent") never hides one.
-const NOTHING_RELEASED = /^none\s*(?:[.;:,\u2014-]|$)|\bnothing\s+(?:is\s+|will\s+be\s+)?(?:deployed|released|to\s+(?:deploy|release))\s*(?:[.;,]|$)/i;
+// A milestone declares that it releases nothing in its `release_authority` (templates/milestone.md): the text starts with "None", or
+// has a sentence of its own that says nothing is deployed or released (it starts the text or follows a full stop or semicolon, and ends
+// at one). Anything else, an empty field included, leaves the release step to the owner, so a sentence that goes on ("nothing is
+// deployed by the agent", "nothing is deployed, except the migration") or only holds for a while ("until then nothing is released")
+// never hides one.
+const NOTHING_RELEASED = /^none\s*(?:[.;:\u2014]|$)|(?:^|[.;]\s+)nothing\s+(?:is\s+|will\s+be\s+)?(?:deployed|released|to\s+(?:deploy|release))\s*(?:[.;]|$)/i;
 export const releasesNothing = text => NOTHING_RELEASED.test(String(text ?? '').replace(/\s+/g, ' ').trim());
 
 // Open pull requests as `gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision`
@@ -75,13 +77,14 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     if (!byMilestone.has(key)) byMilestone.set(key, []);
     byMilestone.get(key).push(rec);
   }
-  // An accepted milestone's removed task records, from history: those its plan names and any Done record that named it, less every
-  // task a record still holds (a kept record, or one moved to another milestone, is not removed).
+  // An accepted milestone's removed task records, from history: the Done records its plan names that name no other milestone, and any
+  // Done record that named it, less every task a record still holds (a kept record is not removed).
   const present = new Set([...all.tasks.values()].map(r => r.data?.id).filter(Boolean));
   const removedFor = (milestone, planned) => {
     if (!history) return [];
     const found = new Map();
-    for (const t of [...(history.removedDone?.(milestone) ?? []), ...recoverRemoved(history, planned.filter(id => !present.has(id)))]) if (!present.has(t.id) && !found.has(t.id)) found.set(t.id, t);
+    const planPicks = recoverRemoved(history, planned.filter(id => !present.has(id))).filter(t => t.status === 'Done' && (!t.milestone || t.milestone === milestone));
+    for (const t of [...(history.removedDone?.(milestone) ?? []), ...planPicks]) if (!present.has(t.id) && !found.has(t.id)) found.set(t.id, t);
     return [...found.values()].map(data => ({ data, errors: [], path: null, recovered: true }));
   };
   const taskView = rec => {
@@ -349,9 +352,9 @@ export function renderStatus(s) {
     if (m.outcome) lines.push(`> ${cell(m.outcome)}`, '');
     if (m.measure) lines.push(`**Measure:** ${cell(m.measure)}`, '');
     const plan = m.plan?.planned.length ? ` · planned ${m.plan.planned.length} · discovered ${m.plan.discovered.length}` : '';
-    // wf prune took the records and no Git history gave them back (a working-tree source or a shallow clone): never "0 of 0".
+    // No record is kept and no Git history gave any back (a working-tree source or a shallow clone): never "0 of 0".
     if (finished && !m.tasks.length) {
-      lines.push(`**Progress** ${'🟩'.repeat(BAR)} **${cell(m.status)}**${m.plan?.planned.length ? ` · planned ${m.plan.planned.length}` : ''}`, '', 'No task records remain (`wf prune` removes them after acceptance); the pull requests are the record.', '');
+      lines.push(`**Progress** ${'🟩'.repeat(BAR)} **${cell(m.status)}**${m.plan?.planned.length ? ` · planned ${m.plan.planned.length}` : ''}`, '', 'No task records are kept for an accepted milestone (`wf prune` removes them); the pull requests are the record.', '');
       continue;
     }
     lines.push(`**Progress** ${'🟩'.repeat(filled)}${'⬜'.repeat(BAR - filled)} **${done} of ${m.tasks.length} done**${plan}`, '');

@@ -1,7 +1,11 @@
 # MAINT-0019: The owner's merge, from the phone: a tap that a separate executor carries out
 
-**Status:** proposed, 14 October 2026. Not built. It needs the owner's policy decision (below)
-before any change to POLICY, templates or the validator.
+**Status:** closed as superseded, 23 October 2026. Not built, and it will not be. The owner
+decided on 23 October 2026: "main task 19 of like this agent workflow, your recommendation was
+close it. It is suppressed and let agent workflow merge on your Telegram tabs like others. Okay,
+that's good. Let's do it." In plain words: close this proposal as superseded, and let this
+repository merge on the owner's Telegram taps, as Harbor's other repositories do (§ 7). It was
+proposed on 14 October 2026.
 
 **Classification** (`procedures/maintenance.md`): improvement proposal. It changes who may
 press the merge button in owner-merge mode, which is authority, so it is the owner's policy
@@ -75,3 +79,28 @@ merged head.
 
 The next workflow upgrade PR in Cazy00/mateen-systems is merged from the owner's phone. Its
 receipt names its head commit, and `wf ci` passes on `main` afterwards.
+
+## 7. Closure (23 October 2026)
+
+- **Superseded by** the broker's Telegram tap, which is the executor this proposal asked for. It
+  lives in `Cazy00/workspace` (`broker/`, operation `github-merge`), outside this repository, as
+  § 5 said. A merge made through it is bound to the exact head the owner saw and leaves a receipt
+  on the pull request. C2 (`wf ci` accepting the receipt) was never built and is dropped: nothing
+  in POLICY, templates or the validator changed because of this proposal.
+- **How this repository merges now**, like the other Harbor repositories:
+  - a release or a milestone merge comes to the owner as a Telegram tap (`github-merge`);
+  - an ordinary record or fix merges through `github-merge-internal`, with the review the review
+    diet requires (`procedures/review.md`): none for records, one deep review for the merge gate,
+    protections, signing and identity, CI templates, and what CI installs and runs.
+- **What stopped this before.** The `protect-main` ruleset required the code owner's approving
+  review on GitHub, which the broker cannot give: v2.11.0 (#57) and #58 had to be approved by the
+  owner on GitHub. The owner changed that on 23 October 2026 (the decision above):
+  - before: a pull request with one approving review from a code owner (`CODEOWNERS`), stale
+    reviews dismissed, approval of the last push, the required check `test`, no bypass actors;
+  - after: the same rules, plus one bypass actor, the broker's executor GitHub App, in
+    `pull_request` mode (it can only merge through a pull request). The same pattern as the
+    other Harbor repositories, where the executor App is the one actor that may update `main`;
+  - what stays: the pull request, the code-owner review and the `test` check still apply to
+    every other account, so nothing merges without a GitHub approval except through the broker,
+    after the owner's tap or the review the diet requires. A read-back after the change differed
+    from the saved ruleset only in `bypass_actors`.

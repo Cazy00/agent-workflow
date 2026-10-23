@@ -141,7 +141,12 @@ test('wf-adopt writes the owner\'s code-owner line off in owner-merge mode and o
   assert.ok(lines(merge).includes('# * @owner'), 'the owner line is kept, commented out, to be turned back on');
   const text = lines(merge).join('\n');
   assert.match(text, /Owner-merge mode has no code-owner review/);
-  assert.match(text, /needs it back, uncommented, in that same pull request/);
+  assert.match(text, /goes back, uncommented, in its own pull request/);
+  const withWorker = project(t);
+  assert.equal(adopt(withWorker, '--worker', 'agent-bot').status, 0);
+  assert.deepEqual(active(withWorker), ['/docs/workflow/tasks/', '/docs/workflow/feedback/']);
+  assert.match(lines(withWorker).join('\n'), /BEFORE `bin\/wf-protect --target\n# enforced --apply`/, 'the file says the line is restored before enforcement, not in the switch pull request');
+  assert.match(fs.readFileSync(path.join(withWorker, 'docs/workflow/setup.md'), 'utf8'), /^- \[ \] 9\. \*\*Switch to enforced mode\.\*\* .*\*\*First\*\*, before `--apply`, uncomment the owner line in `\.github\/CODEOWNERS`/m, 'the checklist says so in step 9');
   const manual = project(t);
   assert.equal(adopt(manual, '--approval', 'manual').status, 0);
   assert.deepEqual(active(manual), ['* @owner', '/docs/workflow/tasks/', '/docs/workflow/feedback/'], 'manual: the owner line is on');

@@ -2,6 +2,18 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.11.1
+
+The status issue after an acceptance. In headless-lightroom (23 October 2026) the accepted M-0001 read "0 of 0 done · No tasks yet", though its edit history showed "6 of 6 done" until the prune, and it still waited for release authority although nothing is deployed.
+- **An accepted or released milestone shows its tasks.** `wf prune` removes the Done task records after acceptance, and `wf status` counted only the records left. It now brings them back from Git history the way the client page does, through the same code (`recoverRemoved` in `validator/lib/client-history.js`, which the client page now calls as well): the tasks the milestone's plan names and every Done record that named it, so tasks found after authorisation count too. M-0001 of headless-lightroom reads "6 of 6 done · planned 3 · discovered 3", the figure it had before the prune.
+  - A Git source reads history (the `wf-status` workflow's `--candidate "$GITHUB_SHA"`, on a full clone). A working tree has none and a shallow clone has nothing to read, so there the milestone reads "Accepted" with "No task records remain", never "0 of 0". A history Git cannot read adds one warning on standard error.
+- **"Release authority is next" waits for the owner only when something is to be released.** The milestone's `release_authority` declares it: text that starts with `None`, or has a clause such as `Nothing is deployed;` or `Nothing is released.`, means it releases nothing, and an Accepted milestone then raises no release item. Anything else keeps the item: an empty field, and a sentence that goes on ("nothing is deployed by the agent"), so a real release is never hidden. The records of headless-lightroom and mateen-systems already say so (mateen-systems showed five such items).
+- **Tests:** `status-finished.test.js`: a pruned milestone's count from history (found tasks included, a kept record not counted twice, a never-Done or other milestone's record left out, the fallbacks, the CLI); no release item for a milestone declaring nothing to release; the item kept for one with a real release and for every wording that merely mentions deploying. The client page's tests pass unchanged.
+
+Words: `SCHEMA.md` 9,774 → 9,863, `templates/milestone.md` 353 → 389.
+
+Moving a project to this pin: `upgrades.json`. A project's status issue changes on its first `wf-status` run after the pin moves.
+
 ## v2.11.0
 
 MAINT-0022: the review diet for projects (`docs/proposals/MAINT-0022-review-diet.md`; the owner's review diet of 22 October 2026). Three optional `review` keys, read from the trusted branch's config; without them v2.10.0 holds.

@@ -140,5 +140,11 @@
       "review.plan_command (one line with {file}) is the plan review's command, for example codereview plan --file {file} --author-vendor V --project P; wf next prints it for a Draft milestone under the milestone cadence.",
       "An older pin refuses review.cadence, review.same_vendor, review.plan_command and a reviewer_command without {role}."
     ]
+  },
+  "v2.11.1": {
+    "notes": [
+      "Nothing to do beyond moving the pin. The status issue (wf status, published by the project's wf-status workflow) now shows an accepted milestone's tasks from Git history, so a pruned milestone reads \"N of N done\" instead of \"0 of 0 done\", and lists no \"release authority is next\" item for a milestone whose release_authority says it releases nothing.",
+      "A milestone that releases nothing says so in release_authority: the text starts with None, or has a clause such as \"Nothing is deployed.\" or \"Nothing is released.\". Any other wording keeps the release item. The milestone records are the owner's to change."
+    ]
   }
 }

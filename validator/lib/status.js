@@ -3,10 +3,14 @@
 // previewed as if the baseline were approved, so the view shows what would still stand in the way.
 // With two or more `owners` in the profile it shows what waits on each person, and given the open pull
 // requests it shows each task's claim and flags a task claimed twice (IDEA-13). Per milestone it shows the plan
-// as authorised (`tasks`), the tasks discovered since, and until acceptance what the plan leaves unserved (IDEA-14).
+// as authorised (`tasks`), the tasks discovered since, and until acceptance what the plan leaves unserved (IDEA-14). `wf prune`
+// removes an accepted milestone's Done task records, so given Git history (`history`, as the client page reads it) a finished
+// milestone's tasks come back from it, found ones included.
 import { TASK_BRANCH, list, listedOwners, loadAll, loadConfig, ownerErrors } from './records.js';
 import { evaluateReadiness } from './readiness.js';
 import { validateAcceptanceFiles } from './acceptance-files.js';
+import { recoverRemoved } from './client-history.js';
+import { ACCEPTED } from './prune.js';
 
 const preview = Object.freeze({ mode: 'preview', claim: () => null, allows: purpose => purpose === 'baseline' });
 const OWNER_DECISION_TYPES = ['decision', 'deferred'];
@@ -14,6 +18,11 @@ const TITLE_TASK = /^(T-\d{4})\b/;
 const UNRECORDED = /^(\w+) is not recorded\b/;
 // A pull request title is untrusted text: in a code span GitHub renders no link, mention, image or HTML.
 const span = text => `\`${text.replaceAll('`', "'")}\``;
+// A milestone declares that it releases nothing in its `release_authority` (templates/milestone.md): the text starts with "None", or a
+// clause says nothing is deployed or released. Anything else, an empty field included, leaves the release step to the owner, so a
+// sentence that goes on ("nothing is deployed by the agent") never hides one.
+const NOTHING_RELEASED = /^none\s*(?:[.;:,\u2014-]|$)|\bnothing\s+(?:is\s+|will\s+be\s+)?(?:deployed|released|to\s+(?:deploy|release))\s*(?:[.;,]|$)/i;
+export const releasesNothing = text => NOTHING_RELEASED.test(String(text ?? '').replace(/\s+/g, ' ').trim());
 
 // Open pull requests as `gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision`
 // prints them. Their text is untrusted: only plain fields are kept, each on one line. A pull request names
@@ -40,7 +49,7 @@ export function readPullRequests(input) {
   }).sort((a, b) => a.number - b.number);
 }
 
-export function evaluateStatus({ baseline, candidate = baseline, pullRequests = null, trustedBranch = null }) {
+export function evaluateStatus({ baseline, candidate = baseline, pullRequests = null, trustedBranch = null, history = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const all = loadAll(candidate, rd);
@@ -66,6 +75,15 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     if (!byMilestone.has(key)) byMilestone.set(key, []);
     byMilestone.get(key).push(rec);
   }
+  // An accepted milestone's removed task records, from history: those its plan names and any Done record that named it, less every
+  // task a record still holds (a kept record, or one moved to another milestone, is not removed).
+  const present = new Set([...all.tasks.values()].map(r => r.data?.id).filter(Boolean));
+  const removedFor = (milestone, planned) => {
+    if (!history) return [];
+    const found = new Map();
+    for (const t of [...(history.removedDone?.(milestone) ?? []), ...recoverRemoved(history, planned.filter(id => !present.has(id)))]) if (!present.has(t.id) && !found.has(t.id)) found.set(t.id, t);
+    return [...found.values()].map(data => ({ data, errors: [], path: null, recovered: true }));
+  };
   const taskView = rec => {
     const t = rec.data ?? {};
     const view = { id: t.id ?? rec.path, title: t.title ?? null, status: t.status ?? null, owner: t.owner ?? null, errors: rec.errors };
@@ -86,21 +104,24 @@ export function evaluateStatus({ baseline, candidate = baseline, pullRequests = 
     const id = m.id ?? rec.path;
     const owner = m.owner ?? 'owner';
     if (m.status === 'Verified') waiting.push({ kind: 'acceptance', item: id, owner, detail: 'milestone verified; owner product acceptance is next' });
-    if (m.status === 'Accepted') waiting.push({ kind: 'release', item: id, owner, detail: 'milestone accepted; release authority is next' });
+    // Only a milestone with something to release waits for the owner's release authority (see releasesNothing).
+    if (m.status === 'Accepted' && !releasesNothing(m.release_authority)) waiting.push({ kind: 'release', item: id, owner, detail: 'milestone accepted; release authority is next' });
     // Task records stay until the milestone is accepted (procedures/execute.md), so until then the plan is
     // checked against them: every acceptance ID served by some task, every planned task still recorded.
-    const recs = byMilestone.get(id) ?? [];
-    const ids = recs.map(r => r.data?.id).filter(Boolean);
     const planned = [...new Set(list(m.tasks))];
+    const kept = byMilestone.get(id) ?? [];
+    const removed = ACCEPTED.includes(m.status) ? removedFor(id, planned) : [];
+    const recs = removed.length ? [...kept, ...removed].sort((a, b) => String(a.data?.id ?? a.path).localeCompare(String(b.data?.id ?? b.path))) : kept;
+    const ids = recs.map(r => r.data?.id).filter(Boolean);
     const plan = { planned, discovered: planned.length ? ids.filter(t => !planned.includes(t)) : [], uncovered: [], missing: [] };
-    if (!['Accepted', 'Released'].includes(m.status)) {
+    if (!ACCEPTED.includes(m.status)) {
       plan.uncovered = list(m.acceptance).filter(a => !recs.some(r => list(r.data?.acceptance).includes(a)));
       plan.missing = planned.filter(t => !ids.includes(t));
       const person = m.owner ?? null;
       if (plan.uncovered.length) waiting.push({ kind: 'plan', item: id, owner: 'agent', person, detail: `acceptance ${plan.uncovered.join(', ')} is served by no task: plan one (procedures/readiness.md)` });
       if (plan.missing.length) waiting.push({ kind: 'plan', item: id, owner: 'agent', person, detail: `planned ${plan.missing.join(', ')} is not among this milestone's task records: write it, or re-cut the plan` });
     }
-    const tasks = recs.map(r => ({ ...taskView(r), discovered: plan.discovered.includes(r.data?.id) }));
+    const tasks = recs.map(r => ({ ...taskView(r), discovered: plan.discovered.includes(r.data?.id), ...(r.recovered ? { recovered: true } : {}) }));
     return { id, status: m.status ?? null, outcome: m.outcome ?? null, measure: m.measure ?? null, owner: m.owner ?? null, plan, tasks, errors: rec.errors };
   });
   const known = new Set(milestones.map(m => m.id));
@@ -322,11 +343,17 @@ export function renderStatus(s) {
   for (const m of s.milestones) {
     const states = m.tasks.map(state);
     const done = states.filter(x => x.key === 'done').length;
+    const finished = ACCEPTED.includes(m.status);
     const filled = m.tasks.length ? Math.round(done / m.tasks.length * BAR) : 0;
     lines.push(`## 🎯 ${m.id} · ${cell(m.status ?? '?')}${people.length && m.owner ? ` · owner ${m.owner}` : ''}`, '');
     if (m.outcome) lines.push(`> ${cell(m.outcome)}`, '');
     if (m.measure) lines.push(`**Measure:** ${cell(m.measure)}`, '');
     const plan = m.plan?.planned.length ? ` · planned ${m.plan.planned.length} · discovered ${m.plan.discovered.length}` : '';
+    // wf prune took the records and no Git history gave them back (a working-tree source or a shallow clone): never "0 of 0".
+    if (finished && !m.tasks.length) {
+      lines.push(`**Progress** ${'🟩'.repeat(BAR)} **${cell(m.status)}**${m.plan?.planned.length ? ` · planned ${m.plan.planned.length}` : ''}`, '', 'No task records remain (`wf prune` removes them after acceptance); the pull requests are the record.', '');
+      continue;
+    }
     lines.push(`**Progress** ${'🟩'.repeat(filled)}${'⬜'.repeat(BAR - filled)} **${done} of ${m.tasks.length} done**${plan}`, '');
     if (!m.tasks.length) { lines.push('No tasks yet.', ''); continue; }
     lines.push(`| | Task${people.length ? ' | Owner' : ''} | What | Next step | Pull request |`, `|:-:|---${people.length ? '|---' : ''}|---|---|---|`);

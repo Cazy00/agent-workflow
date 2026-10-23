@@ -51,6 +51,12 @@ function readHistory(repo, revision, recordsDir, fail) {
   return { versions, texts };
 }
 
+// The task records of `ids` as they read before their removal, parsed; one that cannot be read is left out. The client page and the
+// status view both bring a finished milestone's removed records back through this.
+export function recoverRemoved(history, ids) {
+  return ids.map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id);
+}
+
 export function gitHistory(repo, revision, recordsDir) {
   let read = null;
   const warnings = [];
@@ -62,6 +68,12 @@ export function gitHistory(repo, revision, recordsDir) {
     warnings, // filled when history is first read, for the caller to print once the page is built
     // The record as it read before its last removal.
     lastVersion: id => text(of(id).findLast(v => v.removed)?.removed),
+    // Every Done record that named `milestone` and has been removed since, as it read before: what `wf prune` took, tasks found
+    // after authorisation included, which the milestone's own `tasks:` list does not name.
+    removedDone: milestone => [...history().versions].flatMap(([id, vs]) => {
+      const data = vs.at(-1)?.removed ? parseFrontMatter(text(vs.at(-1).removed) ?? '').data : null;
+      return data?.id === id && data.milestone === milestone && data.status === 'Done' ? [data] : [];
+    }).sort((a, b) => a.id.localeCompare(b.id)),
     // Done as every other reader of the records decides it, by the front matter, so `status:  Done` counts.
     doneDate: id => of(id).find(v => v.blob && parseFrontMatter(text(v.blob) ?? '').data?.status === 'Done')?.date ?? null,
   };

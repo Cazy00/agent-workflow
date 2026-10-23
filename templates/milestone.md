@@ -48,3 +48,4 @@ Second-model budget: two runs per deep task (its review and one fix review), one
 ## Stop conditions and acceptance boundary
 
 ## Release authority and next recommendation
+A milestone that releases nothing says so in `release_authority:` above: it starts with `None`, or has a sentence of its own, `Nothing is deployed.` or `Nothing is released.`. `wf status` then raises no release item for it after acceptance.

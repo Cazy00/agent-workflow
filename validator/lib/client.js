@@ -16,7 +16,7 @@ import { list, loadAll, loadConfig } from './records.js';
 import { loadPlan, planView } from './client-plan.js';
 import { planBody, PLAN_CSS } from './client-plan-render.js';
 import { overlayTasks } from './client-live.js';
-import { parseFrontMatter } from './frontmatter.js';
+import { recoverRemoved } from './client-history.js';
 
 const PLACEHOLDER = /coherent journey or demonstrable technical outcome/i;
 const TONE = { Draft: 'planned', Authorised: 'planned', Active: 'active', Blocked: 'review', Verified: 'review', Accepted: 'done', Released: 'done' };
@@ -206,7 +206,7 @@ export function evaluateClient({ source, updated = null, history = null, live = 
       // A finished milestone's removed task records come back from history, so a done step keeps what it delivered.
       // Detail 'stages' lists no parts, so it reads no history.
       const kept = tasks.filter(t => t.milestone === m.id);
-      const recovered = tone === 'done' && history && detail !== 'stages' ? planned.filter(id => !kept.some(t => t.id === id)).map(id => parseFrontMatter(history.lastVersion(id) ?? '').data).filter(t => t?.id) : [];
+      const recovered = tone === 'done' && history && detail !== 'stages' ? recoverRemoved(history, planned.filter(id => !kept.some(t => t.id === id))) : [];
       const own = [...kept, ...recovered].sort((a, b) => {
         const [x, y] = [planned.indexOf(a.id), planned.indexOf(b.id)];
         return (x === -1 ? Infinity : x) - (y === -1 ? Infinity : y) || a.id.localeCompare(b.id);

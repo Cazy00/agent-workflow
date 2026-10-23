@@ -410,8 +410,11 @@ async function main() {
       if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
-    const view = evaluateStatus({ baseline, candidate, pullRequests, trustedBranch });
+    // A finished milestone's removed task records come back from Git history; a working-tree source has none.
+    const history = candidate.kind === 'git' ? gitHistory(repo, candidate.name, rd) : null;
+    const view = evaluateStatus({ baseline, candidate, pullRequests, trustedBranch, history });
     console.log(o.json ? JSON.stringify(view, null, 2) : renderStatus(view));
+    if (history?.warnings.length) process.stderr.write('wf status: history could not be read from Git; the tasks of finished milestones may be missing\n');
     return 0;
   }
   if (cmd === 'next') {

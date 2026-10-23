@@ -83,6 +83,10 @@ test('the read-back passes when GitHub reports what the mode needs', () => {
   assert.equal(r.ok, true);
   assert.equal(r.ready_for_enforced, true);
   assert.ok(r.items.some(i => i.name === 'CODEOWNERS names no worker (agent-bot)' && i.ok));
+  // bin/wf-adopt writes the owner line off in owner-merge mode: the enforced read-back fails until it is uncommented, whatever the comment says.
+  const off = '# Owner-merge mode has no code-owner review.\n# * @owner\n/docs/workflow/tasks/\n/docs/workflow/feedback/\n';
+  assert.deepEqual(failing(checkProtection({ api: github({ rules: p.ruleset.rules, autoMerge: true, codeowners: off }).api, repository: 'fixture/project', plan: p })), ['CODEOWNERS assigns every path (*) to owner']);
+  assert.deepEqual(failing(checkProtection({ api: github({ rules: p.ruleset.rules, autoMerge: true, codeowners: off.replace('# * @owner', '* @owner') }).api, repository: 'fixture/project', plan: p })), []);
   const m = plan({ config: config('owner-merge'), branch: 'main', target: 'owner-merge' });
   assert.equal(checkProtection({ api: github({ rules: m.ruleset.rules }).api, repository: 'fixture/project', plan: m }).ok, true);
   // The checkpoints carve-out a single owner may already have (IDEA-18), and a records_dir of the project's own.

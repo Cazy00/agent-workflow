@@ -248,7 +248,7 @@ const requiredSteps = [
 ].join('');
 const optionalSteps = [
   `- [ ] 5. **Protect the main branch.** Only on a public repository or a GitHub Pro or Team plan. Once the scaffold is on the trusted branch, run \`${protect} --apply\` with your own \`gh\` login; it creates one ruleset requiring ${ruleset}, with no bypass${!shared && !oneAccount && approval !== 'manual' ? ' (enforced mode later adds code-owner review and auto-merge: step 9)' : ''}. \`${protect}\` reads the settings back.${approval === 'manual' && !shared ? '' : ' Rerun `--apply` after approving a change to `required_checks`.'} Without rulesets, leave this unticked\n`,
-  oneAccount ? '' : `- [ ] 9. **Switch to enforced mode.** Where the protections rather than your signature or your own merge carry approval: \`${protect} --target enforced --apply\`, then \`${protect} --target enforced\` must pass; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request. The live approval-path test in a disposable repository (\`setup.md\` step 9) is stronger evidence and optional${shared ? ', except that it must show a worker\'s approval cannot merge' : ''}\n`,
+  oneAccount ? '' : `- [ ] 9. **Switch to enforced mode.** Where the protections rather than your signature or your own merge carry approval: \`${protect} --target enforced --apply\`, then \`${protect} --target enforced\` must pass; then switch \`approval.label\` (config) and \`approval_label\` (profile) to \`enforced\` in one code-owner-reviewed pull request.${approval === 'owner-merge' ? ' **First**, before \`--apply\`, uncomment the owner line in \`.github/CODEOWNERS\` (the scaffold wrote it off) in a pull request you merge: GitHub reads CODEOWNERS from the branch a pull request merges into, so without it already there no pull request, the switch included, waits for you' : ''}. The live approval-path test in a disposable repository (\`setup.md\` step 9) is stronger evidence and optional${shared ? ', except that it must show a worker\'s approval cannot merge' : ''}\n`,
   pinned.status !== null ? '- [ ] **Pin the status issue.** Pin the *Project status* issue once `.github/workflows/wf-status.yml` has opened it on the trusted branch (or run that workflow from the Actions tab); delete the file to opt out\n' : '',
 ].join('');
 const checklist = `
@@ -359,10 +359,23 @@ else skipped.push('.claude/agents/trial-walker.md (not in this workflow revision
 const OWNERSHIP = ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS'];
 const present = OWNERSHIP.find(rel => fs.existsSync(path.join(project, rel)));
 const rd = config.records_dir ?? 'docs/workflow';
+// Owner-merge has no code-owner review (a shared project cannot use it), so an active owner line would only make GitHub
+// ask the owner to review every pull request the agent opens, which nothing waits for. It is written off there; the
+// owner turns it back on before the switch to enforced (setup.md step 9).
+const ownerLine = () => `* ${(shared ? o.owner : [ownerLogin]).map(n => `@${n}`).join(' ')}`;
+const ownerBlock = () => approval === 'owner-merge'
+  ? `#
+# Owner-merge mode has no code-owner review, so an active owner line would only make GitHub ask @${ownerLogin} to
+# review every pull request the agent opens, which nothing waits for: \`wf ci\` already says which ones the owner merges.
+# It is off until the project moves to enforced mode. GitHub reads this file from the branch a pull request merges
+# into, so the line goes back, uncommented, in its own pull request that you merge BEFORE \`bin/wf-protect --target
+# enforced --apply\`, not in the pull request that switches the label (procedures/setup.md steps 5 and 9).
+# ${ownerLine()}`
+  : ownerLine();
 if (present) skipped.push(`.github/CODEOWNERS (${present} exists: check it against procedures/setup.md step 5)`);
 else if (shared || ownerLogin) write('.github/CODEOWNERS', `# Who must approve which changes (procedures/setup.md step 5). GitHub enforces this only when a ruleset requires
 # code-owner review (bin/wf-protect). Written by bin/wf-adopt; a change to it is a workflow change.
-* ${(shared ? o.owner : [ownerLogin]).map(n => `@${n}`).join(' ')}
+${ownerBlock()}
 ${shared ? '' : `# Task and feedback records name no owner, so they merge after their checks alone.
 /${rd}/tasks/
 /${rd}/feedback/

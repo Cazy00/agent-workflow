@@ -1,6 +1,7 @@
 # MAINT-0022: the review diet for projects
 
-**Status:** proposed for v2.11.0, waiting for the owner's release approval. The owner approved the
+**Status:** released in v2.11.0 (the owner merged #57 on 22 October 2026, 20:50 UTC, and the
+tag followed). The owner approved the
 review diet on 22 October 2026: "Approved: build the review diet as planned in #146, keeping dash/
 and relay/ on the risky list and agents' instruction files at review none" (Cazy00/workspace #146,
 whose section 7 is this release). The plan is `MAINT-0022-plan.md`, reviewed once before the build.

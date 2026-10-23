@@ -62,7 +62,7 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.match(setup, /usage per step: scaffolded \d{4}-\d{2}-\d{2}; lane existing; one account; approval owner-merge, checkpoint milestone/);
   assert.match(setup, /^## Agent steps \(1, 4 and 7 in one session, then 8 in a fresh context; post progress here\)$/m);
   assert.deepEqual(evaluateStatus({ baseline: source, candidate: source }).setup_open, { owner: 0, agent: 4 }, 'nothing waits on the owner');
-  assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '* @owner\n/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner gets the records carve-out');
+  assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner in owner-merge mode gets the records carve-out and no active owner line');
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) {
     const ci = fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8');
     assert.match(ci, /name: wf ci/);
@@ -131,6 +131,25 @@ test('wf-adopt never overwrites an existing file and refuses a second adoption',
   assert.equal(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8'), before);
 });
 
+test('wf-adopt writes the owner\'s code-owner line off in owner-merge mode and on in the modes that use it', t => {
+  const rev = head(); if (!rev) return t.skip('not a Git checkout');
+  const lines = dir => fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n');
+  const active = dir => lines(dir).filter(l => l && !l.startsWith('#'));
+  const merge = project(t);
+  assert.equal(adopt(merge).status, 0);
+  assert.deepEqual(active(merge), ['/docs/workflow/tasks/', '/docs/workflow/feedback/'], 'owner-merge: no active owner line; the records carve-out stays');
+  assert.ok(lines(merge).includes('# * @owner'), 'the owner line is kept, commented out, to be turned back on');
+  const text = lines(merge).join('\n');
+  assert.match(text, /Owner-merge mode has no code-owner review/);
+  assert.match(text, /needs it back, uncommented, in that same pull request/);
+  const manual = project(t);
+  assert.equal(adopt(manual, '--approval', 'manual').status, 0);
+  assert.deepEqual(active(manual), ['* @owner', '/docs/workflow/tasks/', '/docs/workflow/feedback/'], 'manual: the owner line is on');
+  const shared = project(t);
+  assert.equal(adopt(shared, '--owner', 'alice', '--owner', 'bob').status, 0);
+  assert.deepEqual(active(shared), ['* @alice @bob'], 'shared: every path owned, on');
+});
+
 test('wf-adopt scaffolds owner-merge by default for one owner, manual on request, and never enforced', t => {
   const rev = head(); if (!rev) return t.skip('not a Git checkout');
   const dir = project(t);
@@ -148,6 +167,9 @@ test('wf-adopt scaffolds owner-merge by default for one owner, manual on request
   assert.match(setup, /### Optional[\s\S]*^- \[ \] 9\. \*\*Switch to enforced mode\.\*\* Where.*--target enforced --apply.*switch .*enforced.* in one code-owner-reviewed pull request/m);
   assert.match(setup, /### Optional[\s\S]*never deleted or rewritten/, 'a manual-mode ruleset only stops the trusted branch being deleted or rewritten');
   assert.equal(config.approval.checkpoint, undefined, 'only owner-merge has a checkpoint');
+  const manualOwners = fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8');
+  assert.match(manualOwners, /^\* @owner$/m, 'manual mode keeps the owner line on: the switch to enforced needs it');
+  assert.doesNotMatch(manualOwners, /^# \* @owner$/m);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /Never turn on auto-merge \(it could merge before the owner signs\), and never approve, merge, sign or bypass a rule yourself/, 'manual mode moves the trusted branch only by closeout');
   const other = project(t);
   const enforced = adopt(other, '--approval', 'enforced');

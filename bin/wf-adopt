@@ -359,10 +359,22 @@ else skipped.push('.claude/agents/trial-walker.md (not in this workflow revision
 const OWNERSHIP = ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS'];
 const present = OWNERSHIP.find(rel => fs.existsSync(path.join(project, rel)));
 const rd = config.records_dir ?? 'docs/workflow';
+// Owner-merge has no code-owner review (a shared project cannot use it), so an active owner line only makes GitHub ask
+// the owner to review every pull request the agent opens, which nothing waits for. It is written off there; the switch
+// to enforced turns it back on.
+const ownerLine = `* ${(shared ? o.owner : [ownerLogin]).map(n => `@${n}`).join(' ')}`;
+const ownerBlock = approval === 'owner-merge'
+  ? `#
+# Owner-merge mode has no code-owner review, so the owner line only made GitHub ask @${ownerLogin} to review every
+# pull request the agent opens, which nothing waits for: \`wf ci\` already says which ones the owner merges.
+# It is off until the project moves to enforced mode, which needs it back, uncommented, in that same pull request
+# (procedures/setup.md step 5).
+# ${ownerLine}`
+  : ownerLine;
 if (present) skipped.push(`.github/CODEOWNERS (${present} exists: check it against procedures/setup.md step 5)`);
 else if (shared || ownerLogin) write('.github/CODEOWNERS', `# Who must approve which changes (procedures/setup.md step 5). GitHub enforces this only when a ruleset requires
 # code-owner review (bin/wf-protect). Written by bin/wf-adopt; a change to it is a workflow change.
-* ${(shared ? o.owner : [ownerLogin]).map(n => `@${n}`).join(' ')}
+${ownerBlock}
 ${shared ? '' : `# Task and feedback records name no owner, so they merge after their checks alone.
 /${rd}/tasks/
 /${rd}/feedback/

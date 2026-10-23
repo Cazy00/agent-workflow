@@ -2,6 +2,14 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## Unreleased
+
+Ships in the next release; nothing is pinned to it yet.
+- **`bin/wf-adopt` writes the owner's code-owner line off in owner-merge mode.** Owner-merge has no code-owner review and nothing waits on one (`wf ci` says which pull requests the owner merges), yet the scaffold wrote `.github/CODEOWNERS` as `* @OWNER`, so GitHub asked the owner to review every pull request an agent opened: 22 requests in 2.5 days on one project. The line is now written as a comment, with the reason and the instruction that switching to enforced mode needs it back, uncommented, in that same pull request (the form mateen-systems adopted by hand on 12 October 2026). The task and feedback record lines stay. Manual and shared projects keep the line on, unchanged. An existing `CODEOWNERS` is still left alone.
+- **Procedure and test:** `setup.md` steps 3 and 5 say so; `adopt.test.js` shows owner-merge off, manual and shared on.
+
+Moving a project to this pin (once released): nothing changes for an adopted project. One adopted earlier in owner-merge mode can comment out the owner line in `.github/CODEOWNERS` the same way, as a workflow change.
+
 ## v2.11.1
 
 The status issue after an acceptance. In headless-lightroom (23 October 2026) the accepted M-0001 read "0 of 0 done · No tasks yet", though its edit history showed "6 of 6 done" until the prune, and it still waited for release authority although nothing is deployed.

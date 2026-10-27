@@ -27,7 +27,7 @@ MAINT-0023: what v2.11.1 measured in two adopting projects, and the cuts it foun
 
 Words: `SCHEMA.md` 9,869 → 10,405, `QUICKSTART.md` 2,764 → 2,821, `procedures/readiness.md` 1,219 → 1,368, `procedures/execute.md` 2,317 → 2,400, `procedures/review.md` 2,100 → 2,163, `procedures/approval-evidence.md` 3,817 → 3,869, `procedures/accept-release.md` 990 → 993, `templates/acceptance-evidence.json` 367 → 508, `templates/delivery-evidence.json` 485 → 518, `templates/github/wf-status.yml` 625 → 808, `templates/github/wf-ci.yml` 1,122 → 1,179.
 
-Reviews: (filled in after the review)
+Reviews: the plan had one review (Opus), whose eight findings were folded in before the build: P8 resolves a found task only against a finding recorded on the trusted branch, P5(c) covers records-only changes, the `pull_request` test-merge is checked, the parts' endpoints and duplicates in the compact list are tested. The release had one deep review of its final head; the pull request records it and any fix check.
 
 Moving a project to this pin: `upgrades.json`. Nothing is required: the new fields and the compact form are optional, and a project that does nothing keeps its behaviour, except that `wf doctor` may print a warning. To get the fixes, re-copy `templates/github/wf-status.yml` and `templates/github/wf-ci.yml` into `.github/workflows/` where unedited, set the repository variable `WF_GATE` to `on` where a gate runner should keep the scheduled status refresh, and write the evidence after the head's CI has finished. A task may record `baseline_result: pass: <reference>`, and `wf evidence` now writes the compact test list. One adopted earlier in owner-merge mode can comment out the owner line in `.github/CODEOWNERS` the same way, as a workflow change.
 

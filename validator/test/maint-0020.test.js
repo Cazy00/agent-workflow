@@ -363,7 +363,7 @@ test('MAINT-0020 P2(b): a pending baseline_result passes readiness at implement 
   const implement = p.run(['readiness', '--baseline', sha, '--task', 'T-0001']);
   assert.equal(implement.status, 0, implement.stdout + implement.stderr);
   assert.equal(implement.out.outcome, 'Ready');
-  const message = `baseline_result is still ${pendingResult}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${p.initial}, then pass or fail: <summary>) before the review packet`;
+  const message = `baseline_result is still ${pendingResult}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${p.initial}, then pass: <run reference> or fail: <summary>) before the review packet`;
   for (const stage of ['verify', 'integrate', 'accept']) {
     const later = p.run(['readiness', '--baseline', sha, '--task', 'T-0001', '--stage', stage]);
     assert.equal(later.out.outcome, 'Needs discovery or resolution', stage);
@@ -373,12 +373,12 @@ test('MAINT-0020 P2(b): a pending baseline_result passes readiness at implement 
   p.edit(taskPath, x => x.replace(/^implemented:.*$/m, `implemented: ${sha}`));
   assert.ok(p.run(['readiness', '--baseline', sha, '--task', 'T-0001']).out.reasons.includes(message));
   // The format: pass, fail: <summary> and pending: <run reference>; nothing else.
-  for (const ok of ['pass', 'fail: 3 pricing tests', 'pending: run 42']) { p.edit(taskPath, baselineIs(ok)); assert.equal(p.run(['records']).status, 0, ok); }
-  for (const bad of ['pending:', 'pending', 'waiting for main', 'passed']) {
+  for (const ok of ['pass', 'pass: run 42', 'fail: 3 pricing tests', 'pending: run 42']) { p.edit(taskPath, baselineIs(ok)); assert.equal(p.run(['records']).status, 0, ok); }
+  for (const bad of ['pending:', 'pending', 'waiting for main', 'passed', 'pass:']) {
     p.edit(taskPath, baselineIs(bad));
     const r = p.run(['records']);
     assert.equal(r.status, 1, bad);
-    assert.match(r.out.errors.join(' | '), /baseline_result must be "pass", "fail: <summary>" or "pending: <run reference>"/, bad);
+    assert.match(r.out.errors.join(' | '), /baseline_result must be "pass", "pass: <run reference>", "fail: <summary>" or "pending: <run reference>"/, bad);
   }
 });
 
@@ -391,7 +391,7 @@ test('MAINT-0020 P2(b): review-packet and wf ci refuse a pending baseline_result
   const packet = () => p.run(['review-packet', '--baseline', p.baseline, '--candidate', p.git('rev-parse', 'HEAD'), '--task', 'T-0001', '--evidence', checks], { env: git });
   const refused = packet();
   assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /review task T-0001: baseline_result is still pending: https:\/\/github\.com\/fixture\/project\/actions\/runs\/42: fill it from the trusted branch's run on the baseline commit \(wf wait --commit [0-9a-f]{40}, then pass or fail: <summary>\) before the review packet/);
+  assert.match(refused.stderr, /review task T-0001: baseline_result is still pending: https:\/\/github\.com\/fixture\/project\/actions\/runs\/42: fill it from the trusted branch's run on the baseline commit \(wf wait --commit [0-9a-f]{40}, then pass: <run reference> or fail: <summary>\) before the review packet/);
   const ci = p.run(['ci', '--baseline', p.baseline, '--candidate', pending, '--task', 'T-0001'], { evidence: evidence(pending) });
   assert.equal(ci.status, 1, ci.stdout + ci.stderr);
   assert.match(ci.out.findings.join(' | '), /readiness T-0001: Needs discovery or resolution \|\s+baseline_result is still pending: /);

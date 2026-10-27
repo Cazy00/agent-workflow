@@ -36,6 +36,12 @@ const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', '
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
+  records [--json]: validates the project's records (tasks, milestones, decisions, profile) at --candidate
+  readiness --task T-0001 [--stage implement|verify|integrate|accept|release]: whether the task may start work at the stage (Ready, or what must be resolved first)
+  lifecycle --task T-0001 [--stage ...]: the task's lifecycle evidence for the stage, and the readiness gate it needs
+  acceptance --task T-0001: whether every acceptance criterion the task names has a mapped test that passed or is pending
+  session --record PATH [--task T-0001] [--repository OWNER/REPO]: validates a session outcome written from templates/session.json, outside the checkout; --task (or a task branch) is needed for a verified-complete outcome
+  --help, -h: this usage (also after a command: wf session --help)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
   pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
@@ -83,6 +89,7 @@ async function main() {
     if (a === '--merged') { o.merged = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a === '--outcome') { o.outcome = true; continue; }
+    if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -93,6 +100,12 @@ async function main() {
       else o[name] = value;
     } else if (!cmd) cmd = a;
     else throw new WfError(`unexpected argument: ${a}`);
+  }
+  // MAINT-0023 P9: the usage, on stdout and exit 0, for the whole tool or after a command; an unknown command still fails below.
+  if (o.help) {
+    if (cmd !== undefined && !COMMANDS.includes(cmd)) throw new WfError(USAGE);
+    console.log(USAGE);
+    return 0;
   }
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
@@ -466,6 +479,13 @@ async function main() {
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
     return branch.match(TASK_BRANCH)?.[1] ?? null;
   };
+  // MAINT-0023 P9: what `wf session` accepts, named in each error (it was `--record is required`, and a bare ENOENT or JSON.parse message).
+  const sessionRecord = () => {
+    if (!o.record) throw new WfError('session needs --record PATH: a session outcome written from templates/session.json, outside the checkout (and --task T-0001, or a task branch, for a verified-complete outcome)');
+    let text;
+    try { text = fs.readFileSync(o.record, 'utf8'); } catch (e) { throw new WfError(`session --record ${o.record} cannot be read (${e.code ?? e.message}): write the outcome from templates/session.json outside the checkout and give its path`); }
+    try { return JSON.parse(text); } catch (e) { throw new WfError(`session --record ${o.record} cannot be read as JSON (${e.message}): write the outcome from templates/session.json`); }
+  };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   // MAINT-0018: the workflow pins a session may have run under, the baseline's and the candidate's.
   const sessionPins = () => [config.workflow, (() => { try { return loadConfig(candidate).workflow; } catch { return null; } })()];
@@ -544,8 +564,7 @@ async function main() {
   else if (cmd === 'session' && !taskId()) {
     // MAINT-0018: an outcome that is not verified-complete reads no task evidence, so a session that ends on an acceptance
     // or planning pull request needs no task to name.
-    if (!o.record) throw new WfError('--record is required');
-    result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config) });
+    result = evaluateSession({ record: sessionRecord(), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config) });
   }
   else {
     const task = taskId();
@@ -571,8 +590,7 @@ async function main() {
       if (cmd === 'session') {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
-        if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config), level: reviewLevel(record, config.review?.deep_paths).level ?? 'standard' });
+        result = evaluateSession({ record: sessionRecord(), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config), level: reviewLevel(record, config.review?.deep_paths).level ?? 'standard' });
       }
     }
   }

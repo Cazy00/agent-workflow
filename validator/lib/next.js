@@ -10,6 +10,7 @@ import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
 import { byMilestone, planReviewCommand, reviewLevel } from './roles.js';
 import { baselineHint } from './baseline-run.js';
+import { authorisedAt } from './acceptance-evidence.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -83,6 +84,19 @@ export function nextIds(sources, rd) {
 // standard task, two per deep task (its review and one fix check), none for a test-only task, two for the milestone review.
 // MAINT-0022: under review.cadence milestone, two runs per milestone (its one review and one fix check) and none per task; the plan
 // review runs before the authorisation, outside the authorised milestone's budget.
+// MAINT-0023 P6: the milestone diff, from the trusted branch's authorisation of the milestone to the revision `wf next` reads, past
+// which one review of it may outgrow a reviewer model (M-0006 of a project had 1.27 MB where models take about 900 KiB). It is measured
+// during the milestone, since planning has no diff.
+export const MILESTONE_DIFF_WARNING = 700 * 1024;
+function diffWarnings({ config, baseline, candidate, rd, milestones }) {
+  if (!byMilestone(config) || baseline.kind !== 'git' || candidate.kind !== 'git') return [];
+  const size = bytes => Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KB` : 'over 16 MB';
+  return milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).flatMap(m => {
+    const authorised = authorisedAt(baseline, `${rd}/milestones/${m.id}.md`), bytes = authorised ? candidate.diffSize(authorised) : null;
+    return bytes > MILESTONE_DIFF_WARNING ? [{ milestone: m.id, authorised, bytes: Number.isFinite(bytes) ? bytes : null, text: `${m.id}'s diff from its authorisation ${authorised.slice(0, 12)} to this revision is ${size(bytes)}, past ${MILESTONE_DIFF_WARNING / 1024} KB: one review of it may outgrow a reviewer model, so plan to review it in contiguous parts (review.parts of the acceptance evidence, from the authorisation to the end of the milestone)` }] : [];
+  });
+}
+
 export function secondModelBudget(config, records, milestoneIds) {
   if (byMilestone(config)) return milestoneIds.map(id => ({ milestone: id, cadence: 'milestone', runs: 2 }));
   const command = !!config.review?.reviewer_command;
@@ -243,12 +257,13 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   if (!drafts.length && stale.length) add({ kind: 'prune', item: stale.map(m => m.id).join(', '), do: `Remove the Done task records of ${stale.map(m => m.id).join(', ')}`, why: 'the milestone is accepted; its Done task records are read by every wf next and readiness run', read: [PROCEDURE.pr], run: prune });
 
   const secondModel = secondModelBudget(config, records, milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => m.id));
+  const warnings = diffWarnings({ config, baseline, candidate, rd, milestones });
   const owner = status.waiting.filter(w => w.owner !== 'agent').map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
     ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease), next_ids: nextIds([baseline, candidate], rd),
-    next, startable: startable.map(t => t.id), running: running.map(t => t.id).sort(), also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel,
+    next, startable: startable.map(t => t.id), running: running.map(t => t.id).sort(), also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel, warnings,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
 }
@@ -280,6 +295,7 @@ export function renderNext(n) {
   if (n.held?.length) lines.push('', 'Held for the owner\'s decision or acceptance (do not work on these):', ...bullet(n.held.map(h => `${h.task}: ${h.reasons.slice(0, 2).join('; ')}`)));
   if (n.blocked.length) lines.push('', 'Blocked:', ...bullet(n.blocked.map(b => `${b.task}: resumes when ${b.resume_condition ?? 'its resume condition is met'}`)));
   if (n.second_model_budget?.length) lines.push('', ...n.second_model_budget.map(b => (b.cadence === 'milestone' ? `${b.milestone}: review budget: ${b.runs} runs (review.cadence milestone: none per task; the milestone review and its one fix check)` : b.other_tasks !== undefined ? `${b.milestone}: review budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (one per light or standard task, two per deep task, two for the milestone review); keep two for the milestone review` : `${b.milestone}: second-model budget: ${b.runs} run${b.runs === 1 ? '' : 's'} (two per deep task, one for the milestone review); keep one for the milestone review`)));
+  if (n.warnings?.length) lines.push('', 'Warnings:', ...bullet(n.warnings.map(w => w.text)));
   if (n.next_ids) lines.push('', `Next free IDs here: ${Object.values(n.next_ids).join(', ')}; check the open pull requests too (wf status --pull-requests). Reviews are numbered on the pull requests.`);
   lines.push('', `(${n.mode} mode${n.checkpoint ? `, checkpoint ${n.checkpoint}` : ''}; baseline ${String(n.baseline).slice(0, 12)}; ${n.limitation})`);
   return `${lines.join('\n')}\n`;

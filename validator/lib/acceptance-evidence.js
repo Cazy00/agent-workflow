@@ -53,32 +53,71 @@ const vendorErrors = (r, config, who, field) => {
 };
 const SHA = /^[0-9a-f]{40,64}$/;
 // The commit where the trusted branch's own line first held the milestone past Draft: its authorisation, as it landed there.
-function authorisedAt(source, path) {
+export function authorisedAt(source, path) {
   for (const c of [...(source.firstParentVersions?.(path) ?? [])].reverse()) {
     const status = parseFrontMatter(source.atRevision(c).read(path) ?? '').data?.status;
     if (status && status !== 'Draft') return c;
   }
   return null;
 }
+// MAINT-0023 P6 (the owner approved it, 27 October 2026): a milestone diff larger than any reviewer model takes is reviewed in
+// parts. The base the review starts from comes at or before the trusted branch's authorisation of the milestone (above).
+const authorisationErrors = ({ base, milestone, recordsDir, candidate, baseline }) => {
+  const authorised = authorisedAt(baseline?.kind === 'git' ? baseline : candidate, `${recordsDir}/milestones/${milestone}.md`);
+  if (!authorised) return [`the trusted branch's history does not show where ${milestone} was authorised, so the milestone review's base cannot be checked`];
+  return candidate.atRevision(authorised)?.isAncestor(base) ? [] : [`the milestone review's base ${base.slice(0, 12)} comes after ${milestone}'s authorisation ${authorised.slice(0, 12)}, where the trusted branch first set it past Draft: under review.cadence milestone it reviews the whole milestone diff, from a base at or before the authorisation`];
+};
+const PARTS_SHAPE = 'the milestone review\'s parts must be a non-empty list of { base, revision } full commit hashes';
+// The one judge of a set of review parts, for the acceptance evidence and for `wf usage` (lib/usage.js), which counts several
+// runs as one review only when this finds nothing (v2.12.0 review finding 6): each part is a non-empty range inside this pull
+// request's history, each starts exactly where the one before ended, the first starts at or before the authorisation, and the
+// last ends at the revision the review names. A run that only calls itself a part is none of these.
+export function reviewPartsErrors({ parts, revision, milestone, recordsDir = 'docs/workflow', candidate, baseline = null }) {
+  if (!Array.isArray(parts) || !parts.length || !parts.every(p => isObject(p) && Object.keys(p).every(k => ['base', 'revision'].includes(k)) && SHA.test(p.base ?? '') && SHA.test(p.revision ?? ''))) return [PARTS_SHAPE];
+  const at = rev => { try { return candidate.kind === 'git' && SHA.test(rev ?? '') ? candidate.atRevision(rev) : null; } catch { return null; } };
+  const short = x => x.slice(0, 12), errors = [];
+  parts.forEach((p, i) => {
+    const n = i + 1, prev = parts[i - 1];
+    if (p.base === p.revision) errors.push(`review part ${n} is empty: its base and revision are both ${short(p.base)}`);
+    else if (!at(p.revision) || (p.revision !== candidate.name && !candidate.isAncestor(p.revision))) errors.push(`review part ${n}'s revision ${short(p.revision)} is not in this pull request's history`);
+    else if (!at(p.revision).isAncestor(p.base)) errors.push(`review part ${n}'s base ${short(p.base)} is not an earlier revision of its revision ${short(p.revision)}`);
+    if (prev && p.base !== prev.revision) errors.push(at(prev.revision)?.isAncestor(p.base) ? `review part ${n} starts at ${short(p.base)}, before part ${i} ended at ${short(prev.revision)}: the parts overlap` : `review part ${n} starts at ${short(p.base)}, after part ${i} ended at ${short(prev.revision)}: a gap of unreviewed code`);
+  });
+  const last = parts.at(-1).revision;
+  if (last !== revision) errors.push(`the last review part ends at ${short(last)}, not at the milestone review's revision ${short(String(revision ?? ''))}: the parts together cover the milestone to its end`);
+  if (candidate.kind === 'git') errors.push(...authorisationErrors({ base: parts[0].base, milestone, recordsDir, candidate, baseline }));
+  return errors;
+}
+// The paths each part changed, together: a path a later part changed back still belongs to what a reviewer was asked to read.
+const partsPaths = (parts, at) => parts.flatMap(p => at(p.revision).changedPaths(p.base));
+
 // MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone the milestone review is the only review of
 // its tasks' code (ci.js). Its `base` comes at or before the trusted branch's authorisation of the milestone, read from that branch's
 // own history, never from records a later change can edit (v2.11.0 review B2), so base..revision holds every task's code. It lists
 // the review.deep_paths the reviewed and fixed code reaches, its security focus. One fix check may follow it, whose revision then
 // covers the code after the review; every task not Done at the review's revision must fix one of its findings, so the fix check
 // never stands in for the review (B1). No round three: code after the fix check fails covers, as code after an uncovered review does.
+// MAINT-0023 P6: `parts` may stand for `base`: the deep paths are read over the union of the parts, and the fix check follows the last.
 function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }) {
   const errors = [];
   const rd = config.records_dir ?? 'docs/workflow';
   const at = rev => { try { return SHA.test(rev ?? '') ? candidate.atRevision(rev) : null; } catch { return null; } };
   const fc = r.fix_check;
   const end = isObject(fc) && at(fc.revision) ? fc.revision : r.revision;
-  if (!SHA.test(r.base ?? '')) errors.push('the milestone review needs its base, the full commit hash its diff starts from (review.cadence milestone)');
-  else if (candidate.kind !== 'git' || !at(r.revision)?.isAncestor(r.base)) errors.push(`the milestone review's base ${r.base.slice(0, 12)} is not an earlier revision of the reviewed one`);
-  else {
-    const authorised = authorisedAt(baseline?.kind === 'git' ? baseline : candidate, `${rd}/milestones/${milestone}.md`);
-    if (!authorised) errors.push(`the trusted branch's history does not show where ${milestone} was authorised, so the milestone review's base cannot be checked`);
-    else if (!at(authorised)?.isAncestor(r.base)) errors.push(`the milestone review's base ${r.base.slice(0, 12)} comes after ${milestone}'s authorisation ${authorised.slice(0, 12)}, where the trusted branch first set it past Draft: under review.cadence milestone it reviews the whole milestone diff, from a base at or before the authorisation`);
-    const production = classifyPaths(config, at(end).changedPaths(r.base)).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
+  const split = r.parts !== undefined;
+  const partsErrors = split ? reviewPartsErrors({ parts: r.parts, revision: r.revision, milestone, recordsDir: rd, candidate, baseline }) : [];
+  if (split && r.base !== undefined) errors.push('name the milestone review\'s base or its parts, not both');
+  errors.push(...partsErrors);
+  // The single base is checked as before; with parts, reviewPartsErrors has judged the chain, and the deep paths are read once it holds.
+  let readable = split && !partsErrors.length;
+  if (!split) {
+    if (!SHA.test(r.base ?? '')) errors.push('the milestone review needs its base, the full commit hash its diff starts from (review.cadence milestone)');
+    else if (candidate.kind !== 'git' || !at(r.revision)?.isAncestor(r.base)) errors.push(`the milestone review's base ${r.base.slice(0, 12)} is not an earlier revision of the reviewed one`);
+    else { readable = true; errors.push(...authorisationErrors({ base: r.base, milestone, recordsDir: rd, candidate, baseline })); }
+  }
+  if (readable && at(end)) {
+    const changed = [...at(end).changedPaths(split ? r.parts[0].base : r.base), ...(split ? partsPaths(r.parts, at) : [])];
+    const production = classifyPaths(config, [...new Set(changed)]).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
     const reached = (config.review?.deep_paths ?? []).filter(g => deepChanges([g], production).length);
     const listed = Array.isArray(r.deep_paths) && r.deep_paths.every(text) ? r.deep_paths : null;
     if (r.deep_paths !== undefined && !listed) errors.push('the milestone review\'s deep_paths must be a list of review.deep_paths globs');

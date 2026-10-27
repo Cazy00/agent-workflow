@@ -32,7 +32,7 @@ import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'runs', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'claude-session', 'codex-dir', 'since', 'until'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'runs', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'acceptance-evidence', 'claude-session', 'codex-dir', 'since', 'until'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -52,8 +52,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
-  usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001]: per agent, task and role, what the
-    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone); --json for usage@1, --outcome for a session outcome's usage; grants nothing;
+  usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001 [--acceptance-evidence FILE]]: per agent, task and role, what the
+    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone; with the acceptance evidence, a milestone review made in contiguous parts counts as one); --json for usage@1, --outcome for a session outcome's usage; grants nothing;
     runs from a full installation (the project's scripts/wf, or node validator/cli.js in a workflow checkout), not bin/wf, which extracts only validator/
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
@@ -110,6 +110,7 @@ async function main() {
     return 0;
   }
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
+  if (o['acceptance-evidence'] !== undefined && (cmd !== 'usage' || o.milestone === undefined)) throw new WfError('--acceptance-evidence is only for usage, with --milestone');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
   if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd) && !(cmd === 'brief' && o.acceptance))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage and brief --acceptance)');
@@ -273,7 +274,21 @@ async function main() {
       try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation (run it from a full one: the project's scripts/wf, or node validator/cli.js in a workflow checkout; bin/wf extracts only validator/): ${e.message}`); }
       try { readings.push(reader.read(paths, { ...usageWindow(readings, o.since, o.until), names: where.names })); } catch (e) { throw new WfError(e.message); }
     }
-    const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: { ...usageProject(records, o.milestone), ...where }, budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and this project\'s runs are attributed to the IDs the transcripts name'] });
+    // MAINT-0023 P6: a milestone review made in parts is one review when the acceptance evidence's parts are a contiguous set, judged
+    // by the acceptance evidence's own function (lib/acceptance-evidence.js reviewPartsErrors) against this repository's history.
+    let reviewParts = null;
+    if (o['acceptance-evidence'] !== undefined) {
+      if (!config) throw new WfError('--acceptance-evidence needs the project\'s docs/workflow/config.json here');
+      let stat, text;
+      try { stat = fs.statSync(o['acceptance-evidence']); text = fs.readFileSync(o['acceptance-evidence'], 'utf8'); } catch (e) { throw new WfError(`cannot read the acceptance evidence ${o['acceptance-evidence']}: ${e.message}`); }
+      if (!stat.isFile() || stat.size > 128 * 1024) throw new WfError('the acceptance evidence must be a regular file under 128 KiB');
+      let found;
+      try { found = text.trim().startsWith('{') ? JSON.parse(text) : parseAcceptanceEvidence(text); } catch (e) { throw new WfError(e instanceof WfError ? e.message : 'the acceptance evidence is not valid JSON'); }
+      const review = found?.review;
+      if (!review || review.parts === undefined) throw new WfError('the acceptance evidence has no review.parts to count');
+      try { reviewParts = { parts: review.parts, revision: review.revision, milestone: o.milestone, recordsDir: config.records_dir ?? 'docs/workflow', candidate: gitSource(dir, o.candidate ?? 'HEAD'), baseline: o.baseline ? gitSource(dir, o.baseline) : null }; } catch (e) { throw new WfError(e.message); }
+    }
+    const result = evaluateUsage({ readings, reviewParts, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: { ...usageProject(records, o.milestone), ...where }, budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and this project\'s runs are attributed to the IDs the transcripts name'] });
     if (o.outcome) console.log(JSON.stringify(outcomeUsage(result), null, 2));
     else if (o.json) console.log(JSON.stringify(result, null, 2));
     else process.stdout.write(renderUsage(result));

@@ -41,7 +41,7 @@ test('the evidence names the candidate, the task, the profile\'s required checks
   assert.equal(e.candidate, r.candidate);
   assert.deepEqual(e.tasks, ['T-0001']);
   assert.deepEqual(e.integration.checks.map(c => [c.name, c.result]), [['unit', 'passed']]);
-  assert.deepEqual(e.verification.execution.tests, [{ file: 'tests/a.test.js', name: 'works', status: '' }]);
+  assert.deepEqual(e.verification.execution, { revision: r.candidate, run: '', passed: { 'tests/a.test.js': ['works'] }, tests: [] }); // MAINT-0023 P7: the compact form
   assert.equal(e.review.implementer, 'agent');
 });
 

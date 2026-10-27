@@ -19,6 +19,7 @@ import path from 'node:path';
 import { list } from './records.js';
 import { parseLaunchName } from './roles.js';
 import { matchGlob } from './glob.js';
+import { reviewPartsErrors } from './acceptance-evidence.js';
 
 export const READER = 'agent-workflow/usage-reader@1';
 export const SCHEMA = 'agent-workflow/usage@1';
@@ -145,7 +146,7 @@ export function projectOf(run, { folders = [], folder_names = [], names = [] } =
   return cwd && (folders.some(f => inside(cwd, path.resolve(f))) || cwd.split(path.sep).filter(Boolean).some(seg => folder_names.some(g => matchGlob(g, seg)))) ? 'folder' : null;
 }
 
-function secondModel(runs, { window, project, milestone, budget, prices }) {
+function secondModel(runs, { window, project, milestone, budget, prices, reviewParts = null }) {
   const inWindow = at => at && (!window.since || time(at) >= time(window.since)) && (!window.until || time(at) <= time(window.until));
   const out = runs.filter(r => inWindow(r.started)).map(r => {
     // The run's ID, once it is this project's: from its folder first, a task before a milestone before a review, else from its
@@ -165,14 +166,18 @@ function secondModel(runs, { window, project, milestone, budget, prices }) {
     // A run is the milestone's when it names the milestone, one of its tasks, or a review one of those tasks cites.
     const ofMilestone = id => id === milestone || !project.tasksOf || project.tasksOf.has(id) || [...(project.reviews?.get(id) ?? [])].some(t => project.tasksOf.has(t));
     const mine = out.filter(r => r.matched && ofMilestone(r.named));
-    const used = mine.filter(r => !r.refused), review = used.filter(r => r.named === milestone).length, taskRuns = used.length - review;
-    const warning = !budget ? null : used.length >= budget.runs ? `the budget is spent: ${used.length} of ${budget.runs} runs used` : !review && taskRuns + 1 >= budget.runs ? `one more task run would use the milestone review's reserve (${taskRuns} of ${budget.runs - 1} task runs used)` : null;
-    m = { id: milestone, budget: budget?.runs ?? null, deep_tasks: budget?.deep_tasks ?? null, used: used.length, task_runs: taskRuns, review_runs: review, refused: mine.length - used.length, warning };
+    const used = mine.filter(r => !r.refused), ran = used.filter(r => r.named === milestone).length, taskRuns = used.length - ran;
+    // MAINT-0023 P6: the runs of a milestone review made in parts are one review, as many of them as the evidence has parts and only
+    // when reviewPartsErrors (the acceptance evidence's own judge) finds the parts a contiguous set; runs beyond the parts count each.
+    const partsFound = reviewParts ? reviewPartsErrors(reviewParts) : null, parts = partsFound && !partsFound.length ? reviewParts.parts.length : 0;
+    const merged = Math.max(0, Math.min(ran, parts) - 1), review = ran - merged, total = used.length - merged;
+    const warning = !budget ? null : total >= budget.runs ? `the budget is spent: ${total} of ${budget.runs} runs used` : !review && taskRuns + 1 >= budget.runs ? `one more task run would use the milestone review's reserve (${taskRuns} of ${budget.runs - 1} task runs used)` : null;
+    m = { id: milestone, budget: budget?.runs ?? null, deep_tasks: budget?.deep_tasks ?? null, used: total, task_runs: taskRuns, review_runs: review, refused: mine.length - used.length, warning, ...(partsFound ? { review_parts: parts, ...(partsFound.length ? { review_parts_refused: partsFound } : {}) } : {}) };
   }
   return { window, runs: out, matched: out.filter(r => r.matched).length, refused: out.filter(r => r.matched && r.refused).length, unmatched: out.filter(r => !r.matched).length, ids_only: out.filter(r => r.ids_only).length, named_outside: out.filter(r => r.named_outside).length, by_task, milestone: m };
 }
 
-export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null, reviews: new Map() }, budget = null, notes = [] }) {
+export function evaluateUsage({ readings, since = null, until = null, task = null, milestone = null, prices = null, project = { ids: new Set(), tasksOf: null, reviews: new Map() }, budget = null, reviewParts = null, notes = [] }) {
   for (const r of readings) if (r?.schema !== READER) throw new Error(`a usage reader returned ${r?.schema ?? 'nothing'}, not ${READER}`);
   const window = usageWindow(readings, since, until);
   const inWindow = at => (!since || time(at) >= time(since)) && (!until || time(at) <= time(until));
@@ -182,7 +187,7 @@ export function evaluateUsage({ readings, since = null, until = null, task = nul
   // The transcripts' own IDs belong to the project too, so a run is matched where no records are at hand.
   const ids = new Set(project.ids);
   for (const a of agents) for (const id of [a.task, ...(String(a.description ?? '').match(/\b[TMR]-\d{4}\b/g) ?? [])]) if (id) ids.add(id);
-  const second = secondModel(readings.flatMap(r => r.agents.filter(a => a.kind === 'run').map(a => ({ ...a, harness: r.harness }))), { window, project: { ...project, ids }, milestone, budget, prices });
+  const second = secondModel(readings.flatMap(r => r.agents.filter(a => a.kind === 'run').map(a => ({ ...a, harness: r.harness }))), { window, project: { ...project, ids }, milestone, budget, prices, reviewParts });
   if (task) agents = agents.filter(a => a.task === task);
   agents.sort((a, b) => time(a.first_call) - time(b.first_call));
   const byRole = group(agents, a => a.role, 'role', priced).sort((a, b) => ROLES.indexOf(a.role) - ROLES.indexOf(b.role));

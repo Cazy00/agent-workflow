@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { gitSource, loadAll } from '../lib/index.js';
 import { acceptanceEvidenceErrors, reviewPartsErrors } from '../lib/acceptance-evidence.js';
 import { evaluateUsage } from '../lib/usage.js';
@@ -213,4 +214,47 @@ test('MAINT-0023 P6: wf next measures only a live milestone under the milestone 
   const planned = draft.commit('planning, large code');
   assert.deepEqual(evaluateNext({ baseline: draft.at(planned), candidate: draft.at(planned) }).warnings ?? [], []);
   assert.ok(big);
+});
+
+// `wf usage --milestone M-0001 --acceptance-evidence FILE`: the same judge, against this repository's history.
+test('MAINT-0023 P6: wf usage reads review.parts from the acceptance evidence', t => {
+  const r = repo(t);
+  r.write(`${RD}/config.json`, JSON.stringify({ ...config(), approval: { label: 'owner-merge' }, acceptance_evidence: true, usage: { folders: ['.review-*'] } }));
+  r.commit('config'); const head = accept(r);
+  const sessions = path.join(r.dir, '..', `${path.basename(r.dir)}-codex`);
+  t.after(() => fs.rmSync(sessions, { recursive: true, force: true }));
+  for (let i = 0; i < 3; i++) {
+    const started = new Date(Date.now() - (30 - i) * 60000).toISOString(), cwd = '/work/.review-M-0001', day = started.slice(0, 10).split('-').join('/');
+    fs.mkdirSync(path.join(sessions, day), { recursive: true });
+    fs.writeFileSync(path.join(sessions, day, `rollout-${i}.jsonl`), [
+      { type: 'session_meta', timestamp: started, payload: { id: `run-${i}`, timestamp: started, cwd, originator: 'codex_exec' } },
+      { type: 'turn_context', payload: { model: 'gpt-6.1-sol', effort: 'high', cwd } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'The milestone review' }] } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50 } } } },
+      { type: 'event_msg', payload: { type: 'task_complete', last_agent_message: null } },
+    ].map(x => JSON.stringify(x)).join('\n') + '\n');
+  }
+  const evidenceFile = (name, review) => { const f = path.join(sessions, name); fs.writeFileSync(f, JSON.stringify(evidenceOf(r.reviewed, review))); return f; };
+  const since = new Date(Date.now() - 3600000).toISOString();
+  const run = (...more) => spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'usage', '--repo', r.dir, '--candidate', head, '--since', since, '--codex-dir', sessions, '--milestone', 'M-0001', '--json', ...more], { encoding: 'utf8' });
+  const used = (...more) => { const x = run(...more); assert.equal(x.status, 0, x.stderr); return JSON.parse(x.stdout).second_model.milestone; };
+  assert.equal(used().used, 3, 'without the evidence every run counts');
+  const good = evidenceFile('good.json', { parts: parts([r.authorised, r.s2], [r.s2, r.reviewed]) });
+  assert.deepEqual([used('--acceptance-evidence', good).used, used('--acceptance-evidence', good).review_parts], [2, 2]);
+  const gap = evidenceFile('gap.json', { parts: parts([r.authorised, r.s1], [r.s2, r.reviewed]) });
+  const bad = used('--acceptance-evidence', gap);
+  assert.equal(bad.used, 3);
+  assert.match(bad.review_parts_refused.join(' | '), /a gap of unreviewed code/);
+  const plain = evidenceFile('plain.json', {});
+  assert.match(run('--acceptance-evidence', plain).stderr, /has no review\.parts to count/);
+  assert.match(run('--acceptance-evidence', path.join(sessions, 'missing.json')).stderr, /cannot read the acceptance evidence/);
+  const elsewhere = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'status', '--acceptance-evidence', good], { encoding: 'utf8' });
+  assert.match(elsewhere.stderr, /--acceptance-evidence is only for usage, with --milestone/);
+});
+
+test('MAINT-0023 P6: the acceptance evidence template documents base, parts, deep_paths and the fix check', () => {
+  const template = JSON.parse(fs.readFileSync(new URL('../../templates/acceptance-evidence.json', import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(template.review), ['reviewer', 'model', 'fallback', 'revision', 'base', 'parts', 'deep_paths', 'fix_check', 'report']);
+  assert.deepEqual(Object.keys(template.review.parts[0]), ['base', 'revision']);
+  assert.deepEqual(Object.keys(template.review.fix_check), ['revision', 'reviewer', 'model', 'report']);
 });

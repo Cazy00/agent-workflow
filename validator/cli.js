@@ -27,12 +27,12 @@ import { renderAcceptanceBrief } from './lib/acceptance-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { prune } from './lib/prune.js';
-import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/wait.js';
+import { waitForCommit, waitForPullRequest, workflowRuns, WAIT_CEILING_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'claude-session', 'codex-dir', 'since', 'until'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'runs', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'claude-session', 'codex-dir', 'since', 'until'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
@@ -51,7 +51,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     runs from a full installation (the project's scripts/wf, or node validator/cli.js in a workflow checkout), not bin/wf, which extracts only validator/
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
-  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
+  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [--check-runs | --runs FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
+    --check-runs reads the trusted branch's runs from GitHub (--runs FILE: JSON of commit hash to workflow runs) to name the baseline_result a claim may record when its baseline holds code already tested (MAINT-0023 P5)
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   evidence --baseline REV --candidate SHA [--task T-0001] [--from PREVIOUS_EVIDENCE]: the delivery evidence, started with what can be derived; fill in what you ran and the review
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
@@ -83,6 +84,7 @@ async function main() {
     if (a === '--merged') { o.merged = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a === '--outcome') { o.outcome = true; continue; }
+    if (a === '--check-runs') { o['check-runs'] = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -100,6 +102,8 @@ async function main() {
   if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd) && !(cmd === 'brief' && o.acceptance))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage and brief --acceptance)');
   if (o.acceptance && (cmd !== 'brief' || o.lead)) throw new WfError('--acceptance is only for brief, without --lead');
   if ((o.outcome || ['claude-session', 'codex-dir', 'since', 'until'].some(k => o[k] !== undefined)) && cmd !== 'usage') throw new WfError('--claude-session, --codex-dir, --since, --until and --outcome are only for usage');
+  if ((o['check-runs'] || o.runs !== undefined) && cmd !== 'next') throw new WfError('--check-runs and --runs are only for next');
+  if (o['check-runs'] && o.runs !== undefined) throw new WfError('use --check-runs or --runs FILE, not both');
   if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
@@ -424,7 +428,17 @@ async function main() {
       if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
-    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null });
+    // MAINT-0023 P5: the runs behind a baseline_result, from a file ({"<sha>": [workflow runs]}) or, with --check-runs, from GitHub.
+    let runsFor = null;
+    if (o.runs) {
+      let runs; try { runs = JSON.parse(fs.readFileSync(o.runs, 'utf8')); } catch (e) { throw new WfError(`--runs: ${e.message}`); }
+      if (!runs || typeof runs !== 'object' || Array.isArray(runs)) throw new WfError('--runs: runs must be a JSON object of commit hash to workflow runs');
+      runsFor = sha => runs[sha] ?? [];
+    } else if (o['check-runs']) {
+      if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('--check-runs needs repository in docs/workflow/config.json');
+      runsFor = sha => workflowRuns({ repository: config.repository, sha });
+    }
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null, runsFor });
     if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;

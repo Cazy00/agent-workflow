@@ -81,3 +81,7 @@ export function waitForPullRequest({ repository, number, ...rest }) {
   return follow({ repository, target, ...rest });
 }
 export function waitForCommit({ repository, sha, ...rest }) { return follow({ repository, target: () => ({ head: sha }), ...rest, merged: false }); }
+
+// MAINT-0023 P5: the workflow runs of one commit, for the baseline a claim records (lib/baseline-run.js). Like the checks above,
+// through `gh api`; an error is the caller's to report.
+export function workflowRuns({ repository, sha, call = api }) { return call(`repos/${repository}/actions/runs?head_sha=${sha}&per_page=100`).workflow_runs ?? []; }

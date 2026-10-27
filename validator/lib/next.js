@@ -9,6 +9,7 @@ import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
 import { byMilestone, planReviewCommand, reviewLevel } from './roles.js';
+import { baselineHint } from './baseline-run.js';
 
 const PROCEDURE = {
   records: 'SCHEMA.md (the section the error names)',
@@ -96,7 +97,7 @@ export function secondModelBudget(config, records, milestoneIds) {
   });
 }
 
-export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null }) {
+export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null, runsFor = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const label = config.approval?.label;
@@ -162,9 +163,17 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const handOver = id => ['wf doctor  (raise every gap in the next question to the owner)', `wf brief --lead --task ${id} --baseline ${base}${chosen}  (the task lead's brief)`];
   // MAINT-0020 P10: a claim does not wait for the trusted branch's checks on its baseline (P2(b)); the lead waits with this.
   const baselineWait = kind => kind === 'start' && !manual ? [`wf wait --commit ${base}  (the trusted branch's checks on the baseline; fill baseline_result before the review packet)`] : [];
+  // MAINT-0023 P5(b), P5(c): the run a claim may name as its baseline_result when the baseline is a merge commit equal to its pull
+  // request's head, or differs from an earlier commit only in records; read once, and only for a claim.
+  let baselineHints;
+  const baselineOf = kind => {
+    if (kind !== 'start' || manual) return {};
+    baselineHints ??= baselineHint({ source: baseline, recordsDir: rd, runsFor });
+    return baselineHints.candidates.length ? { baseline: baselineHints } : {};
+  };
   const taskAction = (t, kind, verb, why) => {
     const record = task(t.id);
-    add({ kind, item: t.id, do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, ...baselineWait(kind), `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
+    add({ kind, item: t.id, ...baselineOf(kind), do: `${verb} ${t.id}: ${record.title ?? ''}`.trim(), why, read: [...readList(rd, { ...record, id: t.id }, record.milestone), PROCEDURE.task], run: [...handOver(t.id), `wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`, ...baselineWait(kind), `wf ci --baseline ${base} --candidate ${head} --task ${t.id}${manual ? `${trustOptions} --unsigned-receipts ROUND_FILE` : evidence}  (when its candidate is committed)`] });
   };
   const resolve = t => add({ kind: 'plan', item: t.id, do: `${t.status === 'Draft' ? 'Plan' : 'Resolve the readiness of'} ${t.id}${t.status === 'Active' ? ' before continuing it' : ''}`, why: (t.reasons ?? []).slice(0, 3).join('; ') || 'not ready', read: [`${rd}/tasks/${t.id}.md`, PROCEDURE.plan], run: [`wf readiness --baseline ${base}${chosen} --task ${t.id}${trustOptions}`] });
   // An Active task continues only while readiness lets it; one held by the owner's decision waits, and is listed as such.
@@ -257,6 +266,14 @@ export function renderNext(n) {
   lines.push(`Next: ${n.next.do}`, `Why: ${n.next.why}`);
   if (n.next.read.length) lines.push('Read:', ...bullet(n.next.read));
   if (n.next.run.length) lines.push('Run:', ...bullet(n.next.run));
+  if (n.next.baseline) {
+    const b = n.next.baseline;
+    lines.push('Baseline result (the code this baseline holds was already tested):');
+    for (const r of b.results) lines.push(`  - baseline_result: ${r.value}`);
+    for (const c of b.candidates) lines.push(`  - candidate: ${c.commit} (${c.kind === 'merge-head' ? `the head of ${c.number ? `#${c.number}` : 'the merged pull request'}, whose tree is this baseline's` : 'differs from this baseline only in records'})`);
+    for (const note of b.notes) lines.push(`  - not named: ${note}`);
+    if (b.how) lines.push(`  - ${b.how}`);
+  }
   if (n.startable?.length) lines.push('', `${n.startable.length > 1 ? 'Start together, each with its own lead' : 'Start, with its own lead'} in the background${n.running?.length ? ` (beside ${n.running.join(', ')})` : ''}: ${n.startable.join(', ')}`);
   if (n.also.length) lines.push('', 'Also open (after this one):', ...bullet(n.also.map(a => `${a.do} (${a.why})`)), ...(n.more ? [`  - and ${n.more} more`] : []));
   if (n.owner.length) lines.push('', 'Waiting on the owner (do not do these):', ...bullet(n.owner.map(w => `${w.kind} ${w.item}: ${w.detail}`)));

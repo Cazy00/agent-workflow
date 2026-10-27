@@ -21,7 +21,7 @@ Both projects moved their pin to v2.11.1 on 23 October 2026: headless-lightroom 
 |---|---|---|
 | Milestones | M-0006 "the full order": authorised 03:21 UTC 25 October (#108), accepted 15:07 UTC 27 October (#122). That is 59.8 h. | The end of M-0002 (accepted 13:15 UTC 25 October, #27). All of M-0003: plan merged 14:25 UTC 25 October, accepted 06:31 UTC 27 October (#51). M-0004's first five tasks. |
 | Tasks merged | 15. Two of them (T-0046, T-0047) came from the milestone review, and two (T-0048, T-0049) from the owner's trial. | 22 (T-0010 to T-0030, and T-0033). Found tasks: T-0024 to T-0026 from M-0003's review, and T-0033 from a memory kill. |
-| Pull requests | 23 merged, 1 open (#106 to #130) | 40 merged (#19 to #59) |
+| Pull requests | 23 merged, 1 open (#106 to #130); #130 merged later (§ 2.5) | 40 merged (#19 to #59) |
 | CI runs | 119 runs of `CI` (three jobs each), 35 runner-hours, plus 139 `wf ci` | 152 `test` runs (2.6 runner-hours) and 169 `wf ci` |
 | `wf ci` failed | 73 of 139 | 89 of 169 |
 | Claude Code sessions | 1 Opus manager (60 h) and its plan session, plus 26 Sonnet workers (`job run`) | 11 Opus sessions, no workers |
@@ -102,6 +102,17 @@ The causes, ranked:
 5. Gate loops: 1–2 h. These were draft pull requests failing `wf ci` before their evidence, Done records reverted, and five per-task reviews with no findings. Those reviews were valid then: they ran before the project moved to one review per milestone at 05:48 UTC on 25 October (#30).
 
 **So:** in mateen-systems, CI is the largest mechanical cost, but the days come from closing the milestone and waiting for taps. In headless-lightroom, CI takes a minute and costs nothing that matters.
+
+### 2.5 After the snapshot: how M-0006 closed
+
+The measurements end at about 15:00 UTC on 27 October. The manager session went on to close M-0006, and its last hour repeats three findings:
+
+- **15:17.** #130 opened. It changes only records: it removes the finished task records of milestones 1 to 6. It still ran the full CI, about 21 minutes (P4: skip CI for records-only changes).
+- **15:47.** #130's first run failed on an acceptance test it does not touch. The Activity search for "180" sometimes finds another member's entry, so the test is flaky. The manager carried the test to M-0007's list and pushed that change. That started a second CI cycle.
+- **16:10.** Every check had passed, but the merge waiter had stopped. An older `wf ci` run, cancelled when the description changed, still counted against the merge. The manager re-ran it (F6, W2).
+- **16:11–16:12.** The tap was sent, approved within a minute, and #130 merged. The manager closed its umbrella job and the milestone.
+
+From opening #130 to its merge took 55 minutes for a records-only change. Without the flaky test and the cancelled run, it would have taken about 22 minutes. Without CI on records, it would have taken a few. The session also compacted once more at 15:09, at 168K tokens: it started under the 200K cap, and a running session keeps the window it started with.
 
 ### 2.4 Two follow-up questions from the owner
 
@@ -206,7 +217,7 @@ Check: validator tests for contiguous and gapped parts.
   - A session waiting for the owner's trial checks for new feedback at least hourly, never on a 16-hour timer.
   - Every message that needs the owner starts with the action, and a trial message carries its checklist.
   - A question the owner must answer runs beside other work wherever there is any.
-- **W5.** The mateen-systems manager's umbrella job j20261026142544-c795 is still `running`, although M-0006 is accepted.
+- **W5.** The mateen-systems manager's umbrella job j20261026142544-c795 was still `running` after M-0006 was accepted. Resolved: the manager closed it as finished at the end (§ 2.5).
 
 ## 6. The projects' feedback records
 

@@ -148,6 +148,16 @@ test('MAINT-0023 P7: wf ci refuses a compact block with a test missing, repeated
   assert.match(noRun.findings, /execution\.run must be an https reference/);
 });
 
+// Review F1: the blanks `wf evidence` writes are refused until the agent states a result for each test, whatever the run reference.
+test('MAINT-0023 P7: wf ci refuses the execution as wf evidence writes it, even with a run named', t => {
+  const blank = ciWith(t, { run: RUN, passed: {}, tests: mapped.map(m => ({ file: m.file, name: m.name, status: '' })) });
+  assert.equal(blank.status, 1, blank.stdout + blank.stderr);
+  assert.match(blank.findings, /required test did not run exactly once and pass: tests\/a\.test\.js \/ accepts a valid payment/);
+  // The agent moves each test it saw pass into passed, and the same block is then accepted.
+  const stated = ciWith(t, { run: RUN, passed: everyone, tests: [] });
+  assert.equal(stated.status, 0, stated.stdout + stated.stderr);
+});
+
 test('MAINT-0023 P7: the full form is still accepted by wf ci', t => {
   const r = ciWith(t, { tests: mapped.map(m => ({ file: m.file, name: m.name, status: 'passed' })) });
   assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -169,6 +179,7 @@ test('MAINT-0023 P7: wf evidence writes the compact form, and the gate refuses i
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.ok(r.stdout.startsWith(DELIVERY_MARKER));
   const e = parseDeliveryEvidence(r.stdout);
-  assert.deepEqual(e.verification.execution, { revision: head, run: '', passed: { 'tests/a.test.js': ['works', 'also works'] }, tests: [] });
-  assert.match(r.stderr, /execution lists the task's mapped tests as passed under their files: name the run in run, and move any test that did not pass to tests with its status/);
+  // Review F1: no mapped test is pre-filled as passed; the agent states each result it saw.
+  assert.deepEqual(e.verification.execution, { revision: head, run: '', passed: {}, tests: [{ file: 'tests/a.test.js', name: 'works', status: '' }, { file: 'tests/a.test.js', name: 'also works', status: '' }] });
+  assert.match(r.stderr, /execution lists the task's mapped tests with an empty status: run them, move each test you saw pass into passed under its file and name the run in run once, and give any other its status in tests/);
 });

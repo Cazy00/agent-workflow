@@ -42,7 +42,7 @@ test('the auto-merge guard\'s limit, what deferral cross-checks and the unseen r
 
 // GitHub matches a required status check by its job's name, and a job skipped by its condition counts as passed. The client
 // page's jobs were `build` and `deploy`, so on every pull request its skipped `deploy` answered for a project's own required
-// `deploy` check (mateen-systems, 12 October 2026), which could let auto-merge land a change before the real one finished.
+// `deploy` check (a client project, 12 October 2026), which could let auto-merge land a change before the real one finished.
 test('the client page workflow names every job, so none can answer for a project\'s required check of the same name', () => {
   const yml = read('templates/github/wf-client-page.yml');
   const jobs = yml.slice(yml.indexOf('\njobs:\n')).split(/\n  (?=[a-z][\w-]*:\n)/).slice(1);

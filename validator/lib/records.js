@@ -133,11 +133,11 @@ function validateRolesConfig(r) {
 // MAINT-0020 P14: optional list prices for `wf usage`'s estimate, per million tokens, keyed by a model ID prefix. Without them it
 // prints tokens only (templates/pilot.md: no dollar conversion without account evidence). No gate reads them.
 export const PRICE_KEYS = ['input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'];
-// v2.9.0 final review S1: optional `folders`, the names (or globs of a name, such as mateen-review-*) of the folders besides the
+// v2.9.0 final review S1: optional `folders`, the names (or globs of a name, such as project-review-*) of the folders besides the
 // repository and its worktrees where this project's second-model runs work, so wf usage counts those runs as its own.
 function validateUsageConfig(u) {
   only(u, ['prices', 'folders'], 'usage');
-  if (u.folders !== undefined && (!Array.isArray(u.folders) || !u.folders.length || u.folders.some(f => typeof f !== 'string' || !f.trim() || f !== f.trim() || /[/\\\0]/.test(f) || ['.', '..'].includes(f) || /^[*?]+$/.test(f)))) throw new Error('usage.folders lists folder names, or globs of one (mateen-review-*), where this project\'s second-model runs work besides the repository and its worktrees: no slash, and not only wildcards');
+  if (u.folders !== undefined && (!Array.isArray(u.folders) || !u.folders.length || u.folders.some(f => typeof f !== 'string' || !f.trim() || f !== f.trim() || /[/\\\0]/.test(f) || ['.', '..'].includes(f) || /^[*?]+$/.test(f)))) throw new Error('usage.folders lists folder names, or globs of one (project-review-*), where this project\'s second-model runs work besides the repository and its worktrees: no slash, and not only wildcards');
   if (u.prices === undefined) return;
   if (!plainObject(u.prices) || !Object.keys(u.prices).length) throw new Error('usage.prices maps a model ID prefix to its prices per million tokens');
   for (const [model, p] of Object.entries(u.prices)) {

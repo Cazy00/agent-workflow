@@ -10,7 +10,7 @@ import { evidenceErrors } from '../lib/delivery-evidence.js';
 import { fakeExecutable } from './helpers.js';
 import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 
-// MAINT-0018 Part B: the costs M-0004 of mateen-systems showed after Part A. Task leads that implemented their own tasks,
+// MAINT-0018 Part B: the costs M-0004 of a client project showed after Part A. Task leads that implemented their own tasks,
 // a governing edit that kept a pull request waiting 13 hours, a fix review with nothing exposed, access found missing
 // after midnight, and waits, Done commits and IDs written by hand.
 

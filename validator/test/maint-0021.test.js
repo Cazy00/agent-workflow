@@ -8,7 +8,7 @@ import { isTestOnlyPath } from '../lib/paths.js';
 
 // MAINT-0021: the owner's review policy of 18 October 2026. A test-only change needs no review; the reviewer is another
 // vendor's; one review on the final code; a fix check only after a blocking finding at deep or milestone; one reviewer
-// command per level. M-0003 to M-0005 of mateen-systems ran about three reviews a change, and Codex ran out of quota.
+// command per level. M-0003 to M-0005 of a client project ran about three reviews a change, and Codex ran out of quota.
 
 // Item 1. A test-only change: every production path a test path, none an owner-approved acceptance test, none deep.
 const noReview = head => { const e = evidence(head); delete e.review; return e; };

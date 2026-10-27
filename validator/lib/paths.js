@@ -16,7 +16,7 @@ export const matchesAny = (globs, path) => (globs ?? []).some(g => matchGlob(pat
 // MAINT-0018: the changed paths that need a deep review (review.deep_paths, procedures/review.md). A glob anchored on a
 // folder (`apps/server/migrations/**`) reaches everything under it. A glob that matches by name anywhere (one starting
 // with `**`) reaches a test file only when it names tests itself: `**/*numbering*` names the code that numbers invoices,
-// not its tests, which mateen-systems' M-0004 reviewed deep three times for a test-only task.
+// not its tests, which a client project's M-0004 reviewed deep three times for a test-only task.
 // A test file, by each language's own convention, and narrowly, so a file in doubt stays deep (the fix review of S5): a
 // code file in a test/, tests/ or __tests__/ folder, a Ruby file in spec/, or a.test.ts / a.spec.ts / a.e2e-spec.ts,
 // a_test.go, a_test.exs, a_spec.rb, ATest.java (and Kotlin, Scala, Groovy, C#, Swift, PHP). A spec that is not code, such

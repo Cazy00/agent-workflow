@@ -13,7 +13,7 @@ import { MAX_SLICES, READ_ONCE, WAIT_COMMANDS, sliceTask, waitLine } from '../li
 import { HELPER_PEAK, READER, evaluateUsage } from '../lib/usage.js';
 import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 
-// MAINT-0020, v2.9.0: what M-0005 of mateen-systems measured on v2.7.0, the second part. Later slices append their tests here.
+// MAINT-0020, v2.9.0: what M-0005 of a client project measured on v2.7.0, the second part. Later slices append their tests here.
 const root = fileURLToPath(new URL('../..', import.meta.url));
 
 // P14 fixtures: small transcripts written here, never real ones. SECRET stands for anything an agent read or wrote; it is in
@@ -852,10 +852,10 @@ test('v2.9.0 review S4-1: the walk leaves the owner\'s trial cold: its own demo 
 
 test('v2.9.0 review S4-2, S4-3: the address and build walked agree with those the owner is given, read as a URL or trimmed; environment is free text', () => {
   const at = (given, walked, environment = 'Firefox 141 at 390x844') => walkErrors(w => ({ ...w, trial_environment: given, ...walked, environment }));
-  for (const [given, walked] of [['https://x.com', 'https://x.com/'], ['https://x.com:443/a', 'HTTPS://X.COM/a'], ['http://x.com:80/', 'http://x.com'], ['https://x.com/a?b=1', 'https://x.com/a/?b=1'], ['file:///Applications/Mateen.app/', 'file:///Applications/Mateen.app'], ['Mateen.app', ' Mateen.app ']]) {
+  for (const [given, walked] of [['https://x.com', 'https://x.com/'], ['https://x.com:443/a', 'HTTPS://X.COM/a'], ['http://x.com:80/', 'http://x.com'], ['https://x.com/a?b=1', 'https://x.com/a/?b=1'], ['file:///Applications/Example.app/', 'file:///Applications/Example.app'], ['Example.app', ' Example.app ']]) {
     assert.deepEqual(at({ address: given, build: '1.4.0' }, { address: walked, build: ' 1.4.0' }), [], `${given} | ${walked}`);
   }
-  for (const [given, walked] of [['https://x.com/a', 'https://x.com/A'], ['https://x.com', 'https://x.com:8443'], ['https://x.com', 'http://x.com'], ['Mateen.app', 'Mateen Dev.app']]) {
+  for (const [given, walked] of [['https://x.com/a', 'https://x.com/A'], ['https://x.com', 'https://x.com:8443'], ['https://x.com', 'http://x.com'], ['Example.app', 'Example Dev.app']]) {
     assert.deepEqual(at({ address: given, build: '1.4.0' }, { address: walked, build: '1.4.0' }), [`the walkthrough's address, ${walked}, is not trial_environment's, ${given}: the evidence must say the walk was on the address the owner is given`], `${given} | ${walked}`);
   }
   assert.deepEqual(at({ address: 'https://x.com', build: '1.4.0' }, { address: 'https://x.com', build: 'v1.4.0' }), ['the walkthrough\'s build, v1.4.0, is not trial_environment\'s, 1.4.0: the evidence must say the walk was on the build the owner is given']);

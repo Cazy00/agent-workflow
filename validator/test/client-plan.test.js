@@ -841,7 +841,7 @@ test('the client page workflow rebuilds on the trusted branch, on pull request e
 });
 
 // MAINT-0015: which job each GitHub event runs, by evaluating the template's own `if:` and concurrency expressions.
-// A merged pull request's `closed` run must not build or deploy: GitHub Pages refuses a deploy from it (mateen-systems
+// A merged pull request's `closed` run must not build or deploy: GitHub Pages refuses a deploy from it (a client project
 // run 38116833457), and the merge's own push to the trusted branch already rebuilds the page.
 const expression = (yml, pattern) => {
   const text = yml.match(pattern)?.[1];

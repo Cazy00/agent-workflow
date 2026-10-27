@@ -17,13 +17,22 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
   let map = [];
   try { map = JSON.parse(candidate.read(ACCEPTANCE_MAP) ?? '[]'); } catch { map = []; }
   const ids = new Set(list(record.acceptance));
+  // MAINT-0023 P7: the task's mapped tests listed as passed under their files, the run left for the agent to name: the gate refuses the
+  // evidence until it does, and a test that did not pass moves to tests with its status (acceptance.js expandExecution).
+  const mappedTests = (Array.isArray(map) ? map : []).filter(m => ids.has(m?.acceptance));
+  const execution = () => {
+    if (!mappedTests.length) return { revision: candidate.name, tests: [] };
+    const passed = {};
+    for (const m of mappedTests) if (!(passed[m.file] ??= []).includes(m.name)) passed[m.file].push(m.name);
+    return { revision: candidate.name, run: '', passed, tests: [] };
+  };
   const required = () => requiredChecks.map(name => ({ name, result: enforced ? 'enforced' : 'passed', reference: '' }));
   const evidence = {
     schema: 'agent-workflow/delivery-evidence@1', candidate: candidate.name, assurance: 'agent-attested', tasks: [task],
     verification: {
       revision: candidate.name, environment: '',
       checks: [...(enforced ? [{ name: '', result: 'passed', reference: '' }] : []), ...required()],
-      execution: { revision: candidate.name, tests: (Array.isArray(map) ? map : []).filter(m => ids.has(m?.acceptance)).map(m => ({ file: m.file, name: m.name, status: '' })) },
+      execution: execution(),
     },
     integration: { revision: candidate.name, environment: enforced ? 'GitHub Actions, required by the ruleset before any merge' : '', checks: required() },
     review: {
@@ -33,6 +42,7 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
     },
   };
   const notes = [];
+  if (mappedTests.length) notes.push('execution lists the task\'s mapped tests as passed under their files: name the run in run, and move any test that did not pass to tests with its status');
   // MAINT-0022: under review.cadence milestone the task has no review of its own; the milestone's one review covers it (ci.js).
   const live = ['Authorised', 'Active'].includes(loadAll(baseline, rd).milestones.get(record.milestone)?.data?.status);
   if (byMilestone(config) && live) { evidence.review = { level: 'none' }; notes.push('review.cadence milestone: no task review; the milestone review covers this task, so review is level none'); }

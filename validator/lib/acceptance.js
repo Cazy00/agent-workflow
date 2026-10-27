@@ -80,6 +80,34 @@ export function pendingChange(before, after, testedBefore = null, testedAfter = 
 export const pendingRun = (m, runs, waiting) => ({ acceptance: m.acceptance, file: m.file, name: m.name, runs: runs.length, status: runs.length === 1 ? runs[0].status : null, waiting });
 export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (${w.acceptance}) ${w.status}; it may fail until ${w.waiting.join(', ')} ${w.waiting.length === 1 ? 'is' : 'are'} Done, and must pass from then on`;
 
+// MAINT-0023 P7, rebuilt (27 October 2026): the delivery evidence's `execution` may list the passing tests compactly,
+//   { revision, run: <https reference to the run that passed them, given once>, passed: { <file>: [<test name>, ...] }, tests: [full entries] }
+// where `tests` keeps the entries of the tests that failed, were skipped or are pending. A test is a file and a name, so the same name
+// in two files is two tests and each file lists its own. The compact entries are expanded into the full form, and evaluateAcceptance
+// then requires every mapped test exactly once, as before: nothing about the gate changes, only how long the evidence is. The
+// expansion refuses what the full form's count would catch with a clearer message (a test listed twice, or in both lists). A signed
+// receipt's execution is never read through this (ci.js applies it to the agent's delivery evidence alone).
+const nonEmpty = v => typeof v === 'string' && v.trim() !== '';
+const httpsRun = v => { if (!nonEmpty(v) || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
+export function expandExecution(execution) {
+  if (!execution || typeof execution !== 'object' || Array.isArray(execution) || !Object.hasOwn(execution, 'passed')) return { execution, errors: [] };
+  const { passed, run, tests, ...rest } = execution, errors = [];
+  const shaped = passed && typeof passed === 'object' && !Array.isArray(passed) && Object.values(passed).every(names => Array.isArray(names) && names.length && names.every(nonEmpty));
+  if (!shaped) errors.push('execution.passed must map each test file to the list of the names of its passing tests');
+  const entries = shaped ? Object.entries(passed).flatMap(([file, names]) => names.map(name => ({ file, name, status: 'passed' }))) : [];
+  if (entries.length && !httpsRun(run)) errors.push('execution.run must be an https reference to the run that passed the listed tests, given once');
+  // A tests list that is no list stays as it is: evaluateAcceptance reports the execution as missing.
+  if (tests !== undefined && !Array.isArray(tests)) return { execution: { ...rest, tests }, errors };
+  const full = tests ?? [], seen = new Set();
+  for (const e of entries) {
+    const id = `${e.file} / ${e.name}`;
+    if (seen.has(id)) { if (!errors.some(x => x.startsWith(`${id} is listed`))) errors.push(`${id} is listed more than once in execution.passed`); }
+    seen.add(id);
+    if (full.some(t => t?.file === e.file && t?.name === e.name)) errors.push(`${id} is in both execution.passed and execution.tests: list each test once`);
+  }
+  return { execution: { ...rest, tests: [...full, ...entries] }, errors };
+}
+
 export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map(), carriedFrom = null }) {
   const errors = [];
   const unverified = [];
@@ -184,7 +212,7 @@ export function evaluateAcceptance({ baseline, candidate, task, execution, requi
   else {
     if ((execution?.revision !== candidate.name && !(carriedFrom && execution?.revision === carriedFrom)) || !Array.isArray(execution?.tests)) errors.push('execution evidence is missing or names a different candidate revision');
     for (const m of Array.isArray(maps) ? maps : []) {
-      const runs = (execution?.tests ?? []).filter(r => r.file === m.file && r.name === m.name);
+      const runs = (Array.isArray(execution?.tests) ? execution.tests : []).filter(r => r.file === m.file && r.name === m.name);
       if (runs.length === 1 && runs[0].status === 'passed') continue;
       // A pending test still runs once and is reported; only its result may be a failure (MAINT-0012).
       const waiting = pending.get(m.acceptance);

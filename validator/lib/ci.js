@@ -6,7 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
 
-import { evaluateAcceptance, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
+import { evaluateAcceptance, expandExecution, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, fixedAfterError, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
 import { carriedFrom } from './carry.js';
 import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
@@ -247,7 +247,10 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const ownerTests = namesOwnerTests(config);
   if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
   if (selected.length && production.length) {
-    const execution = trust?.claim('verification', candidate.name)?.execution ?? attested?.verification?.execution;
+    // MAINT-0023 P7: the agent's own evidence may list its passing tests compactly; a signed receipt's execution is read as it is.
+    const claimed = trust?.claim('verification', candidate.name)?.execution;
+    const { execution, errors: executionErrors } = claimed ? { execution: claimed, errors: [] } : expandExecution(attested?.verification?.execution);
+    for (const error of executionErrors) { findings.push(error); fail = true; }
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
     // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012), where
     // the project's acceptance tests are owner-approved. It must be pending by the baseline's records and the

@@ -340,7 +340,7 @@ git commit -m "MAINT-0021: the review rule in the procedure, policy, templates a
 
 - [ ] **Step 1: Write the record.** Write `MAINT-0021-review-policy.md` in the style of the
   MAINT-0018 and MAINT-0020 records. It holds:
-  - the evidence: 67 mateen-systems reviews over 24 fix chains, findings per round of 5.5, 2.2,
+  - the evidence: 67 reviews of a client project over 24 fix chains, findings per round of 5.5, 2.2,
     1.6 and 1.5, 35% of blocking findings first seen in round 2 or later, and their origin
     (residuals and fix-introduced);
   - the owner's words and approval of 18 October 2026;

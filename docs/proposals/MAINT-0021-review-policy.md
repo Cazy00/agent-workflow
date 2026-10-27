@@ -11,7 +11,7 @@ put very hard rules for reviewing. Those rules are not meant to restrict review 
 more efficient in time, resources and cost."
 
 A study on 17 October 2026 covered:
-- mateen-systems: 67 reviews over 24 fix chains, R-0001 to R-0075, posted as PR comments;
+- a client project: 67 reviews over 24 fix chains, posted as PR comments;
 - agent-workflow v2.5.0 to v2.9.0.
 
 What it found:

@@ -1309,7 +1309,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // MAINT-0016: `git fetch` moves origin/<trusted branch>, never the local branch, so `wf next` reads the newer of the two
-// when one contains the other, and says so. In mateen-systems a stale local main named a stale next action.
+// when one contains the other, and says so. In a client project a stale local main named a stale next action.
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 function repo(t) {
@@ -2438,7 +2438,7 @@ In `package.json` set `"version": "2.4.0"`. At the top of `CHANGELOG.md`, under 
 ```md
 ## v2.4.0
 
-Lets the agent stop only for decisions, sizes review to the change, and has a milestone's trial walked in a browser before the owner tries it (MAINT-0016). In mateen-systems' M-0003, the owner:
+Lets the agent stop only for decisions, sizes review to the change, and has a milestone's trial walked in a browser before the owner tries it (MAINT-0016). In a client project's M-0003, the owner:
 - sent 41 messages, 29 of them "merged", "continue" or "what now";
 - merged 13 pull requests unread;
 - waited 7 h 25 min while the agent waited on CI with nothing needed from the owner;
@@ -2529,7 +2529,7 @@ Post the review on the pull request, as the workflow's own changes always are. T
 
 ---
 
-## After the release: mateen-systems (separate work in that repository, by its owner and agent)
+## After the release: the client project (separate work in that repository, by its owner and agent)
 
 1. `bin/wf-upgrade` to v2.4.0 in a pull request the owner merges. It refreshes `wf-ci.yml` and adds `trial-walker.md`.
 2. `bin/wf-setup` settings:

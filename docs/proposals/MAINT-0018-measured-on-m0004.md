@@ -10,7 +10,7 @@
 
 ---
 
-## 1. What happened in M-0004 (mateen-systems, 12–14 October 2026)
+## 1. What happened in M-0004 (a client project, 12–14 October 2026)
 
 M-0004 was MAINT-0016's measurement (its § 7). It ran in two sessions, both on agent-workflow **v2.4.2**: a Claude CLI session on the owner's MacBook (12 Oct 06:00 → 13 Oct 06:46 UTC) and one on the owner's home server (13 Oct 18:09 → 14 Oct 04:50). v2.5.1 was released an hour before the second session began, and the milestone stayed on v2.4.2 until the owner merged the upgrade after accepting it. Finding that out needed the project's Git history: no session outcome, review or milestone record said which version it ran under.
 
@@ -32,8 +32,8 @@ Auto-merge worked for all 12 of the agent's own pull requests. What remains is m
 |---|---|---|---|
 | Every task needed a Done pull request of its own | workflow defect | `ci.js` accepted Done in a task's pull request only while the trusted branch held it Ready or Active; planned tasks wait there as Draft and are claimed on their branch. #68, #70, #72, #75, #77, #82; #77 stalled 11 h 41 min on the GitHub billing outage | A1 |
 | The acceptance had to merge before the owner's upgrade (#84 before #79) | workflow defect | `acceptance-evidence.js` refused any non-record change after the accepted revision, workflow files merged from the trusted branch included; delivery evidence already carried them (`carry.js`). The owner had turned on auto-merge for #79 | A2 |
-| A test-only task reviewed deep three times | workflow defect | mateen's `**/*{invoice,numbering,issuer}*` matched `apps/server/test/acceptance/numbering.ts`; T-0019: three Codex runs, about 3 h, about 174 M tokens | A3 |
-| F-0001: the session template has no `limit` | workflow defect | mateen `docs/workflow/feedback/inbox/F-0001.md` | A5 |
+| A test-only task reviewed deep three times | workflow defect | a client project's `**/*{invoice,numbering,issuer}*` matched `apps/server/test/acceptance/numbering.ts`; T-0019: three Codex runs, about 3 h, about 174 M tokens | A3 |
+| F-0001: the session template has no `limit` | workflow defect | a client project's feedback record | A5 |
 | F-0002: `scripts/wf` cannot be pointed at a clean review clone | workflow defect | `bin/wf-adopt` wrote `--repo "$ROOT"` unconditionally; recurred in T-0020, T-0021, T-0016, T-0017, T-0022, T-0023 | A5 |
 | No record of the workflow version a piece of work ran under | improvement proposal | the owner's words above; this review had to rebuild it from `docs/workflow/config.json`'s history | A4 |
 | Task leads implemented their tasks themselves; leads grew to 535–635 K tokens | agent misunderstanding, made likely by hand-written briefs | `execute.md`: "It has a fresh helper implement it"; briefs said "Build it." for 7 of 8 tasks; task leads spent about 60 % of the milestone's tokens | B1 |
@@ -90,7 +90,7 @@ On M-0005: no Done pull requests (A1); no acceptance ordering advice (A2); no de
 
 ## 7. Release and adoption
 
-Release v2.6.0. For mateen-systems, in that repository: run `bin/wf-upgrade` (it refreshes `scripts/wf`, `wf-ci.yml` and the reviewer agent, and sets M-0005's `workflow_version` if M-0005 is authorised by then); the owner merges it. Authorising M-0005 afterwards sets `workflow_version: v2.6.0`.
+Release v2.6.0. For the client project, in that repository: run `bin/wf-upgrade` (it refreshes `scripts/wf`, `wf-ci.yml` and the reviewer agent, and sets M-0005's `workflow_version` if M-0005 is authorised by then); the owner merges it. Authorising M-0005 afterwards sets `workflow_version: v2.6.0`.
 
 ## 8. Corpus size
 

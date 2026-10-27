@@ -1347,12 +1347,12 @@ git commit -m "MAINT-0014: publish within minutes; documents and v2.3.0" -m "Co-
 
 **Files:** none changed unless the review finds something.
 
-- [ ] **Step 1: Render mateen-systems' page with this branch's code**
+- [ ] **Step 1: Render the client project's page with this branch's code**
 
-Using a copy of the plan file drafted for mateen-systems (Task 9, Step 2) in a scratch copy of the mateen-systems checkout, run from that copy:
+Using a copy of the plan file drafted for the client project (Task 9, Step 2) in a scratch copy of the client project's checkout, run from that copy:
 
 ```bash
-node ~/Dev/agent-workflow/validator/cli.js status --client --live --candidate main --repo . > "$SCRATCH/mateen-client.html"
+node ~/Dev/agent-workflow/validator/cli.js status --client --live --candidate main --repo . > "$SCRATCH/client-project.html"
 ```
 
 Open it in the browser pane at 1366 px and at 360 px wide, in light and dark. Check: T-0009 shows *In progress* under *Now*; every Phase 1 step shows; no ID, branch or name appears (search the HTML for `T-0`, `M-0`, `claude/`, `Cazy00`); the relative time reads in Arabic; no horizontal scroll at 360 px.
@@ -1378,9 +1378,9 @@ Do not merge it: the owner's merge is the release approval.
 
 ---
 
-### Task 9: mateen-systems: adopt v2.3.0 and write the plan (after the owner merges and v2.3.0 is tagged)
+### Task 9: the client project: adopt v2.3.0 and write the plan (after the owner merges and v2.3.0 is tagged)
 
-**Files (in mateen-systems, a new branch `claude/client-plan` from `main`, in its own worktree; never T-0009's branch):**
+**Files (in the client project, a new branch `claude/client-plan` from `main`, in its own worktree; never T-0009's branch):**
 - Create: `docs/client-page/plan.json`
 - Modify: `docs/workflow/config.json` (pin by `bin/wf-upgrade`; `client.plan`)
 - Modify: `.github/workflows/wf-client-page.yml` (copied from v2.3.0, `__TRUSTED_BRANCH__` → `main`)
@@ -1392,7 +1392,7 @@ Run `bin/wf-upgrade` as `QUICKSTART.md` describes for v2.3.0 (it is the owner-ru
 
 - [ ] **Step 2: Write `docs/client-page/plan.json`**
 
-From `docs/plans/phase-0-foundations.md` and `docs/plans/phase-1-pilot.md`: Phase 0 with steps 1–7 `done: true` and step 8 → `M-0001`; Phase 1 with its ten steps and *Going live* in the plan's order (*Going live* after step 3), step 1 → `["M-0002", "M-0003"]`, the others without milestones. Every title and summary in plain Arabic for the shop owner, one sentence each, no spec references (no `B1`, `A6.5`, `D2`), no English except product names (Mateen Print, WhatsApp). Each summary says what the shop gets, not how it is built.
+From `docs/plans/phase-0-foundations.md` and `docs/plans/phase-1-pilot.md`: Phase 0 with steps 1–7 `done: true` and step 8 → `M-0001`; Phase 1 with its ten steps and *Going live* in the plan's order (*Going live* after step 3), step 1 → `["M-0002", "M-0003"]`, the others without milestones. Every title and summary in plain Arabic for the shop owner, one sentence each, no spec references (no `B1`, `A6.5`, `D2`), no English except product names (the client's print product, WhatsApp). Each summary says what the shop gets, not how it is built.
 
 - [ ] **Step 3: Arabic part titles**
 
@@ -1412,4 +1412,4 @@ One commit, `Client page: the whole plan, live (agent-workflow v2.3.0)`, ending 
 
 - [ ] **Step 7: Measure once live**
 
-After the merge and the first Pages deploy, push one commit to a task branch (the next real task commit; never an empty commit made only to test) and record the minutes from the push until the page shows the part *In progress*, as a comment on the mateen-systems pull request.
+After the merge and the first Pages deploy, push one commit to a task branch (the next real task commit; never an empty commit made only to test) and record the minutes from the push until the page shows the part *In progress*, as a comment on the client project's pull request.

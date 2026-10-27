@@ -12,7 +12,7 @@
 
 ---
 
-## 1. What happened in M-0003 (mateen-systems, 10–11 October 2026)
+## 1. What happened in M-0003 (a client project, 10–11 October 2026)
 
 Measured from the three session transcripts ("Continue working" and the two sessions it started) and the repository's pull requests.
 
@@ -176,7 +176,7 @@ It drives the real interface with browser automation (Playwright or the harness'
 
 ## 5. Not in this change
 
-- **A milestone integration branch** (IDEA-11, parked). Task pull requests would merge into `milestone/M-NNNN`, and the owner would merge once at acceptance. Its precondition, a test environment, now holds for mateen-systems. It touches every gate's notion of the trusted branch, so it should follow once A1–A3 have been measured on M-0004: as a separate maintenance item if owner merges or out-of-date churn are still a cost.
+- **A milestone integration branch** (IDEA-11, parked). Task pull requests would merge into `milestone/M-NNNN`, and the owner would merge once at acceptance. Its precondition, a test environment, now holds for the client project. It touches every gate's notion of the trusted branch, so it should follow once A1–A3 have been measured on M-0004: as a separate maintenance item if owner merges or out-of-date churn are still a cost.
 - **Several milestones at once.** The next milestone usually needs the owner's answers first (M-0004 has four questions), and two coordinators on one trusted branch multiply out-of-date pull requests. Part D's parallel task leads cover independent work inside a milestone.
 - **The client-page workflow's run count.** About 100 runs cost GitHub Actions minutes, not model tokens. It is a separate change to the published template.
 - **A per-milestone budget for second-model runs.** B2's levels already limit them. A count across pull requests needs history the gate does not read.
@@ -216,7 +216,7 @@ Release `v2.4.0`. `upgrades.json` lists, for a project moving its pin:
 - replace `AGENTS.md`'s merge sentence;
 - set `acceptance_evidence` if wanted.
 
-For mateen-systems, after the release (owner-run steps, in that repository):
+For the client project, after the release (owner-run steps, in that repository):
 1. `bin/wf-upgrade` to v2.4.0, merged by the owner (an enforcement change).
 2. `bin/wf-setup`: auto-merge on, approvals at acceptance on, second reviewer Codex `gpt-6.1-sol` at most `high`, deep paths for permissions, money, numbering and migrations, and acceptance evidence on.
 3. `bin/wf-protect --apply` with the owner's own login.

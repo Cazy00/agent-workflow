@@ -40,7 +40,7 @@ Costs use MAINT-0020's prices (Opus 5.5: $4 / $20 per million input / output tok
 - **Why it stayed.** `--limit 1` takes the newest open issue, so every run since has updated #104. #19 stopped at 12:01 UTC on 22 October and still shows that day's state.
 - **Why it can recur.** Nothing checks a second time before opening an issue. Nothing closes a second issue once it exists.
 
-Fix: P1. Clean-up: close #19 as superseded by #104. That waits for the owner's yes, because this session may not write to GitHub issues.
+Fix: P1. Clean-up: #19 was closed as superseded by #104 on 27 October 2026, on the owner's yes.
 
 ### 2.2 The failure emails about PrintFlow
 
@@ -52,7 +52,7 @@ They come from PrintFlow's `wf-status` workflow, which is the v1.10.1 template.
 
 The Mateen repository has the same workflow from v1.4.0, with 54 failures. Those runs belong to the collaborator's account, so the emails go to the collaborator, not to the owner.
 
-- **Now:** turn `wf-status` off in both repositories (`gh workflow disable wf-status.yml`, undone by `enable`). Their status issues have been stale since 13 October anyway. This waits for the owner's yes, as in § 2.1.
+- **Now:** turn `wf-status` off in both repositories (`gh workflow disable wf-status.yml`, undone by `enable`). Their status issues have been stale since 13 October anyway. Done on 27 October 2026, on the owner's yes: both are `disabled_manually`.
 - **If nothing is done:** the minutes return on 1 November and the runs succeed again until the minutes run out, so the emails come back late in the month.
 - **Lasting:** P2.
 
@@ -102,6 +102,12 @@ The causes, ranked:
 5. Gate loops: 1–2 h. These were draft pull requests failing `wf ci` before their evidence, Done records reverted, and five per-task reviews with no findings. Those reviews were valid then: they ran before the project moved to one review per milestone at 05:48 UTC on 25 October (#30).
 
 **So:** in mateen-systems, CI is the largest mechanical cost, but the days come from closing the milestone and waiting for taps. In headless-lightroom, CI takes a minute and costs nothing that matters.
+
+### 2.4 Two follow-up questions from the owner
+
+**Was the compaction count caused by the context cap?** Mostly yes, but it cost little time. Sessions A and B ran under the 200K cap of 24 October: all 47 of their compactions fired at 167–181K tokens, the cap less about 33K. C started after home moved to 240K and compacted at 207–237K. Across A's 37 compactions the time from the last reply before each to the first reply after was 92 minutes in all, median 84 seconds: about 1.5 h of A's 41.4 h. At 240K about a third fewer compactions would have saved about 30 minutes. A 1M window would have removed nearly all of them, but every request then carries the whole history: the large majority of the project's model cost is already cache reads at 167K, so most of that cost would grow with the window. The days came from the timers and the owner waits above; the lasting cure for the compactions is W3, the manager handing reading to workers, not a larger window.
+
+**Would caching speed up CI?** Not in mateen-systems: caching is already there and working. In the successful runs, the medians are `npm ci` 5 s (`setup-node` with `cache: npm`), `setup-node` 12 s, and the Postgres service 9 s. The time is in the tests: acceptance 12.6 min, `test:e2e` 2.9 min, `test:db` 1.4 min. The general speed-ups that do apply are those in P4: run independent jobs at the same time, split the slow suite across workers, and skip the run when the change cannot affect it.
 
 ## 3. CI, measured
 

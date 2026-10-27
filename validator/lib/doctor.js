@@ -20,6 +20,23 @@ const run = (cmd, args, timeout = 20000, env = process.env) => {
 };
 const firstLine = s => String(s ?? '').split('\n').find(Boolean) ?? '';
 
+// MAINT-0023 P10: a warning is a gap that is not the machine's: the repository's rules may hold the agent's own pull requests
+// back, which no tool on this machine fixes and which must not fail the exit code. A small copy of the pull_request and
+// merge_queue logic of adapters/protect.mjs, which bin/wf does not ship (it extracts only validator/). Bypass lists need the
+// owner's login to read, so the agent's account cannot see them and they are not used.
+export function ruleWarnings({ rules, branch }) {
+  const warnings = [];
+  const warn = (name, detail, neededFor) => warnings.push({ name: `${name} on ${branch}`, detail, needed_for: neededFor });
+  const prs = rules.filter(r => r?.type === 'pull_request').map(r => r.parameters ?? {});
+  const count = Math.max(0, ...prs.map(x => Number(x.required_approving_review_count ?? 0)));
+  const any = key => prs.some(x => x[key] === true);
+  if (count > 0) warn('required approving reviews', `${branch} requires ${count} approving review(s), and the agent's account cannot approve its own pull request: its auto-merge waits for someone else's approval`, 'auto-merge');
+  if (any('require_code_owner_review')) warn('code-owner review', `${branch} requires code-owner review: a pull request that touches a file with a code owner waits for that owner, which the agent's account is not`, 'auto-merge');
+  if (any('require_last_push_approval')) warn('approval of the most recent push', `${branch} requires approval of the most recent push, which the agent's own pushes can never get from itself`, 'auto-merge');
+  if (rules.some(r => r?.type === 'merge_queue')) warn('a merge queue', `${branch} uses a merge queue, which the agent's account cannot use to merge its own pull request`, 'auto-merge');
+  return warnings;
+}
+
 const real = p => { try { return fs.realpathSync(p); } catch { return p; } };
 export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const checks = [];
@@ -48,6 +65,16 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
       add(`push access to ${config.repository}`, repo.ok && push === true, repo.ok ? (push === true ? 'yes' : 'the signed-in account cannot push') : 'the repository could not be read', 'branches and pull requests');
     }
   }
+  // MAINT-0023 P10: only with auto_merge, where the agent's pull requests are meant to merge without the owner.
+  const warnings = [];
+  if (ghVersion.ok && config.approval?.auto_merge === true && /^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) {
+    const branch = config.trusted_branch ?? 'main';
+    const read = run('gh', ['api', `repos/${config.repository}/rules/branches/${encodeURIComponent(branch)}`]);
+    let rules = null;
+    try { rules = read.ok ? JSON.parse(read.out) : null; } catch { rules = null; }
+    if (Array.isArray(rules)) warnings.push(...ruleWarnings({ rules, branch }));
+    else warnings.push({ name: `the rules on ${branch}`, detail: `could not read the rules on ${branch} (${firstLine(read.out) || 'no usable answer'}): whether a review or merge queue holds the agent's auto-merge back is unknown`, needed_for: 'auto-merge' });
+  }
   const second = config.review?.second_model;
   if (second?.tool) {
     const tool = run(second.tool, ['--version']);
@@ -60,8 +87,8 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const gaps = checks.filter(c => !c.ok).map(c => c.name);
   // MAINT-0020 P7(c): when planning, the plan's question, before authorisation (wf next prints doctor in the plan action).
   return {
-    ok: !gaps.length, checks, gaps,
-    next: gaps.length ? 'ask the owner about every gap in your next question (the plan\'s, when planning), and carry on with the work the gaps do not block' : 'nothing is missing',
+    ok: !gaps.length, checks, gaps, warnings,
+    next: (gaps.length ? 'ask the owner about every gap in your next question (the plan\'s, when planning), and carry on with the work the gaps do not block' : 'nothing is missing') + (warnings.length ? `; ${warnings.length} warning(s) do not fail this check but may hold the agent's pull requests back: put them in the same question` : ''),
     limitation: 'A check that passes says the tool or access answered now; it grants nothing and no gate reads it.',
   };
 }

@@ -7,6 +7,9 @@
 # consequential against the records and pull requests. On a public repository the issue is public.
 # `--pull-requests` needs a workflow pin that has it: copy this file from the release you pin.
 # It runs on GitHub's runner unless the repository variable WF_GATE is `on`: then on the gate runner, labelled `wf-gate` (MAINT-0017).
+# The six-hourly schedule runs only when WF_GATE is `on`: without a gate runner the view refreshes on pushes to the trusted
+# branch and on manual runs, and the skipped scheduled job uses no minutes and sends no email (MAINT-0023). The publish step
+# keeps one open issue: it edits the oldest labelled wf-status and closes any other with a comment naming it.
 name: wf-status
 on:
   push:
@@ -23,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   status:
-    if: github.ref == 'refs/heads/__TRUSTED_BRANCH__'
+    if: github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || vars.WF_GATE == 'on')
     runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
@@ -82,9 +85,21 @@ jobs:
           # An issue body holds at most 65,536 characters: cut at a line boundary well before that.
           node -e 'const fs = require("fs"), f = process.argv[1], t = fs.readFileSync(f, "utf8");
             if (t.length > 60000) fs.writeFileSync(f, t.slice(0, t.lastIndexOf("\n", 60000)) + "\n\n_Truncated: run `scripts/wf status` for the full view._\n");' "$body"
-          number="$(gh issue list --state open --label wf-status --limit 1 --json number --jq '.[0].number // empty')"
-          if [ -n "$number" ]; then
-            gh issue edit "$number" --body-file "$body"
+          # Every open issue labelled wf-status, oldest first, pull requests left out (the issues endpoint lists them too). A failed
+          # lookup stops the step: it must never look like "no issue" and create a duplicate.
+          lookup() { gh api --paginate "repos/$GH_REPO/issues?state=open&labels=wf-status&sort=created&direction=asc&per_page=100" --jq '.[] | select(.pull_request == null) | .number'; }
+          numbers="$(lookup)"
+          if [ -z "$numbers" ]; then
+            # A run that overlaps another may have created the issue a moment ago: look once more before creating.
+            sleep 5
+            numbers="$(lookup)"
+          fi
+          if [ -n "$numbers" ]; then
+            keep="$(printf '%s\n' "$numbers" | head -n 1)"
+            gh issue edit "$keep" --body-file "$body"
+            for other in $(printf '%s\n' "$numbers" | tail -n +2); do
+              gh issue close "$other" --comment "Superseded by #$keep: the status view is kept in one issue." || echo "::warning::Could not close the extra status issue #$other."
+            done
           else
             gh label create wf-status --force --color BFD4F2 --description 'Project status from wf status, updated automatically'
             gh issue create --title 'Project status' --label wf-status --body-file "$body"

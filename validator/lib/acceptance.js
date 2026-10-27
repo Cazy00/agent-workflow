@@ -88,7 +88,7 @@ export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (
 // expansion refuses what the full form's count would catch with a clearer message (a test listed twice, or in both lists). A signed
 // receipt's execution is never read through this (ci.js applies it to the agent's delivery evidence alone).
 const nonEmpty = v => typeof v === 'string' && v.trim() !== '';
-const httpsRun = v => { if (!nonEmpty(v) || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
+export const httpsRun = v => { if (!nonEmpty(v) || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
 export function expandExecution(execution) {
   if (!execution || typeof execution !== 'object' || Array.isArray(execution) || !Object.hasOwn(execution, 'passed')) return { execution, errors: [] };
   const { passed, run, tests, ...rest } = execution, errors = [];

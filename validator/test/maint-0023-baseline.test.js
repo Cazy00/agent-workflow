@@ -140,6 +140,61 @@ test('MAINT-0023 P5(c): a difference in code under the records directory\'s sibl
   assert.deepEqual(h.candidates, []);
 });
 
+// Review F3: only the planning records (tasks, feedback, notes) leave the code unchanged. The config (the workflow pin, paths and
+// required checks), the acceptance definitions and the profile change what the project's own checks run.
+test('MAINT-0023 P5(c): a change to the config, the acceptance definitions or the profile ends the walk', t => {
+  for (const [file, change] of [['docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), setup_budget_days: 3 })], ['docs/workflow/acceptance.json', x => `${x}\n`], ['docs/workflow/profile.md', x => `${x}\nmore\n`]]) {
+    const p = project(t);
+    const before = p.git('rev-parse', 'HEAD');
+    p.edit(file, change);
+    const changed = p.commit(`a change to ${file}`);
+    p.write('docs/workflow/notes.md', 'records only\n');
+    const after = p.commit('records: a note');
+    const h = hint(p, after, { [before]: [run(15, before)], [changed]: [run(16, changed)] });
+    assert.deepEqual(h.candidates.map(c => c.commit), [changed], `${file}: the commit that changed it is the last candidate, its parent is not`);
+    // The walk compares each ancestor with the baseline: from \`before\` to \`after\` the file differs, so \`before\` lends nothing.
+    assert.ok(!h.candidates.some(c => c.commit === before), file);
+    assert.deepEqual(h.results.map(r => r.commit), [changed], file);
+  }
+  // A task record is planning: the walk goes through it.
+  const p = project(t);
+  const before = p.git('rev-parse', 'HEAD');
+  p.edit(taskPath, x => `${x}\nnote\n`);
+  const after = p.commit('task note');
+  assert.deepEqual(baselineHint({ source: gitSource(p.repo, after), recordsDir: 'docs/workflow', runsFor: s => s === before ? [run(17, before)] : [] }).results.map(r => r.commit), [before]);
+});
+
+// Review F2: the runs of the workflows that test the commit decide. A scheduled run (wf-status refreshing the issue) tested nothing.
+test('MAINT-0023 P5(c): a scheduled run of wf-status, failed or not, neither rejects a commit nor lends its run', t => {
+  const p = project(t);
+  p.write('src/a.js', 'export const a = 1;\n');
+  const code = p.commit('the last code commit');
+  p.write('docs/workflow/notes.md', 'records only\n');
+  const records = p.commit('records');
+  const scheduled = (id, extra = {}) => run(id, code, { workflow_id: 2, name: 'wf-status', event: 'schedule', ...extra });
+  for (const extra of [{}, { conclusion: 'failure' }, { status: 'in_progress', conclusion: null }]) {
+    const h = hint(p, records, { [code]: [run(11, code), scheduled(12, extra)] });
+    assert.deepEqual(h.results.map(r => [r.value, r.workflow]), [[`pass: ${URL(11)} (code unchanged since ${code.slice(0, 12)})`, 'CI']], JSON.stringify(extra));
+  }
+  // Only scheduled runs: nothing tested the commit.
+  assert.deepEqual(hint(p, records, { [code]: [scheduled(12)] }).results, []);
+  // Fail closed for the workflows that do test: a failed push run, a failed manual run or a failed pull_request run of another workflow.
+  const other = (id, event, conclusion) => run(id, code, { workflow_id: 3, name: 'wf-client-page', event, conclusion });
+  for (const event of ['push', 'workflow_dispatch']) assert.deepEqual(hint(p, records, { [code]: [run(11, code), other(13, event, 'failure')] }).results, [], event);
+  assert.deepEqual(hint(p, records, { [code]: [run(11, code, { conclusion: 'failure' }), scheduled(12)] }).results, []);
+});
+
+// Review N6: the reference is printed to be recorded, so it must be a plain https link.
+test('MAINT-0023 P5: a run whose link holds whitespace, a newline or credentials is not named', t => {
+  const { p, head, merged } = withPullRequest(t);
+  const source = gitSource(p.repo, merged);
+  for (const html_url of ['https://x\nstatus: Done', 'https://x y', 'https://user:pw@github.com/a/b', 'http://github.com/a/b', 'https://', '']) {
+    const j = judgeRun({ source, candidate: { kind: 'merge-head', commit: head }, run: run(3, head, { html_url }) });
+    assert.equal(j.ok, false, JSON.stringify(html_url));
+    assert.match(j.reason, /https link/);
+  }
+});
+
 test('MAINT-0023 P5(b) and (c): without a way to read the runs the hint names the commits, never a run', t => {
   const { p, merged, head } = withPullRequest(t);
   const h = baselineHint({ source: gitSource(p.repo, merged), recordsDir: 'docs/workflow', runsFor: null });

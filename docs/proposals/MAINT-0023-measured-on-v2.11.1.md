@@ -103,6 +103,12 @@ The causes, ranked:
 
 **So:** in mateen-systems, CI is the largest mechanical cost, but the days come from closing the milestone and waiting for taps. In headless-lightroom, CI takes a minute and costs nothing that matters.
 
+### 2.4 Two follow-up questions from the owner
+
+**Was the compaction count caused by the context cap?** Mostly yes, but it cost little time. Sessions A and B ran under the 200K cap of 24 October: all 47 of their compactions fired at 167–181K tokens, the cap less about 33K. C started after home moved to 240K and compacted at 207–237K. Across A's 37 compactions the time from the last reply before each to the first reply after was 92 minutes in all, median 84 seconds: about 1.5 h of A's 41.4 h. At 240K about a third fewer compactions would have saved about 30 minutes. A 1M window would have removed nearly all of them, but every request then carries the whole history: the large majority of the project's model cost is already cache reads at 167K, so most of that cost would grow with the window. The days came from the timers and the owner waits above; the lasting cure for the compactions is W3, the manager handing reading to workers, not a larger window.
+
+**Would caching speed up CI?** Not in mateen-systems: caching is already there and working. In the successful runs, the medians are `npm ci` 5 s (`setup-node` with `cache: npm`), `setup-node` 12 s, and the Postgres service 9 s. The time is in the tests: acceptance 12.6 min, `test:e2e` 2.9 min, `test:db` 1.4 min. The general speed-ups that do apply are those in P4: run independent jobs at the same time, split the slow suite across workers, and skip the run when the change cannot affect it.
+
 ### 2.5 After the snapshot: how M-0006 closed
 
 The measurements end at about 15:00 UTC on 27 October. The manager session went on to close M-0006, and its last hour repeats three findings:
@@ -113,12 +119,6 @@ The measurements end at about 15:00 UTC on 27 October. The manager session went 
 - **16:11–16:12.** The tap was sent, approved within a minute, and #130 merged. The manager closed its umbrella job and the milestone.
 
 From opening #130 to its merge took 55 minutes for a records-only change. Without the flaky test and the cancelled run, it would have taken about 22 minutes. Without CI on records, it would have taken a few. The session also compacted once more at 15:09, at 168K tokens: it started under the 200K cap, and a running session keeps the window it started with.
-
-### 2.4 Two follow-up questions from the owner
-
-**Was the compaction count caused by the context cap?** Mostly yes, but it cost little time. Sessions A and B ran under the 200K cap of 24 October: all 47 of their compactions fired at 167–181K tokens, the cap less about 33K. C started after home moved to 240K and compacted at 207–237K. Across A's 37 compactions the time from the last reply before each to the first reply after was 92 minutes in all, median 84 seconds: about 1.5 h of A's 41.4 h. At 240K about a third fewer compactions would have saved about 30 minutes. A 1M window would have removed nearly all of them, but every request then carries the whole history: the large majority of the project's model cost is already cache reads at 167K, so most of that cost would grow with the window. The days came from the timers and the owner waits above; the lasting cure for the compactions is W3, the manager handing reading to workers, not a larger window.
-
-**Would caching speed up CI?** Not in mateen-systems: caching is already there and working. In the successful runs, the medians are `npm ci` 5 s (`setup-node` with `cache: npm`), `setup-node` 12 s, and the Postgres service 9 s. The time is in the tests: acceptance 12.6 min, `test:e2e` 2.9 min, `test:db` 1.4 min. The general speed-ups that do apply are those in P4: run independent jobs at the same time, split the slow suite across workers, and skip the run when the change cannot affect it.
 
 ## 3. CI, measured
 

@@ -51,7 +51,7 @@ going to work out."
 - **`review.plan_command`:** optional, one line of at most 300 printable characters containing
   `{file}`; printed for the plan review with `{file}` the milestone record's path. Example (a
   project whose reviewer is Harbor's codereview):
-  `codereview plan --file {file} --author-vendor anthropic --project mateen-systems`.
+  `codereview plan --file {file} --author-vendor anthropic --project <project>`.
 - **`review.reviewer_command`** now needs `{role}` **or** `{level}` (v2.10.0: `{role}`), so a
   command that takes levels, such as `codereview run --level {level} …`, can be the reviewer.
   Every v2.10.0 value stays valid. `{level}` is already the review's own word in v2.10.0
@@ -302,8 +302,8 @@ going to work out."
 - [ ] **Step 1: Write the text.** Keep `review.md` under 2,100 words (the session budget is three
   to four thousand words with the brief); record the corpus words before and after.
 - [ ] **Step 2: The record:** the evidence (Harbor's 22 October count: 69 answered reviewer calls on
-  37 changes, about four with serious findings, all in root, merge-gate or money code; mateen-
-  systems' rounds from MAINT-0021), the owner's approval, the controls this weakens (task reviews,
+  37 changes, about four with serious findings, all in root, merge-gate or money code; a client
+  project's rounds from MAINT-0021), the owner's approval, the controls this weakens (task reviews,
   other-vendor independence) and what to watch (escaped bugs in code merged without a review; the
   30-day check on 22 November 2026).
 - [ ] **Step 3: Upgrade notes:** "Nothing changes until the project sets `review.cadence`,

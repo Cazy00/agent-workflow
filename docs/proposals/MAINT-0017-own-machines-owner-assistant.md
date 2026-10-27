@@ -15,20 +15,20 @@
 
 ## 1. What happened (1–13 October 2026)
 
-GitHub Actions stopped on the owner's account on 13 October. Every job on mateen-systems #77 failed without starting: "The job was not started because recent account payments have failed or your spending limit needs to be increased." `wf ci` is a required check that runs only on GitHub's runners, so no pull request could merge. M-0004 stopped with T-0022 and T-0023 recorded but unable to start.
+GitHub Actions stopped on the owner's account on 13 October. Every job on one of a client project's pull requests failed without starting: "The job was not started because recent account payments have failed or your spending limit needs to be increased." `wf ci` is a required check that runs only on GitHub's runners, so no pull request could merge. M-0004 stopped with T-0022 and T-0023 recorded but unable to start.
 
 Billable minutes, 1–12 October, rebuilt from every job's duration (rounded up per job, as GitHub bills). Total 2,737; GitHub's alert said 2,704 of 3,000.
 
 | Source | Minutes | Share |
 |---|---|---|
-| mateen-systems `CI` (`checks`, `acceptance`, `deploy`) | 1,969 | 72 % |
+| Client project `CI` (`checks`, `acceptance`, `deploy`) | 1,969 | 72 % |
 |  of which re-run on `main` after each merge | 581 | |
-| mateen-systems `wf-client-page` | 313 | 11 % |
-| mateen-systems `wf ci` | 162 | 6 % |
-| mateen-systems `wf-status` | 61 | 2 % |
+| Client project `wf-client-page` | 313 | 11 % |
+| Client project `wf ci` | 162 | 6 % |
+| Client project `wf-status` | 61 | 2 % |
 | two other private projects | 232 | 8 % |
 
-- Daily use in mateen-systems: 83, 348, 517, 752, 805 minutes (8–12 October). It rose with the acceptance suite, whose test step alone reached about 6¼ minutes per run.
+- Daily use in the client project: 83, 348, 517, 752, 805 minutes (8–12 October). It rose with the acceptance suite, whose test step alone reached about 6¼ minutes per run.
 - 532 jobs ran 20 seconds or less, and each was billed a full minute: 532 minutes. The client page alone ran 642 jobs (313 minutes): a dispatch on every push to every branch, then a build and a deploy.
 - 30 of 72 pull requests changed only records or documents. Each still ran the full suite twice, on the pull request and again on `main`: about 330 minutes.
 - Of 64 runs on `main` after a merge, one failed: a timeout in `sections.test.ts` on a records-only merge whose pull request had passed on the same tree. It was a flaky test, not a defect the pull request's run missed. The ruleset requires branches to be up to date, so `main` always held exactly the tree the pull request had tested.
@@ -49,7 +49,7 @@ Each change names the failure it prevents and the check that catches a recurrenc
 
 ### Part A: run on our own machines
 
-**A1. A runner switch in every installed workflow.** `wf-ci.yml`, `wf-status.yml` and `wf-client-page.yml` use `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}` (v2.5.0; since v2.5.1 the fixed label `wf-gate`, switched by `WF_GATE`). The setup procedure gives a project's own CI the same pattern with `vars.CI_RUNNER` (mateen-systems #74 is the first instance). Deleting a variable sends those jobs back to GitHub. Since v2.5.1, `wf-ci.yml` takes the gate only for pull requests into the trusted branch, and each gate job's first step checks the branch name exactly (A2's last bullet).
+**A1. A runner switch in every installed workflow.** `wf-ci.yml`, `wf-status.yml` and `wf-client-page.yml` use `runs-on: ${{ vars.WF_CI_RUNNER || 'ubuntu-latest' }}` (v2.5.0; since v2.5.1 the fixed label `wf-gate`, switched by `WF_GATE`). The setup procedure gives a project's own CI the same pattern with `vars.CI_RUNNER` (a client project's is the first instance). Deleting a variable sends those jobs back to GitHub. Since v2.5.1, `wf-ci.yml` takes the gate only for pull requests into the trusted branch, and each gate job's first step checks the branch name exactly (A2's last bullet).
 - Prevents: § 2.1. Check: template tests assert each installed job's `runs-on`. `wf-upgrade` refreshes the three files.
 
 **A2. Two runners per project: build and gate** (setup and operate procedures; scripts under `server/`).
@@ -159,9 +159,9 @@ Run M-0005 on the new version, and record:
 
 ## 8. Release and adoption
 
-- **v2.5.0 (Part A):** A1, A2, A4, A5, A6, then A3. mateen-systems keeps #74's project-local switches until it moves its pin.
+- **v2.5.0 (Part A):** A1, A2, A4, A5, A6, then A3. The client project keeps its project-local switches until it moves its pin.
 - **v2.6.0 (Parts B and C):** B1–B4, C2, C3. C1 is the owner's action once every project is past v2.5.0.
-- **mateen-systems** finishes M-0004 on v2.4.x. It moves its pin as the first task of M-0005 on the owner's server.
+- **The client project** finishes M-0004 on v2.4.x. It moves its pin as the first task of M-0005 on the owner's server.
 
 ## 9. Corpus size
 

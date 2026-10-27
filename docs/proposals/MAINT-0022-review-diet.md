@@ -17,7 +17,7 @@ What the owner's own repositories showed that day:
 - About four changes had serious findings, all in root, merge-gate or money code.
 - About a third of the reviews were of records, docs or configs.
 
-What projects showed (MAINT-0021): mateen-systems' review rounds found fewer findings each round
+What projects showed (MAINT-0021): a client project's review rounds found fewer findings each round
 (about 5.5, 2.2, 1.6, 1.5 per review), and the serious late catches were in permissions, money,
 data loss and gates. v2.10.0 cut the repeat rounds; projects still review every task, about one
 run per task and two per deep task, on top of the milestone review.

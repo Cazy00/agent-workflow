@@ -24,7 +24,7 @@ still need them: merge to production, anything irreversible, new or rotated keys
   at a computer, pressing GitHub's merge button.
 - Between 12 and 14 October, the merges the policy reserves for the owner were all done that
   way, for example:
-  - workflow upgrades: Cazy00/mateen-systems#63, #79 and #85;
+  - workflow upgrades: three pull requests of a client project;
   - workflow releases: Cazy00/agent-workflow#47 to #50.
 - Each one waited until the owner was at a computer.
 
@@ -77,7 +77,7 @@ merged head.
 
 ## 6. How we will know
 
-The next workflow upgrade PR in Cazy00/mateen-systems is merged from the owner's phone. Its
+The next workflow upgrade PR in a client project's repository is merged from the owner's phone. Its
 receipt names its head commit, and `wf ci` passes on `main` afterwards.
 
 ## 7. Closure (23 October 2026)

@@ -695,5 +695,5 @@ git commit -m "v2.5.0: MAINT-0017 Part A, our own machines"
 
 ## Adoption (after the release, outside this plan)
 
-- **mateen-systems:** finishes M-0004 on v2.4.x with the project-local switches from Cazy00/mateen-systems#74. Moving to v2.5.0 is M-0005's first task, on the owner's server. `wf-upgrade` lists `wf-ci.yml` as changed by the project; its `runs-on` line already matches.
+- **The client project:** finishes M-0004 on v2.4.x with its project-local switches. Moving to v2.5.0 is M-0005's first task, on the owner's server. `wf-upgrade` lists `wf-ci.yml` as changed by the project; its `runs-on` line already matches.
 - **The owner's home server:** its admin folder (project 003) installs from `server/ci-runner/` from then on, and records what's installed.

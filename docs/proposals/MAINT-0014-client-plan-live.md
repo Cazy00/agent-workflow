@@ -6,7 +6,7 @@ Status: design, approved by the owner on 11 October 2026. Target release: v2.3.0
 
 | Report | Classification | Evidence | Disposition |
 |---|---|---|---|
-| mateen-systems, 10–11 October 2026 (owner-merge, pinned to v2.2.0) | Improvement proposal | The published client page (https://cazy00.github.io/mateen-systems/) said "nothing is being built at this moment" while T-0009 had two commits on its branch that day: the page reads the trusted branch only and rebuilds only on a push to it. It shows three stages, while the project's plan runs to Phase 1's ten steps and going live (`docs/plans/phase-1-pilot.md`), which exist in no record the page reads. The current stage's parts are behind a disclosure, and accepted stages list none. | Fixed here |
+| A client project, 10–11 October 2026 (owner-merge, pinned to v2.2.0) | Improvement proposal | The published client page said "nothing is being built at this moment" while T-0009 had two commits on its branch that day: the page reads the trusted branch only and rebuilds only on a push to it. It shows three stages, while the project's plan runs to Phase 1's ten steps and going live (`docs/plans/phase-1-pilot.md`), which exist in no record the page reads. The current stage's parts are behind a disclosure, and accepted stages list none. | Fixed here |
 
 The owner's brief, in their words: "what is important to the user is to see the full plan and see progress, see what have been done and what is being done, and what will be done. in real time. the plan can change its okay, things can be added to it. accordingly it will be updated remember 'real time'." The `wf-status` issue is the comparison they liked, "but not for a non technical person", and it addresses the developer.
 
@@ -117,7 +117,7 @@ Workflow rule: a task record is removed once its milestone is accepted. A finish
 - `concurrency`: a running build on the trusted branch finishes and only the newest waiting one runs next (`cancel-in-progress` is false there, so steady pushes cannot starve the deploy); runs on other refs cancel in progress.
 - If the build fails, nothing deploys and the last good page stays live.
 
-Expected delay from a push to the page: about two to three minutes (dispatch, build, Pages deploy). The mateen-systems rollout measures it.
+Expected delay from a push to the page: about two to three minutes (dispatch, build, Pages deploy). The client project's rollout measures it.
 
 ## Code changes
 
@@ -141,13 +141,13 @@ In `validator/test/client.test.js`, with fixtures built in temporary Git reposit
 - Privacy: the HTML holds no task or milestone ID, branch name, person or pull request number, in English and Arabic.
 - Unchanged behaviour: the existing tests pass, adjusted only for accepted stages now listing parts.
 
-Then `npm test`, an independent review in a separate context, and the mateen-systems page rendered with `--live` and checked in a browser at 1366 px and 360 px wide, light and dark.
+Then `npm test`, an independent review in a separate context, and the client project's page rendered with `--live` and checked in a browser at 1366 px and 360 px wide, light and dark.
 
 ## Rollout
 
 1. **agent-workflow, MAINT-0014**, branch `claude/MAINT-0014-client-plan`: this design, the code, tests and documents in one pull request. Merging it is the owner's approval of the release; `release-tag.yml` tags v2.3.0.
-2. **mateen-systems**, its own branch from `main` (not T-0009's): move the pin to v2.3.0 with `bin/wf-upgrade`; add `docs/client-page/plan.json` with Arabic titles and summaries for Phase 0 (its steps 1–7 `done`, step 8 M-0001), Phase 1's ten steps and going live (step 1 with M-0002 and M-0003), drafted for the owner to approve; Arabic `client_title`s for M-0001's and M-0002's parts where they are English; set `client.plan`; copy the new `wf-client-page.yml`. The owner merges it.
-3. **Measured once live**: push a commit to a task branch and record the minutes until the page shows the part *In progress*, in the mateen-systems pull request.
+2. **The client project**, its own branch from `main` (not T-0009's): move the pin to v2.3.0 with `bin/wf-upgrade`; add `docs/client-page/plan.json` with Arabic titles and summaries for Phase 0 (its steps 1–7 `done`, step 8 M-0001), Phase 1's ten steps and going live (step 1 with M-0002 and M-0003), drafted for the owner to approve; Arabic `client_title`s for M-0001's and M-0002's parts where they are English; set `client.plan`; copy the new `wf-client-page.yml`. The owner merges it.
+3. **Measured once live**: push a commit to a task branch and record the minutes until the page shows the part *In progress*, in the client project's pull request.
 
 ## Not in this change
 

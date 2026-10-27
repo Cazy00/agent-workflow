@@ -27,7 +27,7 @@ import { renderAcceptanceBrief } from './lib/acceptance-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { prune } from './lib/prune.js';
-import { waitForCommit, waitForPullRequest, workflowRuns, WAIT_CEILING_SECONDS } from './lib/wait.js';
+import { waitForCommit, waitForPullRequest, workflowRuns, WAIT_CEILING_SECONDS, CHECK_RUNS_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
@@ -464,7 +464,8 @@ async function main() {
       runsFor = sha => runs[sha] ?? [];
     } else if (o['check-runs']) {
       if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('--check-runs needs repository in docs/workflow/config.json');
-      runsFor = sha => workflowRuns({ repository: config.repository, sha });
+      const deadline = Date.now() + CHECK_RUNS_SECONDS * 1000; // one allowance for every commit read, not one per call
+      runsFor = sha => workflowRuns({ repository: config.repository, sha, deadline });
     }
     const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null, runsFor });
     if (baselineNote) view.note = baselineNote;

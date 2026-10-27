@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { gitSource } from '../lib/sources.js';
 import { baselineHint, judgeRun } from '../lib/baseline-run.js';
+import { workflowRuns, CHECK_RUNS_SECONDS } from '../lib/wait.js';
 import { project, taskPath } from './helpers/maint-0018.js';
 
 // MAINT-0023 P5: the baseline result of a task names a run. (a) `pass: <reference>` is accepted beside `pass`; (b) a baseline
@@ -231,4 +232,40 @@ test('MAINT-0023 P5: wf next prints the baseline result for a claim, from runs i
   const none = project(t);
   none.write('src/z.js', 'export const z = 1;\n');
   assert.equal(none.run(['next', '--baseline', none.commit('code')]).out.next.baseline, undefined);
+});
+
+// Review N10: `wf next --check-runs` asks GitHub for one commit after another. One allowance covers them all, no request outlasts it,
+// and a commit whose runs were not read is named in the notes.
+test('MAINT-0023 P5: workflowRuns shares one deadline, so a slow GitHub cannot hold wf next for minutes', () => {
+  let clock = 0;
+  const seen = [];
+  const call = (endpoint, timeout) => { seen.push([endpoint, timeout]); clock += timeout; return { workflow_runs: [{ id: 1 }] }; };
+  const deadline = CHECK_RUNS_SECONDS * 1000;
+  const read = sha => workflowRuns({ repository: 'o/r', sha, call, deadline, now: () => clock });
+  assert.deepEqual(read('a'.repeat(40)), [{ id: 1 }]);
+  assert.equal(seen[0][1], 30000, 'a call has the usual 30 s when the allowance is large');
+  read('b'.repeat(40));
+  assert.equal(seen[1][1], 30000);
+  assert.throws(() => read('c'.repeat(40)), /allowed for reading runs from GitHub was used up/);
+  assert.equal(seen.length, 2, 'no third request starts');
+  // A call near the end gets only the time that is left.
+  clock = deadline - 5000; seen.length = 0;
+  read('d'.repeat(40));
+  assert.equal(seen[0][1], 5000);
+});
+
+test('MAINT-0023 P5: a commit whose runs were not read is named in the notes', t => {
+  const p = project(t);
+  p.write('docs/workflow/a.md', 'one\n'); const first = p.commit('records: one');
+  p.write('docs/workflow/b.md', 'two\n'); const second = p.commit('records: two');
+  p.write('docs/workflow/c.md', 'three\n'); const third = p.commit('records: three');
+  let clock = 0;
+  const deadline = CHECK_RUNS_SECONDS * 1000;
+  const runsFor = sha => workflowRuns({ repository: 'o/r', sha, deadline, now: () => clock, call: (_, timeout) => { clock += timeout; return { workflow_runs: [] }; } });
+  const h = baselineHint({ source: gitSource(p.repo, third), recordsDir: 'docs/workflow', runsFor });
+  assert.deepEqual(h.results, []);
+  const notes = h.notes.join(' | ');
+  assert.match(notes, new RegExp(`no run of ${second.slice(0, 12)}`));
+  assert.match(notes, new RegExp(`no run of ${first.slice(0, 12)}`));
+  assert.match(notes, new RegExp(`could not read the runs of ${p.baseline.slice(0, 12)}: the ${CHECK_RUNS_SECONDS} s allowed`));
 });

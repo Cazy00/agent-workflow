@@ -1,6 +1,6 @@
 # MAINT-0023: What v2.11.1 measured in mateen-systems and headless-lightroom, and the next cuts
 
-**Status:** proposed, 27 October 2026. Nothing here is built. The owner chooses which proposals to build. Two are the owner's policy decisions: P5(b) changes what `wf ci` accepts as a baseline result, and P6 changes the milestone review's budget. W1 and W2 change Harbor's merge route, outside this repository.
+**Status:** built in v2.12.0 (27 October 2026): proposals P1, P2, P3, P5, P6, P7, P9 and P10. P8 was not built: no review finding exists on the trusted branch before its fix (reviews and evidence live on pull requests), so `found_from` would have nothing to resolve against; F-0005 stays open. P4 is the adopting project's own work, in its own records. W1 to W4 are outside this repository. P5(b) and P6, the two policy decisions, were approved by the owner on 27 October 2026. P3's saving needs W2 (the merge route judging each check by its latest run), and P7 was built smaller than proposed, as `CHANGELOG.md` under v2.12.0 says.
 
 **Classification** (`procedures/maintenance.md`):
 - Workflow defects: F1, F3, F5, F6, F7, F8.

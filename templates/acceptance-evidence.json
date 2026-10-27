@@ -7,6 +7,10 @@
     "model": "<its model: review.second_model's final_model, else its model>",
     "fallback": "<only when the milestone review could not use review.second_model: why; otherwise leave this field out>",
     "revision": "<full commit hash it reviewed (the whole milestone diff)>",
+    "base": "<only under review.cadence milestone: the full commit hash the reviewed diff starts from, at or before the commit where the trusted branch authorised the milestone; leave this field out when parts is used>",
+    "parts": [{ "base": "<only under review.cadence milestone, when the diff outgrew one review: the first part's base is the one above, each later part's base is the revision of the part before, and the last part's revision is revision above; leave this field out otherwise>", "revision": "<full commit hash the part reviewed>" }],
+    "deep_paths": ["<only under review.cadence milestone: every review.deep_paths glob a production path of the reviewed diff matches, its security focus>"],
+    "fix_check": { "revision": "<only after findings: full commit hash after revision above that the one fix check covers>", "reviewer": "<the fix check's reviewer>", "model": "<its model>", "report": "<https link to the fix check's report>" },
     "report": "<https link to the posted review report (templates/review.md)>"
   },
   "walkthrough": {

@@ -55,6 +55,11 @@ export function dirSource(root) {
     changedPaths() { return null; },
     blob() { return null; },
     mergeBase() { return null; },
+    tree() { return null; },
+    diffSize() { return null; },
+    parents() { return null; },
+    subject() { return null; },
+    firstParentChain() { return null; },
     claimBranches() { return null; },
   };
 }
@@ -112,6 +117,19 @@ export function gitSource(repo, revision) {
       return r.stdout.split('\0').filter(Boolean);
     },
     blob(rel) { safePath(rel); const r = git('rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}:${rel}`); return r.status === 0 ? r.stdout.trim() : null; },
+    // MAINT-0023 P5: the tree object of this revision, its parents and subject, and its first-parent line (newest first, this revision
+    // included), so a baseline's relation to the run of an earlier commit is judged by content, not by name.
+    tree() { const r = git('rev-parse', '--verify', '--end-of-options', `${rev}^{tree}`); return r.status === 0 ? r.stdout.trim() : null; },
+    parents() { const r = git('rev-list', '--parents', '-n', '1', rev); return r.status === 0 ? r.stdout.trim().split(/\s+/).slice(1) : null; },
+    subject() { const r = git('log', '-n', '1', '--format=%s', rev); return r.status === 0 ? r.stdout.trim() : null; },
+    firstParentChain(limit = 50) { const r = git('rev-list', '--first-parent', '-n', String(limit), rev); return r.status === 0 ? r.stdout.split('\n').filter(Boolean) : null; },
+    // MAINT-0023 P6: the bytes of the text diff from an earlier commit to this revision, the size a reviewer model must take in;
+    // Infinity when Git's output outgrows the buffer.
+    diffSize(commit) {
+      if (!/^[a-f0-9]{40,64}$/.test(commit)) return null;
+      const r = git('diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-color', commit, rev, '--');
+      return r.error?.code === 'ENOBUFS' ? Infinity : r.status === 0 ? Buffer.byteLength(r.stdout) : null;
+    },
     mergeBase(commit) { if (!/^[a-f0-9]{40,64}$/.test(commit)) return null; const r = git('merge-base', commit, rev); return r.status === 0 ? r.stdout.trim() : null; },
     // Every commit anywhere in this revision's history that added or modified rel, newest first. --full-history
     // keeps the branches that Git's default simplification drops when a merge leaves rel unchanged, so a path

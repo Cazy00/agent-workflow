@@ -81,3 +81,15 @@ export function waitForPullRequest({ repository, number, ...rest }) {
   return follow({ repository, target, ...rest });
 }
 export function waitForCommit({ repository, sha, ...rest }) { return follow({ repository, target: () => ({ head: sha }), ...rest, merged: false }); }
+
+// MAINT-0023 P5: the workflow runs of one commit, for the baseline a claim records (lib/baseline-run.js). Like the checks above,
+// through `gh api`; an error is the caller's to report.
+// MAINT-0023 P5: the runs of one commit. `wf next --check-runs` asks for several commits one after another; with `deadline` (a time in ms
+// that all its calls share) no request outlasts it, and once it has passed none starts, so a slow GitHub cannot hold `wf next` for
+// minutes. The caller names the commits whose runs were not read (the error says why).
+export const CHECK_RUNS_SECONDS = 60;
+export function workflowRuns({ repository, sha, call = api, deadline = null, now = Date.now }) {
+  const left = deadline === null ? 30000 : Math.min(30000, deadline - now());
+  if (left < MIN_REQUEST_MS) throw new Error(`the ${CHECK_RUNS_SECONDS} s allowed for reading runs from GitHub was used up before this commit`);
+  return call(`repos/${repository}/actions/runs?head_sha=${sha}&per_page=100`, left).workflow_runs ?? [];
+}

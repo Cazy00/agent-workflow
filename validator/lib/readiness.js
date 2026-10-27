@@ -14,7 +14,7 @@ export const OUTCOMES = {
 // MAINT-0020 P2(b): a claim need not wait for the trusted branch's run on its baseline (six claims of M-0005 waited 9–16 min
 // each): `pending: <run>` stands for that run's result while the task is implemented. Verification, review and integration
 // still need the result: from `verify` on readiness refuses it, and so does `review-packet`.
-export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?? '')) ? `baseline_result is still ${t.baseline_result}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${t.baseline_revision ?? 'SHA'}, then pass or fail: <summary>) before the review packet` : null;
+export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?? '')) ? `baseline_result is still ${t.baseline_result}: fill it from the trusted branch's run on the baseline commit (wf wait --commit ${t.baseline_revision ?? 'SHA'}, then pass: <run reference> or fail: <summary>) before the review packet` : null;
 
 // v2.8.0 review X1: the found-task allowance is a count, not a place in ID order, which let a Draft with a lower ID start once a
 // later one had used the allowance. `id` is within it while fewer than `found_tasks` other found tasks of the milestone have

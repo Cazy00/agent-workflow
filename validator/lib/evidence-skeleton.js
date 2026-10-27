@@ -17,13 +17,24 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
   let map = [];
   try { map = JSON.parse(candidate.read(ACCEPTANCE_MAP) ?? '[]'); } catch { map = []; }
   const ids = new Set(list(record.acceptance));
+  // MAINT-0023 P7: the task's mapped tests listed under `tests` with an empty status, and the run left for the agent to name. The agent
+  // states each result it observed: a test it saw pass moves into `passed` (file -> names, under the one `run`), any other gets its
+  // status here (acceptance.js expandExecution). Nothing is pre-filled as passed, so a pending test that fails is never reported
+  // as passing by default, and the gate refuses the blank status until the agent writes one.
+  const mappedTests = (Array.isArray(map) ? map : []).filter(m => ids.has(m?.acceptance));
+  const execution = () => {
+    if (!mappedTests.length) return { revision: candidate.name, tests: [] };
+    const tests = [];
+    for (const m of mappedTests) if (!tests.some(t => t.file === m.file && t.name === m.name)) tests.push({ file: m.file, name: m.name, status: '' });
+    return { revision: candidate.name, run: '', passed: {}, tests };
+  };
   const required = () => requiredChecks.map(name => ({ name, result: enforced ? 'enforced' : 'passed', reference: '' }));
   const evidence = {
     schema: 'agent-workflow/delivery-evidence@1', candidate: candidate.name, assurance: 'agent-attested', tasks: [task],
     verification: {
       revision: candidate.name, environment: '',
       checks: [...(enforced ? [{ name: '', result: 'passed', reference: '' }] : []), ...required()],
-      execution: { revision: candidate.name, tests: (Array.isArray(map) ? map : []).filter(m => ids.has(m?.acceptance)).map(m => ({ file: m.file, name: m.name, status: '' })) },
+      execution: execution(),
     },
     integration: { revision: candidate.name, environment: enforced ? 'GitHub Actions, required by the ruleset before any merge' : '', checks: required() },
     review: {
@@ -33,6 +44,7 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
     },
   };
   const notes = [];
+  if (mappedTests.length) notes.push('execution lists the task\'s mapped tests with an empty status: run them, move each test you saw pass into passed under its file and name the run in run once, and give any other its status in tests');
   // MAINT-0022: under review.cadence milestone the task has no review of its own; the milestone's one review covers it (ci.js).
   const live = ['Authorised', 'Active'].includes(loadAll(baseline, rd).milestones.get(record.milestone)?.data?.status);
   if (byMilestone(config) && live) { evidence.review = { level: 'none' }; notes.push('review.cadence milestone: no task review; the milestone review covers this task, so review is level none'); }

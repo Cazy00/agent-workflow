@@ -11,7 +11,9 @@
 # before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
 # account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which
 # needs the agent's delivery evidence for a production change: it reads it from the pull request description, so
-# editing the description reruns this check on the same head. In manual mode the owner's signed receipts are checked on the owner's machine
+# editing the description reruns this check on the same head: push the head, let its CI finish, then write the evidence. The run on
+# the push fails ("evidence missing") and the rerun supersedes it, which is harmless where the merge route judges each check by its
+# latest run; where a merge route still counts superseded runs, an empty commit after the evidence remains the fallback. In manual mode the owner's signed receipts are checked on the owner's machine
 # (`wf closeout`), so here it checks the records only.
 # Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
 # to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it on

@@ -27,15 +27,21 @@ import { renderAcceptanceBrief } from './lib/acceptance-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { prune } from './lib/prune.js';
-import { waitForCommit, waitForPullRequest, WAIT_CEILING_SECONDS } from './lib/wait.js';
+import { waitForCommit, waitForPullRequest, workflowRuns, WAIT_CEILING_SECONDS, CHECK_RUNS_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
 const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage'];
-const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'claude-session', 'codex-dir', 'since', 'until'];
+const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'runs', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'acceptance-evidence', 'claude-session', 'codex-dir', 'since', 'until'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
   --unsigned-receipts: a dry run of an unsigned round; a result that relies on one exits 3, never 0 (not authoritative)
+  records [--json]: validates the project's records (tasks, milestones, decisions, profile) at --candidate
+  readiness --task T-0001 [--stage implement|verify|integrate|accept|release]: whether the task may start work at the stage (Ready, or what must be resolved first)
+  lifecycle --task T-0001 [--stage ...]: the task's lifecycle evidence for the stage, and the readiness gate it needs
+  acceptance --task T-0001: whether every acceptance criterion the task names has a mapped test that passed or is pending
+  session --record PATH [--task T-0001] [--repository OWNER/REPO]: validates a session outcome written from templates/session.json, outside the checkout; --task (or a task branch) is needed for a verified-complete outcome
+  --help, -h: this usage (also after a command: wf session --help)
   closeout --baseline TRUSTED_TIP --candidate ROUND_END + trust options: re-runs the round's gates, prints the fast-forward
   pending --baseline REV --candidate REV [--task T-0001 | --branch NAME]: the mapped tests that may fail at the candidate, for a CI job that runs them
   brief --payloads UNSIGNED_FILE [--repo DIR --baseline REV [--candidate ROUND_END]]: the owner's signing brief as Markdown (--json for the check)
@@ -46,12 +52,13 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
   prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
-  usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001]: per agent, task and role, what the
-    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone); --json for usage@1, --outcome for a session outcome's usage; grants nothing;
+  usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001 [--acceptance-evidence FILE]]: per agent, task and role, what the
+    harnesses' own records say was used, and the second model's runs (against the milestone's budget with --milestone; with the acceptance evidence, a milestone review made in contiguous parts counts as one); --json for usage@1, --outcome for a session outcome's usage; grants nothing;
     runs from a full installation (the project's scripts/wf, or node validator/cli.js in a workflow checkout), not bin/wf, which extracts only validator/
   attest --baseline TRUSTED_TIP --candidate SHA --repository OWNER/REPO --expires-at ISO --out FILE (--sandbox LAUNCHER --protect PATH... | --unsandboxed):
     the owner's run of the approved config's checks from a verified mirror; writes unsigned verification and integration payloads
-  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
+  next [--baseline TRUSTED_TIP] [--candidate REV] [--pull-requests FILE] [--check-runs | --runs FILE] [trust options]: the agent's next action, what to read and what to run (--json for data); grants nothing
+    --check-runs reads the trusted branch's runs from GitHub (--runs FILE: JSON of commit hash to workflow runs) to name the baseline_result a claim may record when its baseline holds code already tested (MAINT-0023 P5)
   review-packet --baseline SHA --candidate SHA --task T-0001 --evidence EXTERNAL_FILE (repeatable); fresh canonical review inputs only
   evidence --baseline REV --candidate SHA [--task T-0001] [--from PREVIOUS_EVIDENCE]: the delivery evidence, started with what can be derived; fill in what you ran and the review
   delivery-check --repository OWNER/REPO --candidate SHA --workflow-file .github/workflows/ci.yml --branch main --required-check JOB [--event push]
@@ -83,6 +90,8 @@ async function main() {
     if (a === '--merged') { o.merged = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a === '--outcome') { o.outcome = true; continue; }
+    if (a === '--help' || a === '-h') { o.help = true; continue; }
+    if (a === '--check-runs') { o['check-runs'] = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -94,12 +103,21 @@ async function main() {
     } else if (!cmd) cmd = a;
     else throw new WfError(`unexpected argument: ${a}`);
   }
+  // MAINT-0023 P9: the usage, on stdout and exit 0, for the whole tool or after a command; an unknown command still fails below.
+  if (o.help) {
+    if (cmd !== undefined && !COMMANDS.includes(cmd)) throw new WfError(USAGE);
+    console.log(USAGE);
+    return 0;
+  }
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
+  if (o['acceptance-evidence'] !== undefined && (cmd !== 'usage' || o.milestone === undefined)) throw new WfError('--acceptance-evidence is only for usage, with --milestone');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
   if ((o.dryRun && cmd !== 'prune') || (o.milestone !== undefined && !['prune', 'usage'].includes(cmd) && !(cmd === 'brief' && o.acceptance))) throw new WfError('--dry-run and --milestone are only for prune (--milestone also for usage and brief --acceptance)');
   if (o.acceptance && (cmd !== 'brief' || o.lead)) throw new WfError('--acceptance is only for brief, without --lead');
   if ((o.outcome || ['claude-session', 'codex-dir', 'since', 'until'].some(k => o[k] !== undefined)) && cmd !== 'usage') throw new WfError('--claude-session, --codex-dir, --since, --until and --outcome are only for usage');
+  if ((o['check-runs'] || o.runs !== undefined) && cmd !== 'next') throw new WfError('--check-runs and --runs are only for next');
+  if (o['check-runs'] && o.runs !== undefined) throw new WfError('use --check-runs or --runs FILE, not both');
   if (o.client && o['pull-requests'] && !o.live) throw new WfError('--pull-requests needs --live with --client: the pull requests only mark branch parts as being checked');
   if (!COMMANDS.includes(cmd)) throw new WfError(USAGE);
   if (cmd === 'review-packet') {
@@ -256,7 +274,21 @@ async function main() {
       try { reader = await import(new URL(`../adapters/usage/${file}`, import.meta.url)); } catch (e) { throw new WfError(`usage needs adapters/usage/${file} of the workflow installation (run it from a full one: the project's scripts/wf, or node validator/cli.js in a workflow checkout; bin/wf extracts only validator/): ${e.message}`); }
       try { readings.push(reader.read(paths, { ...usageWindow(readings, o.since, o.until), names: where.names })); } catch (e) { throw new WfError(e.message); }
     }
-    const result = evaluateUsage({ readings, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: { ...usageProject(records, o.milestone), ...where }, budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and this project\'s runs are attributed to the IDs the transcripts name'] });
+    // MAINT-0023 P6: a milestone review made in parts is one review when the acceptance evidence's parts are a contiguous set, judged
+    // by the acceptance evidence's own function (lib/acceptance-evidence.js reviewPartsErrors) against this repository's history.
+    let reviewParts = null;
+    if (o['acceptance-evidence'] !== undefined) {
+      if (!config) throw new WfError('--acceptance-evidence needs the project\'s docs/workflow/config.json here');
+      let stat, text;
+      try { stat = fs.statSync(o['acceptance-evidence']); text = fs.readFileSync(o['acceptance-evidence'], 'utf8'); } catch (e) { throw new WfError(`cannot read the acceptance evidence ${o['acceptance-evidence']}: ${e.message}`); }
+      if (!stat.isFile() || stat.size > 128 * 1024) throw new WfError('the acceptance evidence must be a regular file under 128 KiB');
+      let found;
+      try { found = text.trim().startsWith('{') ? JSON.parse(text) : parseAcceptanceEvidence(text); } catch (e) { throw new WfError(e instanceof WfError ? e.message : 'the acceptance evidence is not valid JSON'); }
+      const review = found?.review;
+      if (!review || review.parts === undefined) throw new WfError('the acceptance evidence has no review.parts to count');
+      try { reviewParts = { parts: review.parts, revision: review.revision, milestone: o.milestone, recordsDir: config.records_dir ?? 'docs/workflow', candidate: gitSource(dir, o.candidate ?? 'HEAD'), baseline: o.baseline ? gitSource(dir, o.baseline) : null }; } catch (e) { throw new WfError(e.message); }
+    }
+    const result = evaluateUsage({ readings, reviewParts, since: o.since ?? null, until: o.until ?? null, task: o.task ?? null, milestone: o.milestone ?? null, prices: config?.usage?.prices ?? null, project: { ...usageProject(records, o.milestone), ...where }, budget: o.milestone && config ? secondModelBudget(config, records, [o.milestone])[0] ?? null : null, notes: config ? [] : ['no docs/workflow/config.json here: no prices or budget, and this project\'s runs are attributed to the IDs the transcripts name'] });
     if (o.outcome) console.log(JSON.stringify(outcomeUsage(result), null, 2));
     else if (o.json) console.log(JSON.stringify(result, null, 2));
     else process.stdout.write(renderUsage(result));
@@ -424,7 +456,18 @@ async function main() {
       if (!Array.isArray(pullRequests)) throw new WfError('--pull-requests: pull requests must be a JSON array');
     }
     const trustedBranch = trust ? trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust }) : null;
-    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null });
+    // MAINT-0023 P5: the runs behind a baseline_result, from a file ({"<sha>": [workflow runs]}) or, with --check-runs, from GitHub.
+    let runsFor = null;
+    if (o.runs) {
+      let runs; try { runs = JSON.parse(fs.readFileSync(o.runs, 'utf8')); } catch (e) { throw new WfError(`--runs: ${e.message}`); }
+      if (!runs || typeof runs !== 'object' || Array.isArray(runs)) throw new WfError('--runs: runs must be a JSON object of commit hash to workflow runs');
+      runsFor = sha => runs[sha] ?? [];
+    } else if (o['check-runs']) {
+      if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) throw new WfError('--check-runs needs repository in docs/workflow/config.json');
+      const deadline = Date.now() + CHECK_RUNS_SECONDS * 1000; // one allowance for every commit read, not one per call
+      runsFor = sha => workflowRuns({ repository: config.repository, sha, deadline });
+    }
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null, runsFor });
     if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;
@@ -465,6 +508,13 @@ async function main() {
     let branch = o.branch;
     if (!branch) { try { branch = git(repo, 'branch', '--show-current').trim(); } catch { branch = ''; } }
     return branch.match(TASK_BRANCH)?.[1] ?? null;
+  };
+  // MAINT-0023 P9: what `wf session` accepts, named in each error (it was `--record is required`, and a bare ENOENT or JSON.parse message).
+  const sessionRecord = () => {
+    if (!o.record) throw new WfError('session needs --record PATH: a session outcome written from templates/session.json, outside the checkout (and --task T-0001, or a task branch, for a verified-complete outcome)');
+    let text;
+    try { text = fs.readFileSync(o.record, 'utf8'); } catch (e) { throw new WfError(`session --record ${o.record} cannot be read (${e.code ?? e.message}): write the outcome from templates/session.json outside the checkout and give its path`); }
+    try { return JSON.parse(text); } catch (e) { throw new WfError(`session --record ${o.record} cannot be read as JSON (${e.message}): write the outcome from templates/session.json`); }
   };
   const emit = r => console.log(o.json ? JSON.stringify(r, null, 2) : JSON.stringify(r, null, 2));
   // MAINT-0018: the workflow pins a session may have run under, the baseline's and the candidate's.
@@ -544,8 +594,7 @@ async function main() {
   else if (cmd === 'session' && !taskId()) {
     // MAINT-0018: an outcome that is not verified-complete reads no task evidence, so a session that ends on an acceptance
     // or planning pull request needs no task to name.
-    if (!o.record) throw new WfError('--record is required');
-    result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config) });
+    result = evaluateSession({ record: sessionRecord(), candidate, lifecycle: null, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config) });
   }
   else {
     const task = taskId();
@@ -571,8 +620,7 @@ async function main() {
       if (cmd === 'session') {
         const completionGate = evaluateReadiness({ baseline, candidate, task, trust, stage: 'verify' });
         if (completionGate.outcome !== 'Ready') { lifecycle.ok = false; lifecycle.errors.push(...completionGate.reasons); }
-        if (!o.record) throw new WfError('--record is required');
-        result = evaluateSession({ record: JSON.parse(fs.readFileSync(o.record, 'utf8')), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config), level: reviewLevel(record, config.review?.deep_paths).level ?? 'standard' });
+        result = evaluateSession({ record: sessionRecord(), candidate, lifecycle, repository: o.repository ?? config.repository, workflow: sessionPins(), roles: resolveRoles(config), level: reviewLevel(record, config.review?.deep_paths).level ?? 'standard' });
       }
     }
   }

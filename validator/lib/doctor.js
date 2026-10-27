@@ -69,9 +69,19 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const warnings = [];
   if (ghVersion.ok && config.approval?.auto_merge === true && /^[\w.-]+\/[\w.-]+$/.test(config.repository ?? '')) {
     const branch = config.trusted_branch ?? 'main';
-    const read = run('gh', ['api', `repos/${config.repository}/rules/branches/${encodeURIComponent(branch)}`]);
+    // A branch name keeps its slashes: the API takes them in the path as they are.
+    const read = run('gh', ['api', `repos/${config.repository}/rules/branches/${branch}`]);
     let rules = null;
     try { rules = read.ok ? JSON.parse(read.out) : null; } catch { rules = null; }
+    if (Array.isArray(rules) && !rules.length) {
+      // Rulesets say nothing about classic branch protection, which holds pull requests the same way: read it when no rule came back.
+      const classic = run('gh', ['api', `repos/${config.repository}/branches/${branch}/protection`]);
+      let protection = null;
+      try { protection = classic.ok ? JSON.parse(classic.out) : null; } catch { protection = null; }
+      const reviews = protection?.required_pull_request_reviews;
+      if (reviews) rules = [{ type: 'pull_request', parameters: { required_approving_review_count: reviews.required_approving_review_count, require_code_owner_review: reviews.require_code_owner_reviews, require_last_push_approval: reviews.require_last_push_approval } }];
+      else if (!classic.ok && !/\b404\b|not protected/i.test(classic.out)) warnings.push({ name: `the branch protection on ${branch}`, detail: `no ruleset rule on ${branch}, and the classic branch protection could not be read (${firstLine(classic.out) || 'no usable answer'}): whether a review holds the agent's auto-merge back is unknown`, needed_for: 'auto-merge' });
+    }
     if (Array.isArray(rules)) warnings.push(...ruleWarnings({ rules, branch }));
     else warnings.push({ name: `the rules on ${branch}`, detail: `could not read the rules on ${branch} (${firstLine(read.out) || 'no usable answer'}): whether a review or merge queue holds the agent's auto-merge back is unknown`, needed_for: 'auto-merge' });
   }

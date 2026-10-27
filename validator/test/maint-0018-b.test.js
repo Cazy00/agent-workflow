@@ -251,11 +251,17 @@ else if (/^api repos\\/fixture\\/project\\/rules\\/branches\\//.test(a)) {
   if (process.env.FAKE_GH_RULES === 'fail') { console.error('gh: HTTP 403'); process.exit(1); }
   console.log(process.env.FAKE_GH_RULES ?? '[]');
 }
+else if (/^api repos\\/fixture\\/project\\/branches\\/.+\\/protection$/.test(a)) {
+  if (process.env.FAKE_GH_PROTECTION === '404') { console.error('gh: Branch not protected (HTTP 404)'); process.exit(1); }
+  if (process.env.FAKE_GH_PROTECTION === 'fail') { console.error('gh: HTTP 403'); process.exit(1); }
+  console.log(process.env.FAKE_GH_PROTECTION ?? '{}');
+}
 else if (a.startsWith('api')) console.log(JSON.stringify({ full_name: 'fixture/project', permissions: { push: true } }));
 else process.exit(1);`);
-  const doctor = rules => p.run(['doctor'], { env: { PATH: `${bin}:/usr/bin:/bin`, ...(rules === undefined ? {} : { FAKE_GH_RULES: typeof rules === 'string' ? rules : JSON.stringify(rules) }) }, cwd: p.repo });
+  const doctor = (rules, protection) => p.run(['doctor'], { env: { PATH: `${bin}:/usr/bin:/bin`, ...(rules === undefined ? {} : { FAKE_GH_RULES: typeof rules === 'string' ? rules : JSON.stringify(rules) }), ...(protection === undefined ? {} : { FAKE_GH_PROTECTION: typeof protection === 'string' ? protection : JSON.stringify(protection) }) }, cwd: p.repo });
   const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '').split('\n').filter(l => l.includes('/rules/branches/'));
-  return { doctor, asked };
+  const askedProtection = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '').split('\n').filter(l => l.includes('/protection'));
+  return { doctor, asked, askedProtection };
 }
 
 test('MAINT-0023 P10: wf doctor warns, without failing, when a rule needs a review the agent cannot give or a merge queue', t => {
@@ -292,4 +298,29 @@ test('MAINT-0023 P10: no warning for rules the agent can satisfy, none without a
   assert.deepEqual(bad.asked(), ['api repos/fixture/project/rules/branches/release']);
   assert.match(failed.out.warnings[0].detail, /could not read the rules on release/);
   assert.equal(failed.out.ok, true);
+});
+
+// Review N8: classic branch protection is not in the ruleset rules, so with no rules the protection is read as well; a branch name
+// with a slash is asked for as it is.
+test('MAINT-0023 P10: with no ruleset rules wf doctor reads classic branch protection, and a branch with a slash is not encoded', t => {
+  const protection = { required_pull_request_reviews: { required_approving_review_count: 2, require_code_owner_reviews: true, require_last_push_approval: true } };
+  const classic = rulesProject(t, { trusted: 'release/x' });
+  const r = classic.doctor([], protection);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(classic.asked(), ['api repos/fixture/project/rules/branches/release/x']);
+  assert.deepEqual(classic.askedProtection(), ['api repos/fixture/project/branches/release/x/protection']);
+  assert.deepEqual(r.out.warnings.map(w => w.name).sort(), ['approval of the most recent push on release/x', 'code-owner review on release/x', 'required approving reviews on release/x']);
+  assert.match(r.out.warnings.find(w => w.name === 'required approving reviews on release/x').detail, /2 approving review\(s\)/);
+  assert.equal(r.out.ok, true);
+  // No rules and no protection (404), or protection without reviews: nothing to warn about. Rules that came back are not supplemented.
+  const none = rulesProject(t);
+  assert.deepEqual(none.doctor([], '404').out.warnings, []);
+  const lax = rulesProject(t);
+  assert.deepEqual(lax.doctor([], { required_status_checks: {} }).out.warnings, []);
+  const ruled = rulesProject(t);
+  assert.deepEqual(ruled.doctor([{ type: 'deletion' }], protection).out.warnings, []);
+  assert.deepEqual(ruled.askedProtection(), []);
+  // A protection that cannot be read is said, as an unreadable rule list is.
+  const bad = rulesProject(t);
+  assert.match(bad.doctor([], 'fail').out.warnings[0].detail, /classic branch protection could not be read/);
 });

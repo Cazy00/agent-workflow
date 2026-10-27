@@ -180,7 +180,7 @@ test('MAINT-0023 P6: usage counts the runs of a valid set of parts as one review
 });
 
 // wf next: the milestone's diff from its authorisation to HEAD, measured during the milestone.
-test('MAINT-0023 P6: wf next warns once the milestone diff passes 700 KB', t => {
+test('MAINT-0023 P6: wf next warns once the milestone diff passes 700 KiB', t => {
   const r = repo(t);
   const cfg = JSON.stringify({ ...config(), approval: { label: 'owner-merge' }, acceptance_evidence: true });
   r.write(`${RD}/config.json`, cfg);
@@ -194,7 +194,7 @@ test('MAINT-0023 P6: wf next warns once the milestone diff passes 700 KB', t => 
   assert.equal(w.length, 1);
   assert.equal(w[0].milestone, 'M-0001');
   assert.ok(w[0].bytes > MILESTONE_DIFF_WARNING);
-  assert.match(w[0].text, /M-0001's diff from its authorisation [0-9a-f]{12} to this revision is \d+ KB, past 700 KB/);
+  assert.match(w[0].text, /M-0001's diff from its authorisation [0-9a-f]{12} to this revision is \d+ KiB, past 700 KiB/);
   assert.match(w[0].text, /review\.parts/);
 });
 

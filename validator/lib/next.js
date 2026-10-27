@@ -90,10 +90,10 @@ export function nextIds(sources, rd) {
 export const MILESTONE_DIFF_WARNING = 700 * 1024;
 function diffWarnings({ config, baseline, candidate, rd, milestones }) {
   if (!byMilestone(config) || baseline.kind !== 'git' || candidate.kind !== 'git') return [];
-  const size = bytes => Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KB` : 'over 16 MB';
+  const size = bytes => Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KiB` : 'over 16 MB';
   return milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).flatMap(m => {
     const authorised = authorisedAt(baseline, `${rd}/milestones/${m.id}.md`), bytes = authorised ? candidate.diffSize(authorised) : null;
-    return bytes > MILESTONE_DIFF_WARNING ? [{ milestone: m.id, authorised, bytes: Number.isFinite(bytes) ? bytes : null, text: `${m.id}'s diff from its authorisation ${authorised.slice(0, 12)} to this revision is ${size(bytes)}, past ${MILESTONE_DIFF_WARNING / 1024} KB: one review of it may outgrow a reviewer model, so plan to review it in contiguous parts (review.parts of the acceptance evidence, from the authorisation to the end of the milestone)` }] : [];
+    return bytes > MILESTONE_DIFF_WARNING ? [{ milestone: m.id, authorised, bytes: Number.isFinite(bytes) ? bytes : null, text: `${m.id}'s diff from its authorisation ${authorised.slice(0, 12)} to this revision is ${size(bytes)}, past ${MILESTONE_DIFF_WARNING / 1024} KiB: one review of it may outgrow a reviewer model, so plan to review it in contiguous parts (review.parts of the acceptance evidence, from the authorisation to the end of the milestone)` }] : [];
   });
 }
 

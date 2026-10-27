@@ -9,7 +9,8 @@
 # It runs on GitHub's runner unless the repository variable WF_GATE is `on`: then on the gate runner, labelled `wf-gate` (MAINT-0017).
 # The six-hourly schedule runs only when WF_GATE is `on`: without a gate runner the view refreshes on pushes to the trusted
 # branch and on manual runs, and the skipped scheduled job uses no minutes and sends no email (MAINT-0023). The publish step
-# keeps one open issue: it edits the oldest labelled wf-status and closes any other with a comment naming it.
+# keeps one open issue: it edits the oldest open issue labelled wf-status that the workflow's own account wrote, closes any other of its own with
+# a comment naming it, and leaves an issue someone else labelled alone.
 name: wf-status
 on:
   push:
@@ -85,9 +86,11 @@ jobs:
           # An issue body holds at most 65,536 characters: cut at a line boundary well before that.
           node -e 'const fs = require("fs"), f = process.argv[1], t = fs.readFileSync(f, "utf8");
             if (t.length > 60000) fs.writeFileSync(f, t.slice(0, t.lastIndexOf("\n", 60000)) + "\n\n_Truncated: run `scripts/wf status` for the full view._\n");' "$body"
-          # Every open issue labelled wf-status, oldest first, pull requests left out (the issues endpoint lists them too). A failed
-          # lookup stops the step: it must never look like "no issue" and create a duplicate.
-          lookup() { gh api --paginate "repos/$GH_REPO/issues?state=open&labels=wf-status&sort=created&direction=asc&per_page=100" --jq '.[] | select(.pull_request == null) | .number'; }
+          # Every open issue labelled wf-status that this workflow's own account wrote (github.token is the GitHub Actions app on
+          # GitHub's runners and on a self-hosted one), oldest first, pull requests left out (the issues endpoint lists them too). An
+          # issue someone else labelled is never edited or closed. A failed lookup stops the step: it must never look like "no issue"
+          # and create a duplicate.
+          lookup() { gh api --paginate "repos/$GH_REPO/issues?state=open&labels=wf-status&sort=created&direction=asc&per_page=100" --jq '.[] | select(.pull_request == null and .user.login == "github-actions[bot]") | .number'; }
           numbers="$(lookup)"
           if [ -z "$numbers" ]; then
             # A run that overlaps another may have created the issue a moment ago: look once more before creating.

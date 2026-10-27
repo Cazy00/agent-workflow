@@ -240,7 +240,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'plan')) add({ kind: 'plan', item: w.item, do: `Complete the plan of ${w.item}`, why: w.detail, read: [`${rd}/milestones/${w.item}.md`, PROCEDURE.plan] });
   // MAINT-0020 P7(c): `wf doctor` before the plan's question as well, since in M-0005 it first ran 7 h 40 min after the plan's
   // one question round (at the first hand-over), and its gap reached the owner a day late.
-  // MAINT-0020 P8: an accepted milestone's Done task records still here (M-0005 of mateen-systems: 34 of five milestones) go in
+  // MAINT-0020 P8: an accepted milestone's Done task records still here (M-0005 of a client project: 34 of five milestones) go in
   // one `wf prune` commit, which rides in the pull request that prepares the next authorisation, or is an action of its own.
   const stale = [...records.milestones.values()].map(r => r.data).filter(m => m?.id && ACCEPTED.includes(m.status)).sort(byId).map(m => ({ id: m.id, n: prunable(records, m.id).remove.length })).filter(m => m.n);
   const prune = stale.map(m => `wf prune --milestone ${m.id}  (removes its ${m.n} Done task record${m.n === 1 ? '' : 's'} in one records-only commit${drafts.length ? '; it rides in this pull request' : ''})`);

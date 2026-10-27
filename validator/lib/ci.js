@@ -99,7 +99,7 @@ export function ownerApprovedTest({ trust, candidate, path }) {
 // (procedures/execute.md), so the trusted branch never holds them Ready or Active. Their Done record still travels as the
 // pull request's last commit when the pull request itself claims the task: a commit of its own, not on the trusted branch,
 // where the record is Ready or Active. Without it every task needed a Done pull request of its own (six in M-0004 of
-// mateen-systems), each one more round of checks and a wait before the next task.
+// a client project), each one more round of checks and a wait before the next task.
 function claimedHere({ baseline, candidate, path }) {
   if (candidate.kind !== 'git' || baseline.kind !== 'git') return false;
   return candidate.versions(path).some(c => !baseline.isAncestor(c) && ['Ready', 'Active'].includes(parseFrontMatter(candidate.atRevision(c).read(path) ?? '').data?.status));

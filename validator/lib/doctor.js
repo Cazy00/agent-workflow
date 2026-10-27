@@ -1,5 +1,5 @@
 // `wf doctor` (MAINT-0018 B5): what this machine can do for the project's work, checked at the start of a session, so a gap
-// reaches the owner in the first question rather than at the end. In M-0004 of mateen-systems the home server's missing
+// reaches the owner in the first question rather than at the end. In M-0004 of a client project the home server's missing
 // access to staging was seen at 18:17 and reported at 04:44. Built-in checks cover the tools every project uses; the
 // project's `preflight` list (docs/workflow/config.json) adds its own, such as ssh to its staging host. No gate reads it.
 // MAINT-0020 P9: it also checks where the session started. In M-0005 the session started in the parent folder, so the

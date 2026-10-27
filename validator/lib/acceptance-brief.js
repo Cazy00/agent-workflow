@@ -1,6 +1,6 @@
 // MAINT-0020 P3: `wf brief --acceptance --milestone M-NNNN`, the brief a coordinator hands the fresh helpers that do a milestone's
 // closing work (its review, the acceptance package and its evidence, the trial walk, the next milestone's draft), so its own context
-// grows by their results only. In M-0005 of mateen-systems the coordinator drafted M-0006, set up the trial server and wrote the
+// grows by their results only. In M-0005 of a client project the coordinator drafted M-0006, set up the trial server and wrote the
 // acceptance package itself, and grew to 708 K, rebuilt thirteen times (record §§ 1, 9). It grants nothing and no gate reads it.
 import { list, loadAll, loadConfig } from './records.js';
 import { byMilestone, byWhom, effortOf, launchName, resolveRoles, reviewerCommand, secondModelLaunch, secondModelOf } from './roles.js';

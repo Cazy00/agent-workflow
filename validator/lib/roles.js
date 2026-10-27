@@ -1,4 +1,4 @@
-// MAINT-0020 P4: the model and effort each role is launched with (`roles` in the config; SCHEMA.md). M-0005 of mateen-systems ran
+// MAINT-0020 P4: the model and effort each role is launched with (`roles` in the config; SCHEMA.md). M-0005 of a client project ran
 // 46 of 51 helpers at the session's xhigh effort, and every role on the coordinator's model, though execute.md said effort
 // follows the review level. `wf brief --lead` prints the settings; `wf session` notes a recorded launch that differs. Neither
 // grants anything. The reviewer's effort stays with review.md and review.second_model.

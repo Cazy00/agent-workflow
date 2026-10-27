@@ -1,5 +1,5 @@
 // `wf wait --pr N` (MAINT-0018 B6): waits for a pull request's checks to finish, or with --merged for it to merge, so an
-// agent does not write its own polling loop. In M-0004 of mateen-systems one such loop used a `gh pr checks` option the
+// agent does not write its own polling loop. In M-0004 of a client project one such loop used a `gh pr checks` option the
 // home server's gh lacked and silently saw no checks; another died on one network error. This one asks GitHub's REST API
 // through `gh api` (any gh version), follows the pull request's current head, counts only the newest run of each check,
 // and tolerates network errors. It grants nothing.

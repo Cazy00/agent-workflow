@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // MAINT-0016: `git fetch` moves origin/<trusted branch>, never the local branch, so `wf next` reads the newer of the two
-// when one contains the other, and says so. In mateen-systems a stale local main named a stale next action.
+// when one contains the other, and says so. In a client project a stale local main named a stale next action.
 const fixture = fileURLToPath(new URL('../../fixtures/04a-accepted-decision-permits/baseline', import.meta.url));
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 function repo(t) {

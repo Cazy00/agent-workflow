@@ -1,4 +1,4 @@
-// `wf prune --milestone M-NNNN` (MAINT-0020 P8, procedures/execute.md): mateen-systems kept 34 Done task records of five accepted
+// `wf prune --milestone M-NNNN` (MAINT-0020 P8, procedures/execute.md): a client project kept 34 Done task records of five accepted
 // milestones on main, read by every `wf next` and readiness run, because nothing removed them and the one removal tried by hand
 // was refused as ad hoc deletion. This removes exactly what the procedure says, in one commit on the current branch, and no other path.
 import { spawnSync } from 'node:child_process';

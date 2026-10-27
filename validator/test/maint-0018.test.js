@@ -9,7 +9,7 @@ import { gitSource } from '../lib/index.js';
 import { acceptanceEvidenceErrors } from '../lib/acceptance-evidence.js';
 import { deepChanges } from '../lib/paths.js';
 
-// MAINT-0018: what M-0004 of mateen-systems (12–14 October 2026) showed the workflow still cost: a Done pull request of
+// MAINT-0018: what M-0004 of a client project (12–14 October 2026) showed the workflow still cost: a Done pull request of
 // its own after every task, an acceptance that a workflow upgrade would have voided, test files reviewed as deep, and no
 // record of which workflow version any of the work ran under.
 import { AREAS, check, cli, evidence, fixture, project, taskPath } from './helpers/maint-0018.js';
@@ -105,7 +105,7 @@ test('MAINT-0018: the files an upgrade may bring in under an acceptance are the 
   assert.deepEqual([...UPGRADE_FILES].sort(), ['docs/workflow/config.json', ...INSTALLED.map(i => i.path)].sort());
 });
 
-// Item 3. mateen-systems names `**/*{invoice,numbering,issuer}*` deep, which also matched
+// Item 3. A client project names `**/*{invoice,numbering,issuer}*` deep, which also matched
 // apps/server/test/acceptance/numbering.ts: a test-only task took three deep second-model reviews.
 test('MAINT-0018: a deep path glob reaches test files only when it names a test location itself', () => {
   const globs = ['**/*{invoice,numbering,issuer}*', 'apps/server/migrations/**'];
@@ -124,7 +124,7 @@ test('MAINT-0018: a deep path glob reaches test files only when it names a test 
 });
 
 // Item 4 and item 13. The launcher is a template now (templates/scripts/wf): an explicit --repo, such as a clean review
-// clone, is passed on instead of being doubled (F-0002 of mateen-systems), and it tells `wf next` the newest release.
+// clone, is passed on instead of being doubled (F-0002 of a client project), and it tells `wf next` the newest release.
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const head = () => { const r = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : null; };
 const hasLauncher = () => spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/scripts/wf']).status === 0;

@@ -54,7 +54,7 @@ export function evaluateLifecycle({ candidate, task, requiredChecks = [], stage 
 }
 // Run evidence lives on the task's GitHub pull request or issue; a link to it is durable evidence.
 const GITHUB_EVIDENCE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/\d+(#[\w-]+)?$/;
-// What each outcome-specific field holds, so a missing one says how to fill it in (MAINT-0018, F-0001 of mateen-systems).
+// What each outcome-specific field holds, so a missing one says how to fill it in (MAINT-0018, F-0001 of a client project).
 // MAINT-0020 P13: friction is required and never pre-filled, so "none" is a statement the lead makes.
 const HINTS = {
   friction: 'write none if the workflow got in the way of nothing, or the report IDs or what went wrong (the template leaves it empty on purpose)',

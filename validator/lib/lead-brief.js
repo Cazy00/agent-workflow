@@ -1,5 +1,5 @@
 // `wf brief --lead` (MAINT-0018 B1): the brief a coordinator hands a task lead, from the records, so the coordinator does
-// not write it by hand and the lead does not read whole records to find its part. In M-0004 of mateen-systems the briefs
+// not write it by hand and the lead does not read whole records to find its part. In M-0004 of a client project the briefs
 // said "Build it": seven of eight leads implemented their tasks themselves and grew to 400–635 K tokens. The brief says who
 // implements, what the lead must not edit, the task's own records and the commands with their revisions. It grants nothing.
 // MAINT-0020 P1: it also splits the task into slices, one fresh helper each: M-0005's four implementing helpers grew to 571–814 K

@@ -13,7 +13,7 @@ import { fakeExecutable } from './helpers.js';
 import { evidenceErrors } from '../lib/delivery-evidence.js';
 import { cli, evidence, project, taskPath } from './helpers/maint-0018.js';
 
-// MAINT-0020: what M-0005 of mateen-systems (14–16 October 2026) cost on v2.7.0, and the cuts v2.8.0 makes. Later slices of
+// MAINT-0020: what M-0005 of a client project (14–16 October 2026) cost on v2.7.0, and the cuts v2.8.0 makes. Later slices of
 // the release append their tests here.
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const SHA = 'c'.repeat(40);
@@ -571,7 +571,7 @@ test('MAINT-0020 P11: the delivery evidence checks carried_by, paths and merge_i
   assert.deepEqual(errorsWith({ severity: 'low', exposure: undefined, carried_by: 'T-2' }), ['review finding "F1": carried_by must be the T-NNNN of the found task that fixes it'], 'on any finding');
 });
 
-// P8. mateen-systems kept 34 Done task records of five accepted milestones on main, read by every `wf next` and readiness run;
+// P8. A client project kept 34 Done task records of five accepted milestones on main, read by every `wf next` and readiness run;
 // the one removal tried by hand, on 16 October, was refused as ad hoc deletion. `wf prune` removes what execute.md says.
 const doneAs = x => x.replace('status: Ready', 'status: Done');
 function acceptedMilestone(t, { status = 'Accepted', next = 'Draft' } = {}) {

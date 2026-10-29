@@ -160,7 +160,7 @@
   },
   "v2.13.0": {
     "notes": [
-      "Nothing to do beyond moving the pin. Where milestone records are governing (paths.governing), a task the owner approves after authorisation is added to its milestone's tasks: in the pull request that carries its work, which the owner merges; readiness takes the candidate's tasks: for it, and adding a task to tasks: no longer makes the milestone's other tasks stale. Where milestone records are not governing, the found-task rule is unchanged."
+      "Nothing to do beyond moving the pin. Where milestone records are governing (paths.governing), a task the owner approves after authorisation is added to its milestone's tasks: in the pull request that carries its work, which the owner merges; readiness takes the candidate's tasks: for it, and adding a task to tasks: no longer makes the milestone's other tasks stale. Milestone records are governing in config.default.json; check yours with `wf paths --changed docs/workflow/milestones/M-0001.md`. Where they are not, the found-task rule is unchanged; add docs/workflow/milestones/** to paths.governing, as a workflow change, to get the new route."
     ]
   }
 }

@@ -4,7 +4,7 @@
 // reads it; the gates still decide. It replaces reading the procedures to find out what to do next, not the gates.
 import { list, loadAll, loadConfig } from './records.js';
 import { evaluateStatus } from './status.js';
-import { OUTCOMES, addedByOwner, foundRoom } from './readiness.js';
+import { OUTCOMES, foundRoom, ownerAdded } from './readiness.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { overlaps } from './scope.js';
 import { ACCEPTED, prunable } from './prune.js';
@@ -208,11 +208,12 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   // are held for the owner, with readiness's reason.
   const running = open.filter(t => t.status === 'Active' || claimed(t));
   // MAINT-0024: a task this candidate adds to its milestone's governing record is the owner's to approve at the merge, not a found one.
-  const ownerAdded = t => !!addedByOwner({ config, base: trusted, cand: records, milestone: t.milestone, id: t.id });
-  const foundOf = t => { const m = approvedPlan.get(t.milestone)?.data; return m?.tasks != null && !list(m.tasks).includes(t.id) && !!task(t.id).found_from && !ownerAdded(t); };
+  const addedTo = m => ownerAdded({ config, base: trusted, cand: records, milestone: m });
+  const isAdded = t => addedTo(t.milestone).includes(t.id);
+  const foundOf = t => { const m = approvedPlan.get(t.milestone)?.data; return m?.tasks != null && !list(m.tasks).includes(t.id) && !!task(t.id).found_from && !isAdded(t); };
   const placed = new Map(), beyond = new Set();
-  for (const t of passing.flat().filter(t => t.status === 'Draft' && !ownerAdded(t))) {
-    const room = foundRoom({ milestone: { ...approvedPlan.get(t.milestone)?.data, id: t.milestone }, id: t.id, records: [trusted, records] });
+  for (const t of passing.flat().filter(t => t.status === 'Draft' && !isAdded(t))) {
+    const room = foundRoom({ milestone: { ...approvedPlan.get(t.milestone)?.data, id: t.milestone }, id: t.id, records: [trusted, records], added: addedTo(t.milestone) });
     if (!room) continue;
     const begun = [...new Set([...room.begun, ...running.filter(u => u.milestone === t.milestone && foundOf(u)).map(u => u.id)])].sort(), first = placed.get(t.milestone) ?? [];
     if (begun.length + first.length < room.allowed) { placed.set(t.milestone, [...first, t.id]); continue; }

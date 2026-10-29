@@ -40,9 +40,39 @@ test('MAINT-0024: a found task the candidate\'s governing milestone record adds 
   const ci = p.run(['ci', '--baseline', p.base, '--candidate', head, '--task', 'T-0002'], { evidence: e });
   assert.equal(ci.status, 0, ci.stdout + ci.stderr);
   assert.equal(ci.out.merge, 'owner');
-  // wf next offers it to start rather than holding it for the owner.
-  const next = p.run(['next', '--baseline', p.base, '--candidate', head]).out;
-  assert.ok(!(next.held ?? []).some(h => h.task === 'T-0002'), JSON.stringify(next.held));
+});
+
+test('MAINT-0024 review F1, F2: wf next starts a Draft the owner adds, which takes no place in the found_tasks allowance', t => {
+  const p = found(t);
+  // The action wf next gives the task, and whether it holds it for the owner.
+  const startable = (rev, id) => { const n = p.run(['next', '--baseline', p.base, '--candidate', rev]).out; return [[n.next, ...n.also].find(a => a?.item === id)?.kind, (n.held ?? []).filter(h => h.task === id)]; };
+  assert.deepEqual(startable(p.base, 'T-0002'), ['plan', []], 'a found task to plan or ask about before the owner adds it');
+  p.edit(milestonePath, x => x.replace('tasks: [T-0001]', 'tasks: [T-0001, T-0002]'));
+  const added = p.commit('M-0001: the owner adds T-0002');
+  assert.deepEqual(startable(added, 'T-0002'), ['start', []]);
+  // With found_tasks: 1, an owner-added task with a found_from is not counted as begun, so a found Draft keeps the place.
+  const q = project(t, { configEdit: governing, baselineEdit: r => { plan(r); r.edit(milestonePath, x => x.replace('tasks: [T-0001]', 'tasks: [T-0001]\nfound_tasks: 1')); } });
+  taskLike(q, 'T-0002', 'src/b', x => x.replace('status: Ready', 'status: Draft'));
+  taskLike(q, 'T-0003', 'src/c', x => x.replace('status: Ready', 'status: Draft\nfound_from: R-0001/F2'));
+  const base = q.commit('records: T-0002, and T-0003 fixing R-0001/F2; M-0001 allows one found task');
+  q.edit(milestonePath, x => x.replace('tasks: [T-0001]', 'tasks: [T-0001, T-0002]'));
+  q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Draft', 'status: Active\nfound_from: R-0001/F1'));
+  const head = q.commit('T-0002 added by the owner and begun');
+  const n = q.run(['next', '--baseline', base, '--candidate', head]).out;
+  assert.ok(!(n.held ?? []).some(h => h.task === 'T-0003'), JSON.stringify(n.held));
+  const r3 = q.run(['readiness', '--baseline', base, '--candidate', head, '--task', 'T-0003']).out;
+  assert.equal(r3.outcome, 'Ready', r3.reasons.join(' | '));
+});
+
+test('MAINT-0024 review F8: in manual mode the same change still needs the owner\'s governing-change receipt', t => {
+  const manual = c => governing({ ...c, approval: { ...c.approval, label: 'manual', mechanism: 'manual', checkpoint: undefined } });
+  const p = project(t, { configEdit: manual, baselineEdit: q => { plan(q); q.edit('docs/workflow/profile.md', x => x.replace('approval_label: owner-merge', 'approval_label: manual')); } });
+  taskLike(p, 'T-0002', 'src/b', x => x.replace('status: Ready', 'status: Draft'));
+  const base = p.commit('records: T-0002');
+  const head = ownersChange(p);
+  const ci = p.run(['ci', '--baseline', base, '--candidate', head, '--task', 'T-0002']);
+  assert.notEqual(ci.status, 0);
+  assert.ok(ci.out.findings.some(f => /governing-change approval for the exact candidate and protected paths is required/.test(f)), ci.out.findings.join(' | '));
 });
 
 test('MAINT-0024: without a governing milestone record, or without the task in the candidate\'s tasks:, the found-task rule stands', t => {

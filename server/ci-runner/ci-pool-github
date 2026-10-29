@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""ci-pool-github: the reference job source and JIT source for ci-pool (ci-pool.contract.md, v1). Python 3 standard library only.
+
+  ci-pool-github source queued  OWNER/REPO        queued jobs, with whether the repository is private
+  ci-pool-github source running OWNER/REPO        jobs in progress, with the runner each one runs on
+  ci-pool-github jit create OWNER/REPO LABEL NAME one just-in-time runner config (one job), registered under LABEL
+  ci-pool-github jit remove OWNER/REPO RUNNER_ID  unregister a runner
+
+In ci-pool's config: "source_cmd": ["ci-pool-github", "source"], "jit_cmd": ["ci-pool-github", "jit"].
+The token is read from a file only root can read (CI_POOL_GITHUB_TOKEN_FILE, default /etc/ci-pool/github-token); it needs
+Actions: read and Administration: write on the repository (GitHub offers no narrower permission for a repository's
+just-in-time runners; the README, "The pool", says what that allows and what to use instead). It is never printed or passed
+on a command line.
+"""
+import json
+import os
+import re
+import stat
+import sys
+import urllib.error
+import urllib.request
+
+VERSION = 1
+API = os.environ.get("CI_POOL_GITHUB_API", "https://api.github.com")
+TOKEN_FILE = os.environ.get("CI_POOL_GITHUB_TOKEN_FILE", "/etc/ci-pool/github-token")
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+ID_RE = re.compile(r"^[0-9]{1,20}$")
+PER_PAGE = 100
+MAX_PAGES = 20  # a bound on one listing, so a misbehaving answer cannot loop for ever
+
+
+def die(msg):
+    print(f"ci-pool-github: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def token():
+    try:
+        st = os.stat(TOKEN_FILE)
+        if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            die(f"{TOKEN_FILE} must not be readable by group or others")
+        with open(TOKEN_FILE) as f:
+            t = f.read().strip()
+    except OSError as e:
+        die(f"cannot read the token file: {e}")
+    if not t:
+        die("the token file is empty")
+    return t
+
+
+def call(method, path, body=None, gone_ok=False):
+    req = urllib.request.Request(
+        API + path, method=method, data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {token()}", "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "ci-pool-github"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = r.read()
+    except urllib.error.HTTPError as e:
+        if gone_ok and e.code == 404:  # a runner that took its job is already gone from GitHub
+            return {}
+        die(f"{method} {path.split('?')[0]}: HTTP {e.code}")
+    except (urllib.error.URLError, OSError) as e:
+        die(f"{method} {path.split('?')[0]}: {e}")
+    return json.loads(raw) if raw else {}
+
+
+def pages(path, key):
+    """Every item under `key` of a list endpoint, page after page until a short page."""
+    out = []
+    for page in range(1, MAX_PAGES + 1):
+        items = call("GET", f"{path}{'&' if '?' in path else '?'}per_page={PER_PAGE}&page={page}").get(key, [])
+        out += items
+        if len(items) < PER_PAGE:
+            break
+    return out
+
+
+def jobs_of(repo, run_statuses, status):
+    """Jobs whose own status is `status`, found through the workflow runs in any of `run_statuses` (the jobs endpoint only
+    lists per run). A run turns in_progress when its first job starts, so its other queued jobs are only found there."""
+    out, seen = [], set()
+    for rs in run_statuses:
+        for run in pages(f"/repos/{repo}/actions/runs?status={rs}", "workflow_runs"):
+            if run["id"] in seen:  # a run can change status between two listings
+                continue
+            seen.add(run["id"])
+            out += [j for j in pages(f"/repos/{repo}/actions/runs/{run['id']}/jobs", "jobs") if j.get("status") == status]
+    return out
+
+
+def source(verb, repo):
+    if verb == "queued":
+        private = call("GET", f"/repos/{repo}").get("private") is True
+        jobs = [] if not private else [
+            {"id": str(j["id"]), "labels": j.get("labels", []), "created_at": j.get("created_at", "")}
+            for j in jobs_of(repo, ("queued", "in_progress", "waiting"), "queued")]
+        return {"version": VERSION, "repo": repo, "private": private, "jobs": jobs}
+    if verb == "running":
+        return {"version": VERSION, "repo": repo, "jobs": [
+            {"id": str(j["id"]), "runner_name": j.get("runner_name") or ""} for j in jobs_of(repo, ("in_progress",), "in_progress")]}
+    die(f"unknown source verb {verb!r}")
+
+
+def jit(verb, repo, *rest):
+    if verb == "create":
+        if len(rest) != 2 or not LABEL_RE.match(rest[0]) or not NAME_RE.match(rest[1]):
+            die("jit create REPO LABEL NAME")
+        label, name = rest
+        doc = call("POST", f"/repos/{repo}/actions/runners/generate-jitconfig",
+                   {"name": name, "runner_group_id": 1, "labels": [label], "work_folder": "_work"})
+        return {"version": VERSION, "runner_id": str(doc["runner"]["id"]), "encoded_jit_config": doc["encoded_jit_config"]}
+    if verb == "remove":
+        if len(rest) != 1 or not ID_RE.match(rest[0]):
+            die("jit remove REPO RUNNER_ID")
+        call("DELETE", f"/repos/{repo}/actions/runners/{rest[0]}", gone_ok=True)
+        return {"version": VERSION}
+    die(f"unknown jit verb {verb!r}")
+
+
+def main(argv):
+    if len(argv) < 3 or argv[0] not in ("source", "jit") or not REPO_RE.match(argv[2]):
+        die(__doc__.split("\n\n")[0].strip().splitlines()[0] + " (see the header for usage)")
+    doc = source(argv[1], argv[2]) if argv[0] == "source" else jit(argv[1], argv[2], *argv[3:])
+    print(json.dumps(doc))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,12 @@
+[Unit]
+Description=GitHub Actions runner for one job (ci-pool)
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/etc/ci-pool/jit
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/ci-pool-entrypoint
+
+[Install]
+WantedBy=multi-user.target

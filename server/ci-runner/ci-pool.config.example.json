@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "repos": [],
+  "source_cmd": ["/usr/local/sbin/ci-pool-github", "source"],
+  "jit_cmd": ["/usr/local/sbin/ci-pool-github", "jit"],
+  "poll_seconds": 15,
+  "hard_timeout_seconds": 7200,
+  "unassigned_timeout_seconds": 300,
+  "admission": {"min_mem_available_mib": 3072, "max_cpu_psi_avg60": 40, "max_mem_psi_avg60": 10},
+  "labels": {
+    "wf-build": {"profile": "ci-pool-build", "image": "ci-pool-build", "cap": 1, "memory": "5GiB"},
+    "wf-gate": {"profile": "ci-pool-gate", "image": "ci-pool-gate", "cap": 2, "memory": "2GiB"}
+  }
+}

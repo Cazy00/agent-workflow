@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# ci-pool-image build LABEL: build the image a pool label starts its containers from (wf-build or wf-gate; "build" and
+# "gate" work too), as root on the host. Ubuntu 24.04, the GitHub Actions runner (checked against the checksum its release
+# publishes, as runner-setup does), git, gh and Node; for build also Docker, Playwright's browsers and postgres:18.6 already
+# pulled, and /tmp as tmpfs. The runner is not registered: ci-pool-entrypoint registers it with a just-in-time config when
+# a container starts. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
+# and the one before that is deleted.
+# Run weekly (a timer) and on release; ci-pool replaces a spare made from an older image by itself.
+set -euo pipefail
+LXC="${LXC:-/snap/bin/lxc}"
+SHARE="${SHARE:-/usr/local/share/ci-runner}"
+NODE_MAJOR="${NODE_MAJOR:-22}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
+TMP_SIZE="${TMP_SIZE:-2G}"
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+[[ $# -eq 2 && "$1" == build ]] || usage
+case "$2" in
+  wf-build | build) kind=build ;;
+  wf-gate | gate) kind=gate ;;
+  *) usage ;;
+esac
+alias="ci-pool-$kind"
+work="ci-pool-image-$kind-$$"
+trap '$LXC delete --force "$work" >/dev/null 2>&1 || true' EXIT
+
+# The build container is made on the pool profile it will run with (so Docker works in it), at the pool's size.
+$LXC launch ubuntu:24.04 "$work" --profile "ci-pool-$kind"
+$LXC exec "$work" -- cloud-init status --wait >/dev/null || true
+$LXC file push "$SHARE/ci-pool-entrypoint" "$work/usr/local/sbin/ci-pool-entrypoint" --mode 0755
+$LXC file push "$SHARE/ci-pool-runner.service" "$work/etc/systemd/system/ci-pool-runner.service" --mode 0644
+$LXC exec "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
+  --env TMP_SIZE="$TMP_SIZE" -- bash -s <<'PROVISION'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl jq sudo xz-utils software-properties-common
+add-apt-repository -y ppa:git-core/ppa
+install -m 0755 -d /etc/apt/keyrings
+# where ci-pool pushes the runner's just-in-time config (lxc file push does not create directories)
+install -d -m 0700 /etc/ci-pool
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+apt-get update
+apt-get install -y git gh
+
+# the `runner` user: sudo in a build container (Playwright and test setups add packages), none in a gate container
+id runner >/dev/null 2>&1 || useradd -m -s /bin/bash runner
+if [ "$KIND" = build ]; then echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner; chmod 0440 /etc/sudoers.d/runner; fi
+
+# Node, from nodejs.org, checked against the SHASUMS file of the same release directory
+case "$(uname -m)" in x86_64) arch=x64; rarch=x64 ;; aarch64) arch=arm64; rarch=arm64 ;; *) echo "unsupported machine" >&2; exit 1 ;; esac
+base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
+file="$(curl -fsSL "$base/SHASUMS256.txt" | awk -v a="linux-$arch.tar.xz" '$2 ~ a"$" {print $2}' | head -n1)"
+[ -n "$file" ] || { echo "no Node ${NODE_MAJOR} download found" >&2; exit 1; }
+curl -fsSL -o "/tmp/$file" "$base/$file"
+(cd /tmp && curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | sha256sum -c -)
+tar -xJf "/tmp/$file" -C /usr/local --strip-components=1
+rm -f "/tmp/$file"
+
+# the Actions runner, not registered; checksum from the release, as runner-setup does
+release="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+version="$(jq -r .tag_name <<<"$release")"; version="${version#v}"
+sha="$(jq -r .body <<<"$release" | sed -n "s/.*<!-- BEGIN SHA linux-${rarch} -->\([0-9a-f]\{64\}\)<!-- END SHA linux-${rarch} -->.*/\1/p" | head -n1)"
+[ -n "$sha" ] || { echo "The runner release publishes no linux-${rarch} checksum; stopping." >&2; exit 1; }
+curl -fsSL -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v${version}/actions-runner-linux-${rarch}-${version}.tar.gz"
+echo "${sha}  /tmp/runner.tar.gz" | sha256sum -c -
+install -d -o runner -g runner /opt/actions-runner
+sudo -u runner tar xzf /tmp/runner.tar.gz -C /opt/actions-runner
+rm /tmp/runner.tar.gz
+/opt/actions-runner/bin/installdependencies.sh >/dev/null
+
+if [ "$KIND" = build ]; then
+  # Docker, then the hook that clears it after every job, then what jobs would otherwise download
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  usermod -aG docker runner
+  install -d /opt/ci-hooks
+  cat > /opt/ci-hooks/clean-docker.sh <<'HOOK'
+#!/usr/bin/env bash
+# After every job (ACTIONS_RUNNER_HOOK_JOB_COMPLETED): remove every container, volume and network. A pool container serves
+# one job, so this only matters to a job that starts Docker work and leaves it running when it ends.
+docker ps -aq | xargs -r docker rm -f >/dev/null 2>&1
+docker volume prune -af >/dev/null 2>&1
+docker network prune -f >/dev/null 2>&1
+exit 0
+HOOK
+  chmod 0755 /opt/ci-hooks/clean-docker.sh
+  systemctl start docker
+  docker pull "$POSTGRES_IMAGE"
+  # Playwright's browsers and their system libraries, where a project's own Playwright finds them; a project on another
+  # Playwright version downloads its own browsers, the libraries still being there.
+  mkdir -p /opt/ms-playwright
+  PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright npx --yes playwright install --with-deps chromium firefox webkit
+  echo 'PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' >> /etc/environment
+  chmod -R a+rX /opt/ms-playwright
+  systemctl stop docker docker.socket
+  # the pre-pulled images stay; nothing else Docker made at build time does
+  rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
+fi
+
+# /tmp in RAM (counts against the container's memory limit): tests that write many small files are several times faster
+sed -i '\#^tmpfs[[:space:]]\+/tmp[[:space:]]#d' /etc/fstab
+echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,size=${TMP_SIZE},mode=1777 0 0" >> /etc/fstab
+systemctl enable ci-pool-runner.service
+# the image carries no machine identity, token or log
+cloud-init clean --logs
+truncate -s 0 /etc/machine-id
+rm -rf /var/lib/apt/lists/*
+PROVISION
+$LXC stop "$work"
+# Publish under a new alias first, then rotate: a build that fails leaves the current image and its -prev as they were.
+$LXC image alias delete "$alias-new" >/dev/null 2>&1 || true
+$LXC publish "$work" --alias "$alias-new" "description=ci-pool $kind $(date -u +%F)"
+if $LXC image alias list --format csv | cut -d, -f1 | grep -qx "$alias"; then
+  # The image behind the old -prev alias would stay unaliased for ever (published images do not expire): delete it by
+  # fingerprint first, unless it is the very image being kept.
+  prev_fp="$($LXC image info "$alias-prev" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || prev_fp=""
+  cur_fp="$($LXC image info "$alias" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || cur_fp=""
+  $LXC image alias delete "$alias-prev" >/dev/null 2>&1 || true
+  if [[ -n "$prev_fp" && "$prev_fp" != "$cur_fp" ]]; then
+    $LXC image delete "$prev_fp" || echo "ci-pool-image: could not delete the old image $prev_fp; delete it by hand." >&2
+  fi
+  $LXC image alias rename "$alias" "$alias-prev"
+  had_prev=1
+fi
+$LXC image alias rename "$alias-new" "$alias"
+echo "Image $alias published${had_prev:+; the previous one is $alias-prev}."

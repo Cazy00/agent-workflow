@@ -42,8 +42,8 @@ test('I4: WF_READ_TOKEN is named exactly, with who can read it, its Dependabot c
 
 test('I5: install-host stops unless ufw is active, and puts the LAN deny first', () => {
   const h = read('server/ci-runner/install-host.sh');
-  const active = h.indexOf('Status: active'), firstRule = h.indexOf('sudo ufw allow');
-  assert.ok(active > 0 && active < firstRule, 'the check comes before any rule');
+  const active = h.indexOf('Status: active'), firstRule = h.search(/^sudo ufw (allow|route|insert|deny|delete) /m);
+  assert.ok(active > 0 && firstRule > 0 && active < firstRule, 'the check comes before any rule');
   assert.match(h, /^sudo ufw route insert 1 deny in on lxdbr0 /m);
 });
 

@@ -12,7 +12,7 @@ const dir = new URL('../../server/ci-runner/', import.meta.url);
 const read = f => fs.readFileSync(new URL(f, dir), 'utf8');
 
 test('the runner scripts parse as Bash', () => {
-  for (const f of ['ci-runner', 'runner-setup', 'install-host.sh']) {
+  for (const f of ['ci-runner', 'runner-setup', 'install-host.sh', 'ci-pool-image', 'ci-pool-entrypoint']) {
     const r = spawnSync('bash', ['-n', fileURLToPath(new URL(f, dir))], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
   }
@@ -151,4 +151,23 @@ test('install-host makes LXD\'s daemon start at boot', () => {
   const h = read('install-host.sh');
   assert.match(h, /systemctl start snap\.lxd\.daemon/);
   assert.match(h, /systemctl enable [^\n]*ci-runner-lxd\.service/);
+});
+
+// MAINT-0017 D1: the pool. Its behaviour is tested in server/ci-runner/test_ci_pool.py (CI runs it beside this file).
+test('the pool host rules: DHCP and DNS allowed in front of a deny of everything else into the host, on the bridge only', () => {
+  const lines = read('install-host.sh').match(/^sudo ufw insert 1 .*$/gm);
+  const at = re => lines.findIndex(l => re.test(l));
+  assert.ok(at(/deny in on lxdbr0 comment/) >= 0 && at(/allow in on lxdbr0 to any port 53/) > at(/deny in on lxdbr0 comment/), 'each insert at 1 goes in front of the one before it');
+  assert.ok(at(/port 67 proto udp/) > at(/deny in on lxdbr0 comment/));
+});
+
+test('a pool container is unprivileged and registers itself with a just-in-time config, not a stored token', () => {
+  for (const f of ['ci-pool-build.yaml', 'ci-pool-gate.yaml']) {
+    const y = read(f);
+    assert.match(y, /security\.privileged: "false"/);
+    assert.doesNotMatch(y.split('\n').filter(l => !l.startsWith('#')).join('\n'), /raw\.(lxc|idmap)/);
+  }
+  assert.match(read('ci-pool-entrypoint'), /--jitconfig/);
+  assert.match(read('ci-pool-entrypoint'), /rm -f "\$jit"/);
+  assert.ok(read('ci-pool-image').indexOf('sha256sum -c -') > 0, 'the runner download is checked');
 });

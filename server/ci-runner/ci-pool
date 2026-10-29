@@ -1,0 +1,690 @@
+#!/usr/bin/env python3
+"""ci-pool: a fresh LXD container per GitHub Actions job (MAINT-0017 D1). Python 3 standard library only.
+
+  ci-pool run [--config FILE]        the loop: every poll_seconds, reap, then start containers for queued jobs
+  ci-pool once [--config FILE]       one pass of the loop, for a test run
+  ci-pool check-profiles [--config FILE] [--file PROFILE.yaml ...]
+                                     refuse a pool profile (the live ones, or the given files) with any key outside the
+                                     allowed list; exit 1 if any is refused
+
+Contracts: ci-pool.contract.md (the job source and the JIT source are commands named in the config). Every `lxc` call goes
+through the Lxc class; every event is one JSON line on stdout. Nothing here kills a running job for room: a container is
+deleted only when its runner has exited, past the hard timeout, or when no job was assigned to it in time and GitHub lets
+the runner go. Containers are launched by count: a runner takes any queued job of its label, so a repository's label gets a
+container for every queued job that no unassigned container is waiting for, under the label's cap.
+"""
+import argparse
+import calendar
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+DEFAULT_CONFIG = "/etc/ci-pool/config.json"
+CONTRACT_VERSION = 1
+SPARE = "spare"
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+ID_RE = re.compile(r"^[0-9]{1,20}$")
+MEM_RE = re.compile(r"^([0-9]+)(MiB|GiB|MB|GB)$")
+MIN_POLL_SECONDS = 15
+YOUNG_SECONDS = 60  # a container this young has not used its memory yet
+LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+
+DEFAULTS = {
+    "poll_seconds": 15,
+    "hard_timeout_seconds": 7200,
+    "unassigned_timeout_seconds": 300,
+    "retry_seconds": 120,
+    "lag_seconds": 10,
+    "api_calls_per_repo_poll": 6,
+    "api_calls_per_hour": 1500,
+    "state_file": "/var/lib/ci-pool/state.json",
+    "lxc": "/snap/bin/lxc",
+    "command_timeout_seconds": 120,
+    "admission": {"min_mem_available_mib": 3072, "max_cpu_psi_avg60": 40.0, "max_mem_psi_avg60": 10.0},
+}
+
+# Pool profiles: the only keys and devices a profile may have (review F2). Value None = any value; a string = exactly it.
+COMMON_KEYS = {
+    "security.privileged": "false",
+    "boot.autostart": "false",  # after a host reboot LXD would bring job containers back, without their JIT config
+    "limits.cpu": None,
+    "limits.memory": None,
+    "limits.memory.swap": "false",
+    "limits.memory.enforce": "hard",
+}
+BUILD_KEYS = {
+    "security.nesting": "true",
+    "security.syscalls.intercept.mknod": "true",
+    "security.syscalls.intercept.setxattr": "true",
+}
+REQUIRED_KEYS = ("security.privileged", "boot.autostart", "limits.cpu", "limits.memory", "limits.memory.swap")
+DEVICES = {
+    "root": {"type": "disk", "path": "/", "pool": "ci"},
+    "eth0": {"type": "nic", "name": "eth0", "network": "lxdbr0", "nictype": None},
+}
+PROFILE_TOP_KEYS = {"name", "description", "config", "devices", "used_by", "project"}
+
+
+def mem_mib(text):
+    """A memory limit such as 5GiB in MiB; None when it is not of the form <digits><MiB|GiB|MB|GB>."""
+    m = MEM_RE.match(str(text))
+    if not m:
+        return None
+    return int(m.group(1)) * {"MiB": 1, "GiB": 1024, "MB": 1000000 / 1048576, "GB": 1000000000 / 1048576}[m.group(2)]
+
+
+def log(event, **fields):
+    print(json.dumps({"ts": round(time.time(), 3), "event": event, **fields}, sort_keys=True), flush=True)
+
+
+class PoolError(Exception):
+    pass
+
+
+# ── lxc: the one place that runs it ──────────────────────────────────────────────────────────────────────────────
+class Lxc:
+    def __init__(self, binary, timeout=120):
+        self.binary = binary
+        self.timeout = timeout
+
+    def _run(self, *args, data=None):
+        try:
+            r = subprocess.run([self.binary, *args], input=data, capture_output=True, text=True, timeout=self.timeout)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise PoolError(f"lxc {args[0]}: {e}") from e
+        if r.returncode != 0:
+            raise PoolError(f"lxc {' '.join(args[:2])} failed: {r.stderr.strip()[:300]}")
+        return r.stdout
+
+    def list(self):
+        """Every instance as {name, status, created_at (epoch), base_image}."""
+        out = []
+        for i in json.loads(self._run("list", "--format", "json") or "[]"):
+            out.append({
+                "name": i["name"],
+                "status": i.get("status", ""),
+                "created_at": _epoch(i.get("created_at", "")),
+                "base_image": (i.get("config") or {}).get("volatile.base_image", ""),
+            })
+        return out
+
+    def image_fingerprint(self, alias):
+        """The fingerprint the alias points at, or '' when there is no such image."""
+        try:
+            for i in json.loads(self._run("image", "list", "--format", "json", alias) or "[]"):
+                if any(a.get("name") == alias for a in i.get("aliases", [])):
+                    return i["fingerprint"]
+        except PoolError:
+            pass
+        return ""
+
+    def init(self, name, image, profile, memory):
+        """A stopped instance from the image, on the pool profile only (not `default`: the pool profile has its own root disk)."""
+        self._run("init", image, name, "--profile", profile, "--config", f"limits.memory={memory}")
+
+    def rename(self, old, new):
+        self._run("rename", old, new)
+
+    def push_secret(self, name, path, data):
+        """Write data to path inside the instance (mode 0600) through stdin; works on a stopped instance."""
+        self._run("file", "push", "-", f"{name}{path}", "--mode", "0600", data=data)
+
+    def start(self, name):
+        self._run("start", name)
+
+    def delete(self, name):
+        self._run("delete", "--force", name)
+
+    def profile_show(self, name):
+        return self._run("profile", "show", name)
+
+
+def _epoch(stamp):
+    """LXD's RFC 3339 time as epoch seconds; 0 when unreadable (an unreadable age never reaps early)."""
+    m = re.match(r"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)", stamp or "")
+    if not m:
+        return 0
+    return calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+
+
+# ── config and state ─────────────────────────────────────────────────────────────────────────────────────────────
+def load_config(path):
+    with open(path) as f:
+        user = json.load(f)
+    cfg = {**DEFAULTS, **user, "admission": {**DEFAULTS["admission"], **user.get("admission", {})}}
+    if cfg.get("version") != 1:
+        raise PoolError("config: version must be 1")
+    for r in cfg.get("repos", []):
+        if not REPO_RE.match(r):
+            raise PoolError(f"config: bad repo {r!r}")
+    if not cfg.get("labels"):
+        raise PoolError("config: no labels")
+    for label, spec in cfg["labels"].items():
+        if not LABEL_RE.match(label):
+            raise PoolError(f"config: bad label {label!r}")
+        for k in ("profile", "image", "cap", "memory"):
+            if k not in spec:
+                raise PoolError(f"config: label {label} lacks {k}")
+        if mem_mib(spec["memory"]) is None:
+            raise PoolError(f"config: label {label} memory must look like 5GiB (MiB, GiB, MB or GB)")
+    for k in ("source_cmd", "jit_cmd"):
+        if not (isinstance(cfg.get(k), list) and cfg[k] and all(isinstance(a, str) for a in cfg[k])):
+            raise PoolError(f"config: {k} must be a non-empty list of strings")
+    return cfg
+
+
+class State:
+    """job id -> {container, repo, label, runner_id, runner_name, started, status, assigned, retry_after, finished}.
+    status: launching | running | finished | failed. An entry is written before the container starts and says which
+    container, runner and job id a launch was for; it is not a promise about the job (the runner takes any queued job of its
+    label). It keeps a launch from repeating while its container is alive, its retry pause runs, or lag_seconds after it ended;
+    finished entries stay a day, other entries that outlive the hard timeout without a container are dropped."""
+
+    def __init__(self, path):
+        self.path = path
+        self.jobs = {}
+        if os.path.exists(path):
+            with open(path) as f:
+                self.jobs = json.load(f).get("jobs", {})
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"version": 1, "jobs": self.jobs}, f, indent=1, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.path)
+
+    def by_container(self, name):
+        for jid, e in self.jobs.items():
+            if e["container"] == name and e["status"] in ("launching", "running"):
+                return jid, e
+        return None, None
+
+
+# ── host pressure ────────────────────────────────────────────────────────────────────────────────────────────────
+def read_host():
+    """MemAvailable (MiB) and the avg60 of PSI 'some' for cpu and memory; None where unreadable."""
+    def psi(kind):
+        try:
+            with open(f"/proc/pressure/{kind}") as f:
+                for line in f:
+                    if line.startswith("some "):
+                        return float(dict(p.split("=") for p in line.split()[1:])["avg60"])
+        except (OSError, ValueError, KeyError):
+            pass
+        return None
+    mem = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    mem = int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return {"mem_available_mib": mem, "cpu_psi": psi("cpu"), "mem_psi": psi("memory")}
+
+
+def admission_refusal(host, limits):
+    """Why a container may not start now, or '' when it may. A reading that is missing refuses."""
+    if host["mem_available_mib"] is None or host["mem_available_mib"] < limits["min_mem_available_mib"]:
+        return f"MemAvailable {host['mem_available_mib']} MiB below {limits['min_mem_available_mib']}"
+    if host["cpu_psi"] is None or host["cpu_psi"] >= limits["max_cpu_psi_avg60"]:
+        return f"cpu pressure avg60 {host['cpu_psi']} not below {limits['max_cpu_psi_avg60']}"
+    if host["mem_psi"] is None or host["mem_psi"] >= limits["max_mem_psi_avg60"]:
+        return f"memory pressure avg60 {host['mem_psi']} not below {limits['max_mem_psi_avg60']}"
+    return ""
+
+
+# ── the pool ─────────────────────────────────────────────────────────────────────────────────────────────────────
+class Pool:
+    def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time):
+        self.cfg, self.lxc, self.state, self.host, self.clock = cfg, lxc, state, host, clock
+        self.run_cmd = run_cmd or self._run_cmd
+
+    # job source and JIT source: commands from the config (ci-pool.contract.md)
+    def _run_cmd(self, argv):
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=self.cfg["command_timeout_seconds"])
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise PoolError(f"{argv[0]}: {e}") from e
+        if r.returncode != 0:
+            raise PoolError(f"{argv[0]} failed: {r.stderr.strip()[:300]}")
+        return r.stdout
+
+    def _json(self, argv):
+        try:
+            doc = json.loads(self.run_cmd(argv))
+        except ValueError as e:
+            raise PoolError(f"{argv[0]}: not JSON") from e
+        if not isinstance(doc, dict) or doc.get("version") != CONTRACT_VERSION:
+            raise PoolError(f"{argv[0]}: contract version {doc.get('version') if isinstance(doc, dict) else '?'}, want {CONTRACT_VERSION}")
+        return doc
+
+    def queued(self, repo):
+        """Queued jobs of a repo that the pool may serve, oldest first; [] for a repo that does not answer as private."""
+        doc = self._json(self.cfg["source_cmd"] + ["queued", repo])
+        if doc.get("repo") != repo:
+            raise PoolError(f"source answered for {doc.get('repo')!r}, asked {repo!r}")
+        if doc.get("private") is not True:
+            log("repo_refused", repo=repo, why="the source does not say the repository is private")
+            return []
+        jobs = [j for j in doc.get("jobs", []) if isinstance(j, dict) and ID_RE.match(str(j.get("id", "")))]
+        return sorted(jobs, key=lambda j: str(j.get("created_at", "")))
+
+    def running_runner_names(self, repo):
+        doc = self._json(self.cfg["source_cmd"] + ["running", repo])
+        return {j.get("runner_name") for j in doc.get("jobs", []) if isinstance(j, dict)}
+
+    def jit_create(self, repo, label, name):
+        doc = self._json(self.cfg["jit_cmd"] + ["create", repo, label, name])
+        if not doc.get("encoded_jit_config") or not doc.get("runner_id"):
+            raise PoolError("jit create: no config or runner id")
+        return str(doc["runner_id"]), doc["encoded_jit_config"]
+
+    def jit_remove(self, repo, runner_id):
+        """Unregister a runner; True when it is gone (a runner that took its job and finished has already gone from GitHub).
+        A runner that still holds a job is refused, which is the answer 'not gone'."""
+        try:
+            self.run_cmd(self.cfg["jit_cmd"] + ["remove", repo, str(runner_id)])
+        except PoolError as e:
+            log("jit_remove_failed", repo=repo, runner_id=runner_id, error=str(e))
+            return False
+        return True
+
+    # names
+    @staticmethod
+    def cname(label, ident):
+        return f"pool-{label}-{ident}"
+
+    def label_of(self, name):
+        for label in self.cfg["labels"]:
+            prefix = f"pool-{label}-"
+            if name.startswith(prefix):
+                return label, name[len(prefix):]
+        return None, None
+
+    # one pass
+    def poll_seconds(self):
+        """The pause between passes: poll_seconds, but not below what keeps the source within its API budget."""
+        cfg = self.cfg
+        scaled = -(-len(cfg["repos"]) * cfg["api_calls_per_repo_poll"] * 3600 // cfg["api_calls_per_hour"])
+        return max(int(cfg["poll_seconds"]), MIN_POLL_SECONDS, scaled)
+
+    def tick(self):
+        now = self.clock()
+        try:
+            instances = self.lxc.list()
+        except PoolError as e:
+            log("lxc_list_failed", error=str(e))
+            return
+        pool = {i["name"]: i for i in instances if self.label_of(i["name"])[0]}
+        try:
+            self.reap(pool, now)
+            self.state.save()
+            pool = {i["name"]: i for i in self.lxc.list() if self.label_of(i["name"])[0]}
+            self.launch(pool, now)
+            self.keep_spares()
+            self.prune(now, pool)
+        finally:
+            self.state.save()  # what the reap learned must survive a pass that stops half way
+
+    def reap(self, pool, now):
+        cfg = self.cfg
+        running = {}  # repo -> runner names of jobs in progress, or None when the source did not answer; one ask per repo
+
+        def runners(repo):
+            if repo not in running:
+                try:
+                    running[repo] = self.running_runner_names(repo)
+                except PoolError as err:  # unknown is not a reason to delete
+                    log("assignment_check_failed", repo=repo, error=str(err))
+                    running[repo] = None
+            return running[repo]
+
+        for name, inst in pool.items():
+            label, ident = self.label_of(name)
+            if ident == SPARE:
+                continue
+            jid, e = self.state.by_container(name)
+            if e is None:
+                # no record: a container this state does not know. Leave a running one for the hard timeout from LXD's own time.
+                if inst["status"] == "Stopped" or (inst["created_at"] and now - inst["created_at"] > cfg["hard_timeout_seconds"]):
+                    self._delete(name, None, None, "orphan")
+                continue
+            why = None
+            if inst["status"] == "Stopped":
+                why = "runner_exited"  # also a launch that a crash left unstarted
+            elif now - e["started"] > cfg["hard_timeout_seconds"]:
+                why = "hard_timeout"
+            else:
+                names = runners(e["repo"])
+                if names is not None:  # asked every pass, not remembered: a container that lost its JIT config stops counting
+                    e["assigned"] = e["runner_name"] in names
+                    if not e["assigned"] and now - e["started"] > cfg["unassigned_timeout_seconds"]:
+                        why = "unassigned"
+            if why:
+                self._delete(name, e, jid, why)
+        # a launch whose container is gone (a crash between the record and the container, or a container removed by hand)
+        for jid, e in self.state.jobs.items():
+            if e["status"] in ("launching", "running") and e["container"] not in pool:
+                self.jit_remove(e["repo"], e["runner_id"])
+                e["status"], e["finished"] = "finished", now
+                log("entry_closed", job=jid, container=e["container"], why="no container")
+
+    def _delete(self, name, entry, jid, why):
+        if entry is not None:
+            removed = self.jit_remove(entry["repo"], entry["runner_id"])
+            if why == "unassigned" and not removed:
+                # GitHub refuses to drop a runner that holds a job: it was assigned after all (or the listing lags)
+                entry["assigned"] = True
+                log("delete_skipped", container=name, job=jid, why="runner could not be unregistered")
+                return
+        try:
+            self.lxc.delete(name)
+        except PoolError as e:
+            log("delete_failed", container=name, error=str(e))
+            return
+        if entry is not None:
+            entry["status"] = "finished"
+            entry["finished"] = self.clock()
+        log("deleted", container=name, job=jid, why=why)
+
+    def count(self, pool, label):
+        """Job containers of a label that exist (running, or stopped and not yet reaped); the spare never counts."""
+        return sum(1 for n in pool if self.label_of(n)[0] == label and self.label_of(n)[1] != SPARE)
+
+    def unassigned(self, pool, repo, label):
+        """Live containers of this repository and label whose runner has not taken a job yet: each will take one queued job."""
+        return sum(1 for e in self.state.jobs.values()
+                   if e["status"] in ("launching", "running") and e["repo"] == repo and e["label"] == label
+                   and e["container"] in pool and pool[e["container"]].get("status") != "Stopped" and not e.get("assigned"))
+
+    def blocked(self, pool, label, jid, now):
+        """Why a job id may not name a new container now: its container exists, its retry pause runs, or it ended a moment ago."""
+        if self.cname(label, jid) in pool:
+            return True
+        e = self.state.jobs.get(jid)
+        if e is None:
+            return False
+        if e["status"] in ("launching", "running"):
+            return e["container"] in pool
+        if e["status"] == "failed":
+            return now < e.get("retry_after", 0)
+        return now - e.get("finished", now) < self.cfg["lag_seconds"]
+
+    def reserved_mib(self, pool, now):
+        """Memory limits of the containers that started a moment ago (this pass included): MemAvailable does not show it yet."""
+        total = 0
+        for e in self.state.jobs.values():
+            if e["status"] in ("launching", "running") and e["container"] in pool and now - e["started"] < YOUNG_SECONDS:
+                total += mem_mib(self.cfg["labels"].get(e["label"], {}).get("memory")) or 0
+        return total
+
+    def launch(self, pool, now):
+        for repo in self.cfg["repos"]:
+            try:
+                jobs = self.queued(repo)
+            except PoolError as e:
+                log("source_failed", repo=repo, error=str(e))
+                continue
+            by_label = {}
+            for job in jobs:
+                label = next((l for l in job.get("labels", []) if l in self.cfg["labels"]), None)
+                if label is not None:
+                    by_label.setdefault(label, []).append(job)
+            for label, wanted in by_label.items():
+                spec = self.cfg["labels"][label]
+                need = len(wanted) - self.unassigned(pool, repo, label)
+                for job in wanted:
+                    if need <= 0:
+                        break
+                    jid = str(job["id"])
+                    if self.blocked(pool, label, jid, now):
+                        continue
+                    if self.count(pool, label) >= spec["cap"]:
+                        log("cap_reached", label=label, cap=spec["cap"], job=jid)
+                        break
+                    host = self.host()
+                    if host["mem_available_mib"] is not None:
+                        host = {**host, "mem_available_mib": host["mem_available_mib"] - self.reserved_mib(pool, now)}
+                    why = admission_refusal(host, self.cfg["admission"])
+                    if why:
+                        log("admission_refused", job=jid, why=why)
+                        return  # the whole host is the reason: no other job starts this pass
+                    if not self._start(repo, label, jid, spec, pool, now):
+                        break  # a failure is likely to repeat for the next job of this label
+                    pool[self.cname(label, jid)] = {"name": self.cname(label, jid), "status": "Running"}
+                    need -= 1
+
+    def _start(self, repo, label, jid, spec, pool, now):
+        name = self.cname(label, jid)
+        runner_name = f"ci-pool-{label}-{jid[-8:]}"
+        try:
+            runner_id, jit = self.jit_create(repo, label, runner_name)
+        except PoolError as e:
+            log("jit_failed", job=jid, error=str(e))
+            return False
+        # recorded before anything starts: a crash from here on leaves an entry that the next pass closes
+        self.state.jobs[jid] = {"container": name, "repo": repo, "label": label, "runner_id": runner_id,
+                                "runner_name": runner_name, "started": now, "status": "launching", "assigned": False}
+        self.state.save()
+        try:
+            spare = self.cname(label, SPARE)
+            if spare in pool and self._spare_is_current(label, pool[spare]):
+                self.lxc.rename(spare, name)
+                del pool[spare]
+            else:
+                if spare in pool:
+                    self.lxc.delete(spare)
+                    del pool[spare]
+                self.lxc.init(name, spec["image"], spec["profile"], spec["memory"])
+            self.lxc.push_secret(name, "/etc/ci-pool/jit", jit)
+            self.lxc.start(name)
+        except PoolError as e:
+            log("launch_failed", job=jid, container=name, error=str(e))
+            self.jit_remove(repo, runner_id)
+            try:
+                self.lxc.delete(name)
+            except PoolError:
+                pass
+            self.state.jobs[jid].update(status="failed", retry_after=now + self.cfg["retry_seconds"])
+            return False
+        self.state.jobs[jid]["status"] = "running"
+        self.state.save()
+        log("launched", job=jid, container=name, repo=repo, label=label, runner=runner_name)
+        return True
+
+    def _spare_is_current(self, label, inst):
+        want = self.lxc.image_fingerprint(self.cfg["labels"][label]["image"])
+        return bool(want) and inst.get("base_image") == want and inst.get("status") == "Stopped"
+
+    def keep_spares(self):
+        """One stopped spare per label, made from the label's image; a spare of an older image is replaced."""
+        pool = {i["name"]: i for i in self.lxc.list()}
+        for label, spec in self.cfg["labels"].items():
+            name = self.cname(label, SPARE)
+            try:
+                if name in pool and not self._spare_is_current(label, pool[name]):
+                    if pool[name]["status"] != "Stopped":
+                        continue
+                    self.lxc.delete(name)
+                    del pool[name]
+                    log("spare_replaced", container=name)
+                if name not in pool:
+                    if not self.lxc.image_fingerprint(spec["image"]):
+                        log("no_image", label=label, image=spec["image"])
+                        continue
+                    self.lxc.init(name, spec["image"], spec["profile"], spec["memory"])
+                    log("spare_ready", container=name)
+            except PoolError as e:
+                log("spare_failed", container=name, error=str(e))
+
+    def prune(self, now, pool):
+        for jid, e in list(self.state.jobs.items()):
+            if e["status"] == "finished":
+                gone = now - e.get("finished", now) > 86400
+            else:  # an entry that outlived the hard timeout with no container will never be reaped
+                gone = now - e["started"] > self.cfg["hard_timeout_seconds"] and e["container"] not in pool
+            if gone:
+                del self.state.jobs[jid]
+
+
+# ── profiles ─────────────────────────────────────────────────────────────────────────────────────────────────────
+def parse_profile(text):
+    """The subset of YAML that `lxc profile show` prints and the shipped profiles use: top-level keys, one level of
+    mapping below `config:` and `devices:` (devices two), scalars as strings, lists ignored. Anything else is an error."""
+    doc = {}
+    stack = [(-1, doc)]
+    block = None  # indent of a `|` or `>` scalar whose lines are skipped
+    for n, raw in enumerate(text.splitlines(), 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if block is not None and indent > block:
+            continue
+        block = None
+        line = raw.strip()
+        if line.startswith("- "):
+            continue  # used_by entries
+        m = re.match(r"^([^:#]+?):(?:\s+(.*))?$", line)
+        if not m:
+            raise PoolError(f"line {n}: cannot read {line!r}")
+        key, value = m.group(1).strip().strip("'\""), (m.group(2) or "").strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if not isinstance(parent, dict):
+            raise PoolError(f"line {n}: bad nesting")
+        if value == "":
+            parent[key] = {}
+            stack.append((indent, parent[key]))
+        elif value in ("|", ">", "|-", ">-"):
+            parent[key] = value
+            block = indent
+        elif value in ("{}", "[]"):
+            parent[key] = {} if value == "{}" else []
+        else:
+            parent[key] = value.strip("'\"")
+    return doc
+
+
+def profile_refusals(kind, text):
+    """Every reason a pool profile of this kind (build|gate) is refused; [] when it is allowed."""
+    try:
+        doc = parse_profile(text)
+    except PoolError as e:
+        return [str(e)]
+    out = []
+    for k in doc:
+        if k not in PROFILE_TOP_KEYS:
+            out.append(f"top-level key {k} is not allowed")
+    allowed = dict(COMMON_KEYS)
+    if kind == "build":
+        allowed.update(BUILD_KEYS)
+    config = doc.get("config", {})
+    if not isinstance(config, dict):
+        return out + ["config is not a mapping"]
+    for k, v in config.items():
+        if k not in allowed:
+            out.append(f"config key {k} is not allowed")
+        elif allowed[k] is not None and v != allowed[k]:
+            out.append(f"config {k} must be {allowed[k]}, is {v}")
+    for k in REQUIRED_KEYS:
+        if k not in config:
+            out.append(f"config {k} is required")
+    devices = doc.get("devices", {})
+    if not isinstance(devices, dict):
+        return out + ["devices is not a mapping"]
+    for dname, dev in devices.items():
+        want = DEVICES.get(dname)
+        if want is None or not isinstance(dev, dict):
+            out.append(f"device {dname} is not allowed")
+            continue
+        for k, v in dev.items():
+            if k not in want:
+                out.append(f"device {dname} key {k} is not allowed")
+            elif want[k] is not None and v != want[k]:
+                out.append(f"device {dname} {k} must be {want[k]}, is {v}")
+        for k, v in want.items():
+            if v is not None and k not in dev:
+                out.append(f"device {dname} key {k} is required")
+    for dname in DEVICES:
+        if dname not in devices:
+            out.append(f"device {dname} is required")
+    return out
+
+
+def check_profiles(cfg, lxc, files):
+    """Exit status: 0 when every profile is allowed. Files are checked as given (kind from the name); with none, the live ones."""
+    bad = 0
+    targets = []
+    if files:
+        for f in files:
+            with open(f) as fh:
+                targets.append((f, "gate" if "gate" in os.path.basename(f) else "build", fh.read()))
+    else:
+        for label, spec in cfg["labels"].items():
+            try:
+                targets.append((spec["profile"], "gate" if label.endswith("gate") else "build", lxc.profile_show(spec["profile"])))
+            except PoolError as e:
+                print(f"{spec['profile']}: {e}", file=sys.stderr)
+                bad += 1
+    for name, kind, text in targets:
+        reasons = profile_refusals(kind, text)
+        for r in reasons:
+            print(f"{name}: refused: {r}", file=sys.stderr)
+        bad += bool(reasons)
+        if not reasons:
+            print(f"{name}: ok")
+    return 1 if bad else 0
+
+
+# ── entry point ──────────────────────────────────────────────────────────────────────────────────────────────────
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="ci-pool")
+    ap.add_argument("command", choices=["run", "once", "check-profiles"])
+    ap.add_argument("--config", default=DEFAULT_CONFIG)
+    ap.add_argument("--file", action="append", default=[])
+    args = ap.parse_args(argv)
+    try:
+        if args.command == "check-profiles" and args.file:
+            return check_profiles(None, None, args.file)
+        cfg = load_config(args.config)
+        lxc = Lxc(cfg["lxc"], cfg["command_timeout_seconds"])
+        if args.command == "check-profiles":
+            return check_profiles(cfg, lxc, [])
+        # a pool whose profiles are not the allowed ones starts nothing
+        if check_profiles(cfg, lxc, []) != 0:
+            log("profiles_refused")
+            return 1
+        pool = Pool(cfg, lxc, State(cfg["state_file"]))
+    except (PoolError, OSError, ValueError) as e:
+        print(f"ci-pool: {e}", file=sys.stderr)
+        return 1
+    if args.command == "once":
+        pool.tick()
+        return 0
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))  # containers are left as they are
+    log("started", repos=cfg["repos"], labels=sorted(cfg["labels"]), poll_seconds=pool.poll_seconds())
+    while not stop:
+        try:
+            pool.tick()
+        except Exception as e:  # one bad pass must not end the service
+            log("tick_failed", error=f"{type(e).__name__}: {e}")
+        for _ in range(pool.poll_seconds()):
+            if stop:
+                break
+            time.sleep(1)
+    log("stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3,7 +3,8 @@
 # "gate" work too), as root on the host. Ubuntu 24.04, the GitHub Actions runner (checked against the checksum its release
 # publishes, as runner-setup does), git, gh and Node; for build also Docker, Playwright's browsers and postgres:18.6 already
 # pulled, and /tmp as tmpfs. The runner is not registered: ci-pool-entrypoint registers it with a just-in-time config when
-# a container starts. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev.
+# a container starts. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
+# and the one before that is deleted.
 # Run weekly (a timer) and on release; ci-pool replaces a spare made from an older image by itself.
 set -euo pipefail
 LXC="${LXC:-/snap/bin/lxc}"
@@ -38,6 +39,8 @@ apt-get update
 apt-get install -y ca-certificates curl jq sudo xz-utils software-properties-common
 add-apt-repository -y ppa:git-core/ppa
 install -m 0755 -d /etc/apt/keyrings
+# where ci-pool pushes the runner's just-in-time config (lxc file push does not create directories)
+install -d -m 0700 /etc/ci-pool
 curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
 chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
@@ -116,7 +119,14 @@ $LXC stop "$work"
 $LXC image alias delete "$alias-new" >/dev/null 2>&1 || true
 $LXC publish "$work" --alias "$alias-new" "description=ci-pool $kind $(date -u +%F)"
 if $LXC image alias list --format csv | cut -d, -f1 | grep -qx "$alias"; then
+  # The image behind the old -prev alias would stay unaliased for ever (published images do not expire): delete it by
+  # fingerprint first, unless it is the very image being kept.
+  prev_fp="$($LXC image info "$alias-prev" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || prev_fp=""
+  cur_fp="$($LXC image info "$alias" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || cur_fp=""
   $LXC image alias delete "$alias-prev" >/dev/null 2>&1 || true
+  if [[ -n "$prev_fp" && "$prev_fp" != "$cur_fp" ]]; then
+    $LXC image delete "$prev_fp" || echo "ci-pool-image: could not delete the old image $prev_fp; delete it by hand." >&2
+  fi
   $LXC image alias rename "$alias" "$alias-prev"
   had_prev=1
 fi

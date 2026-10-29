@@ -25,6 +25,7 @@ def load(name):
 
 
 pool = load("ci-pool")
+YOUNG = pool.YOUNG_SECONDS
 GOOD = {"mem_available_mib": 8000, "cpu_psi": 5.0, "mem_psi": 0.5}
 
 
@@ -33,6 +34,7 @@ class FakeLxc:
 
     def __init__(self, fingerprint="fp1"):
         self.instances, self.calls, self.fingerprint, self.fail = {}, [], fingerprint, set()
+        self.list_budget = None  # a number: that many more list() calls work, the next one raises
 
     def _do(self, what):
         self.calls.append(what)
@@ -40,6 +42,10 @@ class FakeLxc:
             raise pool.PoolError(f"{what[0]} refused")
 
     def list(self):
+        if self.list_budget is not None:
+            if self.list_budget <= 0:
+                raise pool.PoolError("list refused")
+            self.list_budget -= 1
         return [{"name": n, "status": i["status"], "created_at": i.get("created_at", 0), "base_image": i.get("base_image", "")}
                 for n, i in self.instances.items()]
 
@@ -85,7 +91,7 @@ class Env:
         self.cfg.update(over)
         self.lxc, self.now, self.host = FakeLxc(), 1000.0, dict(GOOD)
         self.queued, self.running, self.private, self.source_fails = [], set(), True, False
-        self.commands, self.removed = [], []
+        self.commands, self.removed, self.remove_fails = [], [], False
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
                               host=lambda: self.host, clock=lambda: self.now)
 
@@ -99,6 +105,8 @@ class Env:
             return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running]})
         if argv[1] == "create":
             return json.dumps({"version": 1, "runner_id": "77", "encoded_jit_config": "SECRET-JIT"})
+        if self.remove_fails:
+            raise pool.PoolError("runner is still running a job")
         self.removed.append(argv[2:])
         return json.dumps({"version": 1})
 
@@ -108,6 +116,9 @@ class Env:
 
     def job(self, jid, label="wf-build", created="2026-10-29T19:00:00Z"):
         self.queued.append({"id": jid, "labels": [label], "created_at": created})
+
+    def creates(self):
+        return sum(1 for c in self.commands if c[:2] == ["jit", "create"])
 
 
 class LaunchTests(unittest.TestCase):
@@ -124,14 +135,65 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(e.lxc.names("start"), ["pool-wf-build-100"])
         self.assertEqual(sum(1 for c in e.commands if c[:2] == ["jit", "create"]), 1)
 
-    def test_a_job_that_was_recorded_before_a_crash_is_not_launched_again(self):
+    def test_a_launch_a_crash_left_without_a_container_is_closed_and_the_job_launched_again(self):  # F3
         e = Env(self)
         e.pool.state.jobs["100"] = {"container": "pool-wf-build-100", "repo": "o/r", "label": "wf-build", "runner_id": "1",
                                     "runner_name": "x", "started": e.now, "status": "launching", "assigned": False}
         e.pool.state.save()
         e.job("100")
         e.tick()
-        self.assertEqual(e.lxc.names("start"), [])
+        self.assertEqual(e.pool.state.jobs["100"]["status"], "finished", "the dead entry is closed")
+        self.assertIn(["o/r", "1"], e.removed, "its runner is unregistered")
+        self.assertEqual(e.lxc.names("start"), [], "not in the same breath")
+        e.now += 15
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), ["pool-wf-build-100"], "the job is not stranded")
+
+    def test_a_job_whose_runner_took_another_job_is_launched_again(self):  # F3, review T3
+        e = Env(self)
+        e.job("100", created="2026-10-29T19:00:00Z")
+        e.job("101", created="2026-10-29T19:00:05Z")
+        e.tick()  # cap 1: pool-wf-build-100
+        e.queued = [j for j in e.queued if j["id"] == "100"]  # its JIT runner took 101
+        e.lxc.instances["pool-wf-build-100"]["status"] = "Stopped"  # 101 done, powered off
+        e.now += 15
+        e.tick()  # reaped, entry 100 "finished"
+        e.now += 15
+        e.tick()
+        self.assertEqual(e.creates(), 2)
+
+    def test_a_second_job_gets_a_container_while_the_first_runner_runs_another_job(self):  # F3
+        e = Env(self, labels={"wf-gate": {"profile": "p", "image": "i", "cap": 3, "memory": "1GiB"}})
+        e.job("200", "wf-gate")
+        e.job("201", "wf-gate")
+        e.tick()
+        self.assertEqual(sorted(e.lxc.names("start")), ["pool-wf-gate-200", "pool-wf-gate-201"])
+        e.queued = [j for j in e.queued if j["id"] == "200"]  # the runner named for 201 took 201's job? no: took 201 and 200 is left
+        e.running = {"ci-pool-wf-gate-201"}  # runner 201 holds a job; the runner named for 200 is unassigned
+        e.job("202", "wf-gate")
+        e.now += 15
+        e.tick()  # queued: 200, 202 ; unassigned containers: 200 only -> one more
+        self.assertEqual(sorted(e.lxc.names("start")), ["pool-wf-gate-200", "pool-wf-gate-201", "pool-wf-gate-202"])
+
+    def test_a_listing_that_lags_does_not_launch_for_a_job_a_container_already_waits_for(self):  # F3
+        e = Env(self)
+        e.job("100")
+        for _ in range(5):
+            e.tick()
+            e.now += 15
+        self.assertEqual(e.creates(), 1)
+
+    def test_the_hosts_memory_counts_what_this_pass_already_started(self):  # F8
+        e = Env(self)
+        e.host = {"mem_available_mib": 3500, "cpu_psi": 1.0, "mem_psi": 0.0}
+        e.job("100", "wf-build")
+        e.job("201", "wf-gate")
+        e.job("202", "wf-gate")
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), ["pool-wf-build-100"], "5 GiB are spoken for; 3.5 GiB left would not admit a gate")
+        e.now += YOUNG
+        e.tick()  # the build container has now used its memory, which MemAvailable shows
+        self.assertEqual(len(e.lxc.names("start")), 2)
 
     def test_the_jit_config_goes_to_the_container_and_is_never_logged(self):
         e = Env(self)
@@ -158,6 +220,7 @@ class LaunchTests(unittest.TestCase):
 
     def test_the_caps_are_per_label(self):
         e = Env(self)
+        e.host = {**GOOD, "mem_available_mib": 20000}  # room for all three, the memory rule has its own test
         e.job("100", "wf-build")
         e.job("201", "wf-gate")
         e.job("202", "wf-gate")
@@ -239,7 +302,8 @@ class ReaperTests(unittest.TestCase):
         e.now += 600
         e.tick()
         self.assertIn("pool-wf-build-100", e.lxc.instances)
-        e.running = set()  # remembered: later passes do not ask again
+        e.running = set()  # assignment is asked every pass; a runner GitHub will not let go holds a job
+        e.remove_fails = True
         e.now += 600
         e.tick()
         self.assertIn("pool-wf-build-100", e.lxc.instances)
@@ -275,6 +339,69 @@ class ReaperTests(unittest.TestCase):
         e.lxc.instances["not-a-pool-box"] = {"status": "Stopped", "created_at": 1}
         e.tick()
         self.assertEqual(e.lxc.names("delete"), ["pool-wf-gate-999"])
+
+
+class ReaperFixTests(unittest.TestCase):
+    def started(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        return e
+
+    def test_an_unassigned_container_is_deleted_only_when_its_runner_could_be_unregistered(self):  # F5
+        e = self.started()
+        e.now += 301
+        e.remove_fails = True  # GitHub: the runner is still running a job
+        e.tick()
+        self.assertIn("pool-wf-build-100", e.lxc.instances)
+        self.assertEqual(e.lxc.names("delete"), [])
+        self.assertTrue(e.pool.state.jobs["100"]["assigned"])
+        e.remove_fails = False
+        e.now += 15
+        e.tick()
+        self.assertNotIn("pool-wf-build-100", e.lxc.instances)
+
+    def test_a_container_that_lost_its_job_is_not_held_for_ever_by_an_old_assignment(self):  # F6
+        e = self.started()
+        e.running = {"ci-pool-wf-build-100"}
+        e.now += 400
+        e.tick()
+        self.assertTrue(e.pool.state.jobs["100"]["assigned"])
+        e.running = set()  # a reboot: the container is up, the runner is not
+        e.now += 15
+        e.tick()
+        self.assertNotIn("pool-wf-build-100", e.lxc.instances)
+
+    def test_what_the_reap_learned_is_saved_when_the_pass_stops_half_way(self):  # F7
+        e = self.started()
+        e.lxc.instances["pool-wf-build-100"]["status"] = "Stopped"
+        e.lxc.list_budget = 1  # the first list works, the second one (before launching) fails
+        with self.assertRaises(pool.PoolError):
+            e.tick()
+        saved = pool.State(e.cfg["state_file"]).jobs["100"]
+        self.assertEqual(saved["status"], "finished")
+
+    def test_an_entry_with_no_container_that_outlived_the_hard_timeout_is_dropped(self):  # F7
+        e = Env(self)
+        old = e.now - e.cfg["hard_timeout_seconds"] - 1
+        entry = {"container": "pool-wf-build-5", "repo": "o/r", "label": "wf-build", "runner_id": "1", "runner_name": "x",
+                 "started": old, "assigned": False}
+        e.pool.state.jobs.update({"5": dict(entry, status="failed", retry_after=old + 120),
+                                  "6": dict(entry, status="finished", finished=e.now - 100),
+                                  "7": dict(entry, container="pool-wf-build-7", status="failed", started=e.now, retry_after=e.now)})
+        e.tick()
+        self.assertEqual(sorted(e.pool.state.jobs), ["6", "7"], "a finished entry stays a day; a young one stays")
+
+    def test_a_running_entry_whose_container_vanished_is_closed(self):  # F7
+        e = self.started()
+        del e.lxc.instances["pool-wf-build-100"]
+        e.tick()
+        self.assertEqual(e.pool.state.jobs["100"]["status"], "finished")
+
+    def test_the_poll_pause_grows_with_the_repositories(self):  # F10
+        self.assertEqual(Env(self).pool.poll_seconds(), 15)
+        self.assertEqual(Env(self, repos=["o/%d" % i for i in range(5)]).pool.poll_seconds(), 72)
+        self.assertEqual(Env(self, repos=["o/r"], poll_seconds=60).pool.poll_seconds(), 60)
 
 
 class SpareTests(unittest.TestCase):
@@ -338,9 +465,16 @@ class ProfileTests(unittest.TestCase):
 
     def test_raw_lxc_raw_idmap_and_any_other_key_are_refused(self):
         base = self.file("ci-pool-build.yaml")
-        for key in ("raw.lxc", "raw.idmap", "security.devlxd", "boot.autostart", "security.idmap.isolated"):
+        for key in ("raw.lxc", "raw.idmap", "security.devlxd", "boot.priority", "security.idmap.isolated"):
             self.refused("build", base.replace("config:\n", f'config:\n  {key}: "x"\n'), f"config key {key} is not allowed")
         self.refused("build", base.replace("config:\n", "config:\n  raw.lxc: |\n    lxc.mount.entry = /dev dev none bind\n"), "raw.lxc")
+
+    def test_boot_autostart_must_be_false(self):  # F6
+        for kind, name in (("build", "ci-pool-build.yaml"), ("gate", "ci-pool-gate.yaml")):
+            base = self.file(name)
+            self.assertIn('boot.autostart: "false"', base)
+            self.refused(kind, base.replace('  boot.autostart: "false"\n', ""), "boot.autostart is required")
+            self.refused(kind, base.replace('boot.autostart: "false"', 'boot.autostart: "true"'), "boot.autostart must be false")
 
     def test_swap_memory_and_hard_limit_rules(self):
         base = self.file("ci-pool-build.yaml")
@@ -379,6 +513,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["poll_seconds"], 15)
         self.assertEqual(cfg["hard_timeout_seconds"], 7200)
         self.assertEqual(cfg["unassigned_timeout_seconds"], 300)
+        self.assertEqual(pool.mem_mib("5GiB"), 5120)
+        self.assertIsNone(pool.mem_mib("50%"))
         self.assertEqual(cfg["admission"], {"min_mem_available_mib": 3072, "max_cpu_psi_avg60": 40, "max_mem_psi_avg60": 10})
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "c.json")
@@ -414,11 +550,28 @@ class GithubSourceTests(unittest.TestCase):
                     return self.reply({"workflow_runs": [{"id": 5}]})
                 if self.path.startswith("/repos/o/r/actions/runs?status=in_progress"):
                     return self.reply({"workflow_runs": [{"id": 6}]})
+                if self.path.startswith("/repos/o/r/actions/runs?status=waiting"):
+                    return self.reply({"workflow_runs": [{"id": 7}]})
+                if self.path == "/repos/o/p":
+                    return self.reply({"private": True})
+                if self.path.startswith("/repos/o/p/actions/runs?status=queued"):
+                    page = int(self.path.rsplit("&page=", 1)[1])  # 100 runs on page 1, one on page 2
+                    return self.reply({"workflow_runs": [{"id": 1000 + i} for i in range(100)] if page == 1 else [{"id": 5000}]})
+                if self.path.startswith("/repos/o/p/actions/runs?"):
+                    return self.reply({"workflow_runs": []})
+                if "/o/p/actions/runs/5000/jobs" in self.path:
+                    return self.reply({"jobs": [{"id": 99, "status": "queued", "labels": ["wf-gate"], "created_at": "t3"}]})
+                if "/o/p/actions/runs/" in self.path:
+                    return self.reply({"jobs": []})
                 if "/runs/5/jobs" in self.path:
                     return self.reply({"jobs": [{"id": 11, "status": "queued", "labels": ["wf-build"], "created_at": "t"},
                                                 {"id": 12, "status": "in_progress", "labels": ["wf-gate"]}]})
                 if "/runs/6/jobs" in self.path:
-                    return self.reply({"jobs": [{"id": 13, "status": "in_progress", "runner_name": "ci-pool-wf-gate-1"}]})
+                    return self.reply({"jobs": [{"id": 13, "status": "in_progress", "runner_name": "ci-pool-wf-gate-1"},
+                                                {"id": 14, "status": "queued", "labels": ["wf-build"], "created_at": "t2"}]})
+                if "/runs/7/jobs" in self.path:
+                    return self.reply({"jobs": [{"id": 15, "status": "queued", "labels": ["wf-gate"], "created_at": "t4"},
+                                                {"id": 16, "status": "waiting", "labels": ["wf-gate"]}]})
                 self.reply({}, 404)
 
             def do_POST(self):
@@ -452,8 +605,21 @@ class GithubSourceTests(unittest.TestCase):
         r = self.run_cli("source", "queued", "o/r")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), {"version": 1, "repo": "o/r", "private": True,
-                                                "jobs": [{"id": "11", "labels": ["wf-build"], "created_at": "t"}]})
+                                                "jobs": [{"id": "11", "labels": ["wf-build"], "created_at": "t"},
+                                                         {"id": "14", "labels": ["wf-build"], "created_at": "t2"},
+                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}]})
         self.assertTrue(all(c[2] == "Bearer tok123" for c in self.calls if c[0] == "GET"))
+
+    def test_queued_includes_queued_jobs_of_runs_already_in_progress_or_waiting(self):  # F1
+        r = self.run_cli("source", "queued", "o/r")
+        ids = [j["id"] for j in json.loads(r.stdout)["jobs"]]
+        self.assertIn("14", ids)
+        self.assertIn("15", ids)
+        self.assertNotIn("16", ids, "a job that is itself waiting is not queued")
+
+    def test_the_listings_are_paged(self):  # F1
+        r = self.run_cli("source", "queued", "o/p")
+        self.assertEqual([j["id"] for j in json.loads(r.stdout)["jobs"]], ["99"], "the job of the run on page 2 is found")
 
     def test_running_names_the_runner(self):
         r = self.run_cli("source", "running", "o/r")
@@ -481,6 +647,47 @@ class GithubSourceTests(unittest.TestCase):
         r = self.run_cli("source", "queued", "o/r", token=loose)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("must not be readable", r.stderr)
+
+
+class ImageAndUnitTests(unittest.TestCase):
+    def text(self, name):
+        with open(os.path.join(HERE, name)) as f:
+            return f.read()
+
+    def test_the_image_makes_the_directory_the_jit_config_is_pushed_into(self):  # F2
+        t = self.text("ci-pool-image")
+        self.assertIn("install -d -m 0700 /etc/ci-pool", t)
+        self.assertIn('"/etc/ci-pool/jit"', self.text("ci-pool"))  # the path the pool pushes to is inside it
+
+    def test_the_unit_sets_nothing_that_stops_snap_lxc(self):  # F4
+        unit = [l for l in self.text("ci-pool.service").splitlines() if not l.startswith("#")]
+        self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])
+        self.assertIn("systemd-run --wait --pipe /snap/bin/lxc list", self.text("README.md"))
+
+    def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
+        t = self.text("ci-pool-image")
+        tail = t[t.index("# Publish under a new alias"):]
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "lxc")
+            log = os.path.join(d, "log")
+            with open(fake, "w") as f:
+                f.write('''#!/usr/bin/env bash
+echo "$*" >> "$LOG"
+case "$*" in
+  "image alias list --format csv") echo "ci-pool-gate,aaaaaaaaaaaa,CONTAINER,x" ;;
+  "image info ci-pool-gate-prev") echo "Fingerprint: prevfp" ;;
+  "image info ci-pool-gate") echo "Fingerprint: curfp" ;;
+esac
+''')
+            os.chmod(fake, 0o755)
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\nalias=ci-pool-gate kind=gate work=w\n' + tail], capture_output=True,
+                               text=True, env={**os.environ, "LXC": fake, "LOG": log})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(log) as f:
+                calls = f.read().splitlines()
+        self.assertIn("image delete prevfp", calls)
+        self.assertLess(calls.index("image delete prevfp"), calls.index("image alias rename ci-pool-gate ci-pool-gate-prev"))
+        self.assertNotIn("image delete curfp", calls)
 
 
 if __name__ == "__main__":

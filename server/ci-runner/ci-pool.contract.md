@@ -18,8 +18,9 @@ it: an unknown answer never deletes or starts a container. A command gets 120 s.
  "jobs": [{"id": "123456789", "labels": ["wf-build"], "created_at": "2026-10-29T19:00:00Z"}]}
 ```
 
-- `jobs`: jobs waiting for a runner. `id` is a string of digits, unique for the job; the pool launches at most once per `id`.
-  `labels` are the job's `runs-on` labels; the pool serves the first one that is in its config.
+- `jobs`: every job waiting for a runner, whether or not its workflow run has other jobs in progress. `id` is a string of
+  digits, unique for the job; it names the container the pool starts and keeps a launch from repeating a moment. `labels` are
+  the job's `runs-on` labels; the pool serves the first one that is in its config.
 - `private` must be `true`. Anything else makes the pool ignore the repository's jobs (a public repository's pull requests
   could run code here).
 - `repo` must equal the repository asked.
@@ -50,5 +51,9 @@ is success. The pool calls it whenever it deletes a container.
 ## Notes
 
 - A just-in-time runner takes any one job whose labels it has, in its repository, not necessarily the job whose `id` made the
-  pool start it. The pool therefore counts containers against the queue, not job against container.
+  pool start it. The pool therefore counts containers against the queue, not job against container: per repository and label
+  it starts a container while the queued jobs outnumber the containers whose runner has no job yet.
+- `running` is asked every pass for a repository that has live containers, so a runner that took a job is known at once.
+- Each pass costs the source about `api_calls_per_repo_poll` calls per repository (default 6); the pool stretches
+  `poll_seconds` so that `api_calls_per_hour` (default 1500) is not exceeded.
 - The pool's own limits (the label cap, memory and pressure checks) apply before `create` is called.

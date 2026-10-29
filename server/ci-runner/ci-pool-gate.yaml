@@ -5,6 +5,7 @@ name: ci-pool-gate
 description: ci-pool gate container (git and gh)
 config:
   security.privileged: "false"
+  boot.autostart: "false"
   limits.cpu: "2"
   limits.memory: 2GiB
   limits.memory.enforce: hard

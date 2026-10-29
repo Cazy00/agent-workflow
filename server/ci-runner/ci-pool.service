@@ -11,8 +11,8 @@ RestartSec=30
 # Stopping the service leaves running job containers alone; they finish or time out when the service is back.
 KillMode=process
 StateDirectory=ci-pool
-NoNewPrivileges=true
-ProtectHome=true
+# No ProtectHome and no NoNewPrivileges: /snap/bin/lxc (snap run) must write under root's home and change confinement, and
+# fails under either. The README's setup check (systemd-run) shows it on a host.
 PrivateTmp=true
 
 [Install]

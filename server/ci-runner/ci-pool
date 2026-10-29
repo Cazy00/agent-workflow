@@ -9,7 +9,9 @@
 
 Contracts: ci-pool.contract.md (the job source and the JIT source are commands named in the config). Every `lxc` call goes
 through the Lxc class; every event is one JSON line on stdout. Nothing here kills a running job for room: a container is
-deleted only when its runner has exited, past the hard timeout, or when no job was assigned to it in time.
+deleted only when its runner has exited, past the hard timeout, or when no job was assigned to it in time and GitHub lets
+the runner go. Containers are launched by count: a runner takes any queued job of its label, so a repository's label gets a
+container for every queued job that no unassigned container is waiting for, under the label's cap.
 """
 import argparse
 import calendar
@@ -26,6 +28,9 @@ CONTRACT_VERSION = 1
 SPARE = "spare"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ID_RE = re.compile(r"^[0-9]{1,20}$")
+MEM_RE = re.compile(r"^([0-9]+)(MiB|GiB|MB|GB)$")
+MIN_POLL_SECONDS = 15
+YOUNG_SECONDS = 60  # a container this young has not used its memory yet
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 
 DEFAULTS = {
@@ -33,6 +38,9 @@ DEFAULTS = {
     "hard_timeout_seconds": 7200,
     "unassigned_timeout_seconds": 300,
     "retry_seconds": 120,
+    "lag_seconds": 10,
+    "api_calls_per_repo_poll": 6,
+    "api_calls_per_hour": 1500,
     "state_file": "/var/lib/ci-pool/state.json",
     "lxc": "/snap/bin/lxc",
     "command_timeout_seconds": 120,
@@ -42,6 +50,7 @@ DEFAULTS = {
 # Pool profiles: the only keys and devices a profile may have (review F2). Value None = any value; a string = exactly it.
 COMMON_KEYS = {
     "security.privileged": "false",
+    "boot.autostart": "false",  # after a host reboot LXD would bring job containers back, without their JIT config
     "limits.cpu": None,
     "limits.memory": None,
     "limits.memory.swap": "false",
@@ -52,12 +61,20 @@ BUILD_KEYS = {
     "security.syscalls.intercept.mknod": "true",
     "security.syscalls.intercept.setxattr": "true",
 }
-REQUIRED_KEYS = ("security.privileged", "limits.cpu", "limits.memory", "limits.memory.swap")
+REQUIRED_KEYS = ("security.privileged", "boot.autostart", "limits.cpu", "limits.memory", "limits.memory.swap")
 DEVICES = {
     "root": {"type": "disk", "path": "/", "pool": "ci"},
     "eth0": {"type": "nic", "name": "eth0", "network": "lxdbr0", "nictype": None},
 }
 PROFILE_TOP_KEYS = {"name", "description", "config", "devices", "used_by", "project"}
+
+
+def mem_mib(text):
+    """A memory limit such as 5GiB in MiB; None when it is not of the form <digits><MiB|GiB|MB|GB>."""
+    m = MEM_RE.match(str(text))
+    if not m:
+        return None
+    return int(m.group(1)) * {"MiB": 1, "GiB": 1024, "MB": 1000000 / 1048576, "GB": 1000000000 / 1048576}[m.group(2)]
 
 
 def log(event, **fields):
@@ -152,6 +169,8 @@ def load_config(path):
         for k in ("profile", "image", "cap", "memory"):
             if k not in spec:
                 raise PoolError(f"config: label {label} lacks {k}")
+        if mem_mib(spec["memory"]) is None:
+            raise PoolError(f"config: label {label} memory must look like 5GiB (MiB, GiB, MB or GB)")
     for k in ("source_cmd", "jit_cmd"):
         if not (isinstance(cfg.get(k), list) and cfg[k] and all(isinstance(a, str) for a in cfg[k])):
             raise PoolError(f"config: {k} must be a non-empty list of strings")
@@ -159,9 +178,11 @@ def load_config(path):
 
 
 class State:
-    """job id -> {container, repo, label, runner_id, runner_name, started, status, assigned, retry_after}.
-    status: launching | running | finished | failed. An entry is written before the container starts, so a crash
-    never leaves a job that is launched twice; finished entries stay a day so a lagging queue listing cannot relaunch."""
+    """job id -> {container, repo, label, runner_id, runner_name, started, status, assigned, retry_after, finished}.
+    status: launching | running | finished | failed. An entry is written before the container starts and says which
+    container, runner and job id a launch was for; it is not a promise about the job (the runner takes any queued job of its
+    label). It keeps a launch from repeating while its container is alive, its retry pause runs, or lag_seconds after it ended;
+    finished entries stay a day, other entries that outlive the hard timeout without a container are dropped."""
 
     def __init__(self, path):
         self.path = path
@@ -267,11 +288,14 @@ class Pool:
         return str(doc["runner_id"]), doc["encoded_jit_config"]
 
     def jit_remove(self, repo, runner_id):
-        """Unregister a runner; best effort (a runner that took its job has already gone from GitHub)."""
+        """Unregister a runner; True when it is gone (a runner that took its job and finished has already gone from GitHub).
+        A runner that still holds a job is refused, which is the answer 'not gone'."""
         try:
             self.run_cmd(self.cfg["jit_cmd"] + ["remove", repo, str(runner_id)])
         except PoolError as e:
             log("jit_remove_failed", repo=repo, runner_id=runner_id, error=str(e))
+            return False
+        return True
 
     # names
     @staticmethod
@@ -286,6 +310,12 @@ class Pool:
         return None, None
 
     # one pass
+    def poll_seconds(self):
+        """The pause between passes: poll_seconds, but not below what keeps the source within its API budget."""
+        cfg = self.cfg
+        scaled = -(-len(cfg["repos"]) * cfg["api_calls_per_repo_poll"] * 3600 // cfg["api_calls_per_hour"])
+        return max(int(cfg["poll_seconds"]), MIN_POLL_SECONDS, scaled)
+
     def tick(self):
         now = self.clock()
         try:
@@ -294,15 +324,29 @@ class Pool:
             log("lxc_list_failed", error=str(e))
             return
         pool = {i["name"]: i for i in instances if self.label_of(i["name"])[0]}
-        self.reap(pool, now)
-        pool = {i["name"]: i for i in self.lxc.list() if self.label_of(i["name"])[0]}
-        self.launch(pool, now)
-        self.keep_spares()
-        self.prune(now)
-        self.state.save()
+        try:
+            self.reap(pool, now)
+            self.state.save()
+            pool = {i["name"]: i for i in self.lxc.list() if self.label_of(i["name"])[0]}
+            self.launch(pool, now)
+            self.keep_spares()
+            self.prune(now, pool)
+        finally:
+            self.state.save()  # what the reap learned must survive a pass that stops half way
 
     def reap(self, pool, now):
         cfg = self.cfg
+        running = {}  # repo -> runner names of jobs in progress, or None when the source did not answer; one ask per repo
+
+        def runners(repo):
+            if repo not in running:
+                try:
+                    running[repo] = self.running_runner_names(repo)
+                except PoolError as err:  # unknown is not a reason to delete
+                    log("assignment_check_failed", repo=repo, error=str(err))
+                    running[repo] = None
+            return running[repo]
+
         for name, inst in pool.items():
             label, ident = self.label_of(name)
             if ident == SPARE:
@@ -318,20 +362,29 @@ class Pool:
                 why = "runner_exited"  # also a launch that a crash left unstarted
             elif now - e["started"] > cfg["hard_timeout_seconds"]:
                 why = "hard_timeout"
-            elif now - e["started"] > cfg["unassigned_timeout_seconds"] and not e.get("assigned"):
-                try:
-                    if e["runner_name"] in self.running_runner_names(e["repo"]):
-                        e["assigned"] = True
-                    else:
+            else:
+                names = runners(e["repo"])
+                if names is not None:  # asked every pass, not remembered: a container that lost its JIT config stops counting
+                    e["assigned"] = e["runner_name"] in names
+                    if not e["assigned"] and now - e["started"] > cfg["unassigned_timeout_seconds"]:
                         why = "unassigned"
-                except PoolError as err:  # unknown is not a reason to delete
-                    log("assignment_check_failed", container=name, error=str(err))
             if why:
                 self._delete(name, e, jid, why)
+        # a launch whose container is gone (a crash between the record and the container, or a container removed by hand)
+        for jid, e in self.state.jobs.items():
+            if e["status"] in ("launching", "running") and e["container"] not in pool:
+                self.jit_remove(e["repo"], e["runner_id"])
+                e["status"], e["finished"] = "finished", now
+                log("entry_closed", job=jid, container=e["container"], why="no container")
 
     def _delete(self, name, entry, jid, why):
         if entry is not None:
-            self.jit_remove(entry["repo"], entry["runner_id"])
+            removed = self.jit_remove(entry["repo"], entry["runner_id"])
+            if why == "unassigned" and not removed:
+                # GitHub refuses to drop a runner that holds a job: it was assigned after all (or the listing lags)
+                entry["assigned"] = True
+                log("delete_skipped", container=name, job=jid, why="runner could not be unregistered")
+                return
         try:
             self.lxc.delete(name)
         except PoolError as e:
@@ -346,6 +399,33 @@ class Pool:
         """Job containers of a label that exist (running, or stopped and not yet reaped); the spare never counts."""
         return sum(1 for n in pool if self.label_of(n)[0] == label and self.label_of(n)[1] != SPARE)
 
+    def unassigned(self, pool, repo, label):
+        """Live containers of this repository and label whose runner has not taken a job yet: each will take one queued job."""
+        return sum(1 for e in self.state.jobs.values()
+                   if e["status"] in ("launching", "running") and e["repo"] == repo and e["label"] == label
+                   and e["container"] in pool and pool[e["container"]].get("status") != "Stopped" and not e.get("assigned"))
+
+    def blocked(self, pool, label, jid, now):
+        """Why a job id may not name a new container now: its container exists, its retry pause runs, or it ended a moment ago."""
+        if self.cname(label, jid) in pool:
+            return True
+        e = self.state.jobs.get(jid)
+        if e is None:
+            return False
+        if e["status"] in ("launching", "running"):
+            return e["container"] in pool
+        if e["status"] == "failed":
+            return now < e.get("retry_after", 0)
+        return now - e.get("finished", now) < self.cfg["lag_seconds"]
+
+    def reserved_mib(self, pool, now):
+        """Memory limits of the containers that started a moment ago (this pass included): MemAvailable does not show it yet."""
+        total = 0
+        for e in self.state.jobs.values():
+            if e["status"] in ("launching", "running") and e["container"] in pool and now - e["started"] < YOUNG_SECONDS:
+                total += mem_mib(self.cfg["labels"].get(e["label"], {}).get("memory")) or 0
+        return total
+
     def launch(self, pool, now):
         for repo in self.cfg["repos"]:
             try:
@@ -353,24 +433,34 @@ class Pool:
             except PoolError as e:
                 log("source_failed", repo=repo, error=str(e))
                 continue
+            by_label = {}
             for job in jobs:
-                jid = str(job["id"])
                 label = next((l for l in job.get("labels", []) if l in self.cfg["labels"]), None)
-                if label is None:
-                    continue
-                known = self.state.jobs.get(jid)
-                if known and not (known["status"] == "failed" and now >= known.get("retry_after", 0)):
-                    continue
+                if label is not None:
+                    by_label.setdefault(label, []).append(job)
+            for label, wanted in by_label.items():
                 spec = self.cfg["labels"][label]
-                if self.count(pool, label) >= spec["cap"]:
-                    log("cap_reached", label=label, cap=spec["cap"], job=jid)
-                    continue
-                why = admission_refusal(self.host(), self.cfg["admission"])
-                if why:
-                    log("admission_refused", job=jid, why=why)
-                    return  # the whole host is the reason: no other job starts this pass
-                if self._start(repo, label, jid, spec, pool, now):
+                need = len(wanted) - self.unassigned(pool, repo, label)
+                for job in wanted:
+                    if need <= 0:
+                        break
+                    jid = str(job["id"])
+                    if self.blocked(pool, label, jid, now):
+                        continue
+                    if self.count(pool, label) >= spec["cap"]:
+                        log("cap_reached", label=label, cap=spec["cap"], job=jid)
+                        break
+                    host = self.host()
+                    if host["mem_available_mib"] is not None:
+                        host = {**host, "mem_available_mib": host["mem_available_mib"] - self.reserved_mib(pool, now)}
+                    why = admission_refusal(host, self.cfg["admission"])
+                    if why:
+                        log("admission_refused", job=jid, why=why)
+                        return  # the whole host is the reason: no other job starts this pass
+                    if not self._start(repo, label, jid, spec, pool, now):
+                        break  # a failure is likely to repeat for the next job of this label
                     pool[self.cname(label, jid)] = {"name": self.cname(label, jid), "status": "Running"}
+                    need -= 1
 
     def _start(self, repo, label, jid, spec, pool, now):
         name = self.cname(label, jid)
@@ -380,7 +470,7 @@ class Pool:
         except PoolError as e:
             log("jit_failed", job=jid, error=str(e))
             return False
-        # recorded before anything starts: a crash from here on cannot launch this job again
+        # recorded before anything starts: a crash from here on leaves an entry that the next pass closes
         self.state.jobs[jid] = {"container": name, "repo": repo, "label": label, "runner_id": runner_id,
                                 "runner_name": runner_name, "started": now, "status": "launching", "assigned": False}
         self.state.save()
@@ -435,9 +525,14 @@ class Pool:
             except PoolError as e:
                 log("spare_failed", container=name, error=str(e))
 
-    def prune(self, now):
-        for jid in [j for j, e in self.state.jobs.items() if e["status"] == "finished" and now - e.get("finished", now) > 86400]:
-            del self.state.jobs[jid]
+    def prune(self, now, pool):
+        for jid, e in list(self.state.jobs.items()):
+            if e["status"] == "finished":
+                gone = now - e.get("finished", now) > 86400
+            else:  # an entry that outlived the hard timeout with no container will never be reaped
+                gone = now - e["started"] > self.cfg["hard_timeout_seconds"] and e["container"] not in pool
+            if gone:
+                del self.state.jobs[jid]
 
 
 # ── profiles ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -577,13 +672,13 @@ def main(argv=None):
         return 0
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))  # containers are left as they are
-    log("started", repos=cfg["repos"], labels=sorted(cfg["labels"]))
+    log("started", repos=cfg["repos"], labels=sorted(cfg["labels"]), poll_seconds=pool.poll_seconds())
     while not stop:
         try:
             pool.tick()
         except Exception as e:  # one bad pass must not end the service
             log("tick_failed", error=f"{type(e).__name__}: {e}")
-        for _ in range(int(cfg["poll_seconds"])):
+        for _ in range(pool.poll_seconds()):
             if stop:
                 break
             time.sleep(1)

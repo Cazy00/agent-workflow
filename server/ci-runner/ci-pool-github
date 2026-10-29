@@ -8,7 +8,9 @@
 
 In ci-pool's config: "source_cmd": ["ci-pool-github", "source"], "jit_cmd": ["ci-pool-github", "jit"].
 The token is read from a file only root can read (CI_POOL_GITHUB_TOKEN_FILE, default /etc/ci-pool/github-token); it needs
-Actions read and the repository's self-hosted-runner administration. It is never printed or passed on a command line.
+Actions: read and Administration: write on the repository (GitHub offers no narrower permission for a repository's
+just-in-time runners; the README, "The pool", says what that allows and what to use instead). It is never printed or passed
+on a command line.
 """
 import json
 import os
@@ -25,6 +27,8 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 ID_RE = re.compile(r"^[0-9]{1,20}$")
+PER_PAGE = 100
+MAX_PAGES = 20  # a bound on one listing, so a misbehaving answer cannot loop for ever
 
 
 def die(msg):
@@ -63,13 +67,27 @@ def call(method, path, body=None, gone_ok=False):
     return json.loads(raw) if raw else {}
 
 
-def jobs_of(repo, status):
-    """Jobs with this status, found through the workflow runs in that status (the jobs endpoint only lists per run)."""
+def pages(path, key):
+    """Every item under `key` of a list endpoint, page after page until a short page."""
     out = []
-    runs = call("GET", f"/repos/{repo}/actions/runs?status={status}&per_page=100").get("workflow_runs", [])
-    for run in runs:
-        doc = call("GET", f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
-        out += [j for j in doc.get("jobs", []) if j.get("status") == status]
+    for page in range(1, MAX_PAGES + 1):
+        items = call("GET", f"{path}{'&' if '?' in path else '?'}per_page={PER_PAGE}&page={page}").get(key, [])
+        out += items
+        if len(items) < PER_PAGE:
+            break
+    return out
+
+
+def jobs_of(repo, run_statuses, status):
+    """Jobs whose own status is `status`, found through the workflow runs in any of `run_statuses` (the jobs endpoint only
+    lists per run). A run turns in_progress when its first job starts, so its other queued jobs are only found there."""
+    out, seen = [], set()
+    for rs in run_statuses:
+        for run in pages(f"/repos/{repo}/actions/runs?status={rs}", "workflow_runs"):
+            if run["id"] in seen:  # a run can change status between two listings
+                continue
+            seen.add(run["id"])
+            out += [j for j in pages(f"/repos/{repo}/actions/runs/{run['id']}/jobs", "jobs") if j.get("status") == status]
     return out
 
 
@@ -78,11 +96,11 @@ def source(verb, repo):
         private = call("GET", f"/repos/{repo}").get("private") is True
         jobs = [] if not private else [
             {"id": str(j["id"]), "labels": j.get("labels", []), "created_at": j.get("created_at", "")}
-            for j in jobs_of(repo, "queued")]
+            for j in jobs_of(repo, ("queued", "in_progress", "waiting"), "queued")]
         return {"version": VERSION, "repo": repo, "private": private, "jobs": jobs}
     if verb == "running":
         return {"version": VERSION, "repo": repo, "jobs": [
-            {"id": str(j["id"]), "runner_name": j.get("runner_name") or ""} for j in jobs_of(repo, "in_progress")]}
+            {"id": str(j["id"]), "runner_name": j.get("runner_name") or ""} for j in jobs_of(repo, ("in_progress",), "in_progress")]}
     die(f"unknown source verb {verb!r}")
 
 

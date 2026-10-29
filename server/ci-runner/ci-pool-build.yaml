@@ -5,6 +5,7 @@ name: ci-pool-build
 description: ci-pool build container (Docker in an unprivileged container)
 config:
   security.privileged: "false"
+  boot.autostart: "false"
   security.nesting: "true"
   security.syscalls.intercept.mknod: "true"
   security.syscalls.intercept.setxattr: "true"

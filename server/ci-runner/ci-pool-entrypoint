@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ci-pool-entrypoint: runs inside a pool container (ci-pool-runner.service) once ci-pool has pushed the runner's
+# just-in-time config to /etc/ci-pool/jit. Reads and removes it, runs the runner for exactly one job as the `runner` user,
+# then powers the container off; ci-pool deletes a stopped container. The pool image has no other way to register.
+set -euo pipefail
+jit=/etc/ci-pool/jit
+config="$(cat "$jit")"
+rm -f "$jit"
+if [ -x /opt/ci-hooks/clean-docker.sh ]; then
+  export ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/ci-hooks/clean-docker.sh
+fi
+cd /opt/actions-runner
+sudo -u runner -H --preserve-env=ACTIONS_RUNNER_HOOK_JOB_COMPLETED ./run.sh --jitconfig "$config" || true
+systemctl poweroff

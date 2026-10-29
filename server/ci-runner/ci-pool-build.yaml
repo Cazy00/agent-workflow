@@ -1,0 +1,23 @@
+# Profile for a pool build container (ci-pool, MAINT-0017 D1). Unprivileged; nesting and the two syscall intercepts are
+# what Docker inside the container needs. `ci-pool check-profiles` refuses a profile with any other key or device.
+# Create with: lxc profile create ci-pool-build && lxc profile edit ci-pool-build < ci-pool-build.yaml
+name: ci-pool-build
+description: ci-pool build container (Docker in an unprivileged container)
+config:
+  security.privileged: "false"
+  security.nesting: "true"
+  security.syscalls.intercept.mknod: "true"
+  security.syscalls.intercept.setxattr: "true"
+  limits.cpu: "4"
+  limits.memory: 5GiB
+  limits.memory.enforce: hard
+  limits.memory.swap: "false"
+devices:
+  root:
+    type: disk
+    path: /
+    pool: ci
+  eth0:
+    type: nic
+    name: eth0
+    network: lxdbr0

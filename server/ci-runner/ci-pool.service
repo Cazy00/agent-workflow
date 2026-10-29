@@ -1,0 +1,19 @@
+[Unit]
+Description=ci-pool: a fresh LXD container per GitHub Actions job (agent-workflow server/ci-runner)
+After=snapd.service snap.lxd.daemon.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/ci-pool/config.json
+
+[Service]
+ExecStart=/usr/local/sbin/ci-pool run
+Restart=on-failure
+RestartSec=30
+# Stopping the service leaves running job containers alone; they finish or time out when the service is back.
+KillMode=process
+StateDirectory=ci-pool
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

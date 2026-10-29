@@ -59,3 +59,27 @@ Runners registered by v2.5.0 under other labels need these labels added (*Settin
 ## When a runner is down
 
 Jobs queue for it rather than fail, so merges stall. Cancel the waiting run, set its switch (`CI_BUILD` or `WF_GATE`) to anything but `on` to send those jobs to GitHub, then push again, or edit the pull request's description to rerun `wf ci`. A runner that has been offline for 14 days must be registered again (`register`). `sudo ci-runner status` lists the containers and their runner services.
+
+## The pool: a fresh container for every job (MAINT-0017 D1)
+
+`ci-pool` replaces the two persistent containers per project with containers that live for one job. A project's `runs-on` lines do not change: the pool serves the same labels, `wf-build` and `wf-gate`. It is a root service on the host, one Python file with no dependencies.
+
+Every 15 s, for each repository on its list, it asks the **job source** for queued jobs. For a job whose label it serves, it asks the **JIT source** for a runner config that allows exactly one job, puts it into a container made from the label's image, and starts the container. The runner takes its job, exits, and the container powers off; the pool deletes it. Nothing is reused, so what a job leaves behind never reaches the next one.
+
+- **Where jobs and tokens come from is a contract** (`ci-pool.contract.md`, v1), two commands in the config. `ci-pool-github` is the reference: a GitHub token in a root-only file (`/etc/ci-pool/github-token`, mode 0600 or tighter; Actions read and the repository's self-hosted-runner administration). A host that keeps its credentials elsewhere replaces the two commands and nothing else.
+- **One launch per job id.** The id is written to the state file before the container starts, and kept for a day, so a crash, a restart or a lagging queue listing never starts a job twice.
+- **Never kills a running job for room.** A container is deleted only when its runner has exited, after the hard timeout (2 h), or when no job was assigned to its runner within 5 min (the job was cancelled, or another runner took it). The runner is then unregistered too. If the job source does not answer, nothing is deleted.
+- **Caps and admission.** Per label `cap` (start with 1 build and 2 gates). A container starts only while the label is under its cap, `MemAvailable` is at least 3 GiB, CPU pressure (`some`, avg60) is under 40 and memory pressure under 10; the check repeats at every start. A missing reading refuses. Containers have a hard memory limit and no swap.
+- **A stopped spare per label** (`pool-<label>-spare`) is made from the image and not started, so it uses no memory; a job renames it, starts it, and a new spare is made. A spare of an older image is replaced.
+- **Containers are `pool-<label>-<job id>`;** runners are `ci-pool-<label>-<last 8 of the job id>`. Each event is one JSON line on stdout (journald).
+- **Private repositories only:** the pool ignores a repository the source does not report as private, and any repository not on its list.
+- **Unprivileged.** The profiles `ci-pool-build` and `ci-pool-gate` set `security.privileged=false` and nothing that widens it: no `raw.lxc`, no `raw.idmap`, no devices but a root disk on the storage pool `ci` and a NIC on `lxdbr0`; build adds nesting and the mknod and setxattr intercepts for Docker. `ci-pool check-profiles` (also run at start) refuses a profile with any other key, device or value. The firewall rule from `install-host.sh` stops the containers reaching the host itself, except DNS and DHCP.
+
+### Set up (admin, once per host)
+
+1. `bash install-host.sh` installs the files, the firewall rule and the unit `ci-pool.service`, **disabled** (it will not start without `/etc/ci-pool/config.json`).
+2. Create the storage pool `ci` (btrfs or zfs, so a container starts as a copy-on-write clone in seconds): `sudo lxc storage create ci btrfs size=60GiB`. Then re-run `install-host.sh`: it creates the two profiles where they are missing (and never overwrites ones a host tuned), or `lxc profile create` and `lxc profile edit` them from `ci-pool-build.yaml` and `ci-pool-gate.yaml`.
+3. `sudo ci-pool-image build wf-build` and `sudo ci-pool-image build wf-gate`: Ubuntu 24.04 with the runner (checked against its published checksum), git, gh and Node; build adds Docker, Playwright's browsers and `postgres:18.6` pulled, and `/tmp` as tmpfs (2 GiB, counts against the container's memory). The image it replaces stays as `<alias>-prev` for rollback. Rebuild weekly (a timer) and on release.
+4. `sudo cp /usr/local/share/ci-runner/ci-pool.config.example.json /etc/ci-pool/config.json`, list the repositories, put the token in `/etc/ci-pool/github-token` (`chmod 600`), check with `sudo ci-pool check-profiles`, then `sudo systemctl enable --now ci-pool`.
+
+Moving a project: add it to `repos`, wait for its persistent runners to be idle, then remove them. The pool and a persistent runner with the same label share the queue until then. Stopping the service leaves running containers alone.

@@ -2,6 +2,7 @@
 import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js';
 import { governingChanged } from './freshness.js';
 import { overlaps } from './scope.js';
+import { classifyPaths } from './paths.js';
 export { overlaps } from './scope.js';
 
 export const STAGES = ['implement', 'verify', 'integrate', 'accept', 'release'];
@@ -33,6 +34,19 @@ export function foundRoom({ milestone, id, records }) {
   const begun = [...new Set(all.filter(d => /^T-\d{4}$/.test(d?.id ?? '') && d.id !== id && d.milestone === milestone.id && !planned.includes(d.id) && d.found_from && (d.status !== 'Draft' || relied.has(d.found_from))).map(d => d.id))].sort();
   const allowed = Number(milestone.found_tasks ?? 0) || 0;
   return { allowed, begun, within: begun.length < allowed };
+}
+
+// MAINT-0024 (Mateen T-0061, 29 October 2026): the owner approved a found task, which their merge of the milestone record
+// adding it to `tasks:` records, yet readiness read only the trusted branch's list, so the pull request carrying both the
+// task and its milestone line failed, and the records-only one before it could not pass a broken required check: nothing
+// merged for three days. A task the candidate's milestone record names in `tasks:` and the trusted branch's does not is
+// planned here when that record is governing by the trusted branch's config, both sides: `wf ci` then refuses the change
+// without the owner's approval of the exact candidate (governing-change), so their merge is the approval. Otherwise null.
+export function addedByOwner({ config, base, cand, milestone, id }) {
+  const b = base?.milestones.get(milestone), c = cand?.milestones.get(milestone);
+  if (!b || !c || list(b.data?.tasks).includes(id) || !list(c.data?.tasks).includes(id)) return null;
+  const governing = [b.path, c.path].every(p => classifyPaths(config, [p])[0]?.category === 'governing');
+  return governing ? `${id} is added to ${milestone}'s tasks: in this change, so it is planned once the owner approves the milestone record (wf ci sends that to the owner)` : null;
 }
 
 export function stageOf(task) {
@@ -91,8 +105,11 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   // task (one naming the milestone that the trusted branch's `tasks:` list does not) fixes a finding of the milestone's own
   // review or trial, named in `found_from`, within the milestone's `found_tasks` (none when unset; foundRoom). Any other
   // is the owner's to allow, as before.
-  const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candidate === baseline ? [] : [loadAll(candidate, rd)])] }) : null;
-  if (room) {
+  const candAll = candidate === baseline ? null : loadAll(candidate, rd);
+  const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candAll ? [candAll] : [])] }) : null;
+  const added = room ? addedByOwner({ config, base, cand: candAll, milestone: t.milestone, id: taskId }) : null;
+  if (added) pending.push(added);
+  else if (room) {
     const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;
     if (!t.found_from) fail(`${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
     else if (!room.within) fail(`${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
@@ -147,7 +164,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     if (affects.includes(taskId)) named.add(id);
     if (affects.some(a => a === taskId || a === t.feature || a === previous.feature || a === t.milestone || (a.startsWith('paths:') && taskScope.some(p => overlaps(a.slice(6), p))))) inScope.add(id);
   }
-  const cand = candidate === baseline ? null : loadAll(candidate, rd).decisions;
+  const cand = candAll?.decisions ?? null;
   const blockedIds = new Set();
   for (const id of inScope) {
     const b = base.decisions.get(id);

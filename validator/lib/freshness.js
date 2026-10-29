@@ -80,7 +80,9 @@ export function governingInputs(source, rd, seeds) {
 // The workflow pin (config `workflow`, profile `workflow_version`) is not a governing requirement: moving it is reviewed
 // as its own change and the moved validator runs on every check (IDEA-18). Nor are the config keys no release reads any
 // more, which bin/wf-upgrade removes with the pin (upgrades.json). Every other part of both files still counts. MAINT-0018:
-// nor is a milestone's `workflow_version`, which moves with the pin; the rest of the milestone record still counts.
+// nor is a milestone's `workflow_version`, which moves with the pin. MAINT-0024: nor its `tasks:`, the list of its own tasks,
+// which governs no task's requirements: adding the owner's found task to it left every other task of the milestone stale.
+// Readiness reads the list afresh for the found-task rule. The rest of the milestone record still counts.
 const PINNED = new Set(['docs/workflow/config.json']);
 const UNREAD = ['delegation', 'delivery', 'execution', 'setup_budget_days'];
 const MILESTONE = /\/milestones\/M-\d{4}\.md$/;
@@ -92,7 +94,9 @@ function withoutPin(source, rel) {
   }
   const front = raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
   if (!front) return raw;
-  return front[0].replace(/^workflow_version:[^\n]*\n/m, '') + raw.slice(front[0].length);
+  let kept = front[0].replace(/^workflow_version:[^\n]*\n/m, '');
+  if (MILESTONE.test(rel)) kept = kept.replace(/^tasks:[^\n]*\n/m, '');
+  return kept + raw.slice(front[0].length);
 }
 
 export function governingChanged({ baseline, revision, recordsDir, task, previous }) {

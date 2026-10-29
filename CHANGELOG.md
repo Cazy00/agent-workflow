@@ -7,6 +7,15 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 Ships in the next release; nothing is pinned to it yet.
 - Nothing yet.
 
+## v2.13.0
+
+MAINT-0024 (`docs/proposals/MAINT-0024-owner-approved-found-task.md`), from one adopting project's three-day deadlock on 29 October 2026.
+
+- **The owner's merge approves a found task.** Readiness refused a found task without `found_from` unless the trusted branch's milestone `tasks:` named it, so the pull request that added the owner-approved task to `tasks:` together with its fix failed `wf ci`, and a records-only pull request first could not pass a broken required check. A task the candidate's milestone record adds to `tasks:` is now planned there when milestone records are `governing` (both sides, by the trusted branch's config): `wf ci` already needs the owner's approval of that candidate, and in owner-merge mode gives the merge to the owner. `wf next` no longer holds such a task. Projects whose milestone records are not governing keep the old rule.
+- **Adding to `tasks:` stales nothing.** A milestone's `tasks:` line no longer counts for freshness, as `workflow_version` already did, so adding a task does not send every other task of the milestone back to readiness. The rest of the record still counts.
+- `found_tasks` and `found_from` are unchanged: an agent alone still fixes only findings of the milestone's own review or trial, within the allowance; a task the owner adds is planned and uses none of it.
+- Upgrade: nothing to do. `validator/test/maint-0024.test.js`.
+
 ## v2.12.0
 
 MAINT-0023: what v2.11.1 measured in two adopting projects, and the cuts it found (`docs/proposals/MAINT-0023-measured-on-v2.11.1.md`; the owner approved building every proposal on 27 October 2026, including the two policy changes, P5(b) and P6). Every change is optional for an adopted project or takes effect only when it re-copies a template; none loosens a check.

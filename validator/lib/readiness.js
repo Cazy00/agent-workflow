@@ -36,7 +36,7 @@ export function foundRoom({ milestone, id, records }) {
   return { allowed, begun, within: begun.length < allowed };
 }
 
-// MAINT-0024 (Mateen T-0061, 29 October 2026): the owner approved a found task, which their merge of the milestone record
+// MAINT-0024 (a client project, 29 October 2026): the owner approved a found task, which their merge of the milestone record
 // adding it to `tasks:` records, yet readiness read only the trusted branch's list, so the pull request carrying both the
 // task and its milestone line failed, and the records-only one before it could not pass a broken required check: nothing
 // merged for three days. A task the candidate's milestone record names in `tasks:` and the trusted branch's does not is

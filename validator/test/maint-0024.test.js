@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { evidence, project, taskPath } from './helpers/maint-0018.js';
 
-// MAINT-0024 (Mateen T-0061, 29 October 2026). The owner approved a found task, a test fix, in conversation. Readiness read
+// MAINT-0024 (a client project, 29 October 2026). The owner approved a found task, a test fix, in conversation. Readiness read
 // `tasks:` from the trusted branch only, so the pull request adding T-0061 to its milestone with its fix failed `wf ci`, and
 // the records-only one before it failed the broken required check: nothing merged for three days. A task the candidate's
 // governing milestone record adds to `tasks:` is now planned there, since `wf ci` then needs the owner's approval of it.

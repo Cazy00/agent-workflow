@@ -2,6 +2,7 @@
 import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js';
 import { governingChanged } from './freshness.js';
 import { overlaps } from './scope.js';
+import { classifyPaths } from './paths.js';
 export { overlaps } from './scope.js';
 
 export const STAGES = ['implement', 'verify', 'integrate', 'accept', 'release'];
@@ -26,13 +27,30 @@ export const baselinePending = t => /^pending:/.test(String(t?.baseline_result ?
 // names the finding its found_from names; counting begun ones only let each pull request carry a finding by another Draft.
 // v2.9.0 final check A1: ci.js keeps such a carrier, relied on by the same test, while its milestone is not accepted.
 export const reliedOn = records => new Set(records.flatMap(r => [...r.tasks.values()].flatMap(x => list(x.data?.accepted_findings))));
-export function foundRoom({ milestone, id, records }) {
+// MAINT-0024 review F2: `added`, the tasks the owner adds to the milestone's tasks: in this change (ownerAdded), take no place.
+export function foundRoom({ milestone, id, records, added = [] }) {
   if (milestone?.tasks == null || list(milestone.tasks).includes(id)) return null;
-  const planned = list(milestone.tasks), all = records.flatMap(r => [...r.tasks.values()].map(x => x.data));
+  const planned = [...list(milestone.tasks), ...added], all = records.flatMap(r => [...r.tasks.values()].map(x => x.data));
   const relied = reliedOn(records);
   const begun = [...new Set(all.filter(d => /^T-\d{4}$/.test(d?.id ?? '') && d.id !== id && d.milestone === milestone.id && !planned.includes(d.id) && d.found_from && (d.status !== 'Draft' || relied.has(d.found_from))).map(d => d.id))].sort();
   const allowed = Number(milestone.found_tasks ?? 0) || 0;
   return { allowed, begun, within: begun.length < allowed };
+}
+
+// MAINT-0024 (a client project, 29 October 2026): the owner approved a found task, which their merge of the milestone record
+// adding it to `tasks:` records, yet readiness read only the trusted branch's list, so the pull request carrying both the
+// task and its milestone line failed, and the records-only one before it could not pass a broken required check: nothing
+// merged for three days. A task the candidate's milestone record names in `tasks:` and the trusted branch's does not is
+// planned here when that record is governing by the trusted branch's config, both sides: `wf ci` then passes the change only
+// to the owner's approval of the exact candidate (the owner's merge in owner-merge mode, code-owner review in enforced mode, a
+// governing-change receipt in manual mode). ownerAdded lists such tasks of a milestone; addedByOwner gives readiness's note.
+export function ownerAdded({ config, base, cand, milestone }) {
+  const b = base?.milestones.get(milestone), c = cand?.milestones.get(milestone);
+  if (!b || !c || ![b.path, c.path].every(p => classifyPaths(config, [p])[0]?.category === 'governing')) return [];
+  return list(c.data?.tasks).filter(id => !list(b.data?.tasks).includes(id));
+}
+export function addedByOwner({ config, base, cand, milestone, id }) {
+  return ownerAdded({ config, base, cand, milestone }).includes(id) ? `${id} is added to ${milestone}'s tasks: in this change, so it is planned once the owner approves the milestone record (wf ci passes that only to the owner)` : null;
 }
 
 export function stageOf(task) {
@@ -91,8 +109,12 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   // task (one naming the milestone that the trusted branch's `tasks:` list does not) fixes a finding of the milestone's own
   // review or trial, named in `found_from`, within the milestone's `found_tasks` (none when unset; foundRoom). Any other
   // is the owner's to allow, as before.
-  const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candidate === baseline ? [] : [loadAll(candidate, rd)])] }) : null;
-  if (room) {
+  const candAll = candidate === baseline ? null : loadAll(candidate, rd);
+  const ownerIds = ownerAdded({ config, base, cand: candAll, milestone: t.milestone });
+  const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candAll ? [candAll] : [])], added: ownerIds }) : null;
+  const added = room ? addedByOwner({ config, base, cand: candAll, milestone: t.milestone, id: taskId }) : null;
+  if (added) pending.push(added);
+  else if (room) {
     const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;
     if (!t.found_from) fail(`${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
     else if (!room.within) fail(`${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
@@ -147,7 +169,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     if (affects.includes(taskId)) named.add(id);
     if (affects.some(a => a === taskId || a === t.feature || a === previous.feature || a === t.milestone || (a.startsWith('paths:') && taskScope.some(p => overlaps(a.slice(6), p))))) inScope.add(id);
   }
-  const cand = candidate === baseline ? null : loadAll(candidate, rd).decisions;
+  const cand = candAll?.decisions ?? null;
   const blockedIds = new Set();
   for (const id of inScope) {
     const b = base.decisions.get(id);

@@ -78,6 +78,10 @@ const staysOwner = {
   'a quoted entry': x => x.replace(/^tasks: \[(.*)\]$/m, 'tasks: [T-0001, "T-0002"]'),
   'a duplicate entry': x => x.replace(/^tasks: \[(.*)\]$/m, 'tasks: [T-0001, T-0002, T-0002]'),
 };
+// What the owner reason says for a change that is the milestone record alone (nothing else waits on it) and for one with code too.
+const planOnly = 'it changes the plan or requirements: docs/workflow/milestones/M-0001.md';
+const unparsed = ['a tasks: line that never closes its list', 'a quoted entry'];
+const planChange = 'it changes the plan or requirements: docs/workflow/milestones/M-0001.md (a clarification nothing waits on goes into the milestone\'s acceptance pull request: put the file back here and the review still carries over)';
 for (const [name, edit] of Object.entries(staysOwner)) {
   test(`MAINT-0026: ${name} stays the owner's`, t => {
     const p = found(t);
@@ -87,10 +91,17 @@ for (const [name, edit] of Object.entries(staysOwner)) {
     const head = p.commit('T-0002 and a milestone change');
     const e = evidence(head); e.tasks = ['T-0002']; e.review.tasks = ['T-0002'];
     const r = p.run(['ci', '--baseline', p.base, '--candidate', head, '--task', 'T-0002'], { evidence: e });
-    // Either the owner merges it, or the records check refuses the record (a list that does not parse): never the agent.
-    assert.notEqual(r.out?.merge, 'agent', r.stdout);
-    assert.ok(r.out?.merge === 'owner' || r.status !== 0, r.stdout);
     assert.ok(!(r.out?.deferred ?? []).some(d => entry.test(d)), JSON.stringify(r.out?.deferred));
+    if (unparsed.includes(name)) {
+      // The list does not parse as ids, so M-0001 names no task: readiness refuses T-0002 as a found task without found_from, and
+      // wf ci fails on it, whatever the owner would have said.
+      assert.equal(r.status, 1, r.stdout);
+      assert.ok(r.out.readiness.reasons.some(x => /T-0002 is a found task of M-0001 \(its tasks: list does not name it\) without found_from/.test(x)), JSON.stringify(r.out.readiness.reasons));
+    } else {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.equal(r.out.merge, 'owner');
+      assert.deepEqual(r.out.owner_reasons, [planChange]);
+    }
   });
 }
 
@@ -111,13 +122,21 @@ test('MAINT-0026: an added id with another milestone\'s task record, or none, st
   p.edit(milestonePath, append);
   p.write('src/b/index.js', 'export const b = 1;\n');
   const head = p.commit('M-0001 names T-0002, which belongs to M-0002');
-  const r = p.run(['ci', '--baseline', base, '--candidate', head]);
-  assert.notEqual(r.out?.merge, 'agent', r.stdout);
+  const e = evidence(head); e.tasks = ['T-0001']; e.review.tasks = ['T-0001'];
+  const r = p.run(['ci', '--baseline', base, '--candidate', head, '--task', 'T-0001'], { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.merge, 'owner');
+  assert.deepEqual(r.out.owner_reasons, [planChange]);
+  assert.ok(!(r.out.deferred ?? []).some(d => entry.test(d)), JSON.stringify(r.out.deferred));
+  // No task record at all.
   const q = found(t);
   q.edit(milestonePath, x => x.replace(/^tasks: \[(.*)\]$/m, 'tasks: [T-0001, T-0009]'));
   const none = q.commit('M-0001 names T-0009, which has no record');
   const n = q.run(['ci', '--baseline', q.base, '--candidate', none]);
-  assert.notEqual(n.out?.merge, 'agent', n.stdout);
+  assert.equal(n.status, 0, n.stdout + n.stderr);
+  assert.equal(n.out.merge, 'owner');
+  assert.deepEqual(n.out.owner_reasons, [planOnly]);
+  assert.ok(!(n.out.deferred ?? []).some(d => entry.test(d)), JSON.stringify(n.out.deferred));
 });
 
 test('MAINT-0026: a Draft or an Accepted milestone stays the owner\'s', t => {
@@ -126,10 +145,20 @@ test('MAINT-0026: a Draft or an Accepted milestone stays the owner\'s', t => {
     // A task of a milestone that is not open is not ready for its work, so the change is judged on the milestone record alone.
     p.edit(milestonePath, append);
     const head = p.commit(`M-0001 (${status}) names T-0002`);
-    const out = p.run(['ci', '--baseline', p.base, '--candidate', head]).out;
-    assert.equal(out.merge, 'owner', `${status}: ${JSON.stringify(out)}`);
-    assert.ok(!(out.deferred ?? []).some(d => entry.test(d)), JSON.stringify(out.deferred));
+    const r = p.run(['ci', '--baseline', p.base, '--candidate', head]);
+    assert.equal(r.status, 0, `${status}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.out.merge, 'owner', `${status}: ${r.stdout}`);
+    assert.deepEqual(r.out.owner_reasons, [planOnly], status);
+    assert.ok(!(r.out.deferred ?? []).some(d => entry.test(d)), JSON.stringify(r.out.deferred));
   }
+});
+
+test('MAINT-0026 review S2: without acceptance_evidence nothing would list the task, so the owner\'s merge stays', t => {
+  const p = found(t, { configEdit: c => { const { acceptance_evidence, ...rest } = deferring(c); return rest; } });
+  const out = ci(p, change(p));
+  assert.equal(out.merge, 'owner');
+  assert.deepEqual(out.owner_reasons, [planChange]);
+  assert.ok(!(out.deferred ?? []).some(d => entry.test(d)), JSON.stringify(out.deferred));
 });
 
 test('MAINT-0026: without defer_to_acceptance the owner\'s merge approves the task, as in MAINT-0024', t => {

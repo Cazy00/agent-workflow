@@ -13,7 +13,7 @@ import { evidence, fixture, project, taskPath } from './helpers/maint-0018.js';
 // the owner's merge of the milestone record was the approval (MAINT-0024), a second answer inside the milestone.
 const milestonePath = 'docs/workflow/milestones/M-0001.md';
 const governing = c => ({ ...c, paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'] } });
-const deferring = c => governing({ ...c, approval: { ...c.approval, defer_to_acceptance: true } });
+const deferring = c => governing({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true } });
 const plan = (...ids) => q => q.edit(milestonePath, x => x.replace('status: Authorised\n', `status: Authorised\ntasks: [${ids.join(', ')}]\n`));
 const taskLike = (p, id, scope, edit = x => x) => p.write(`docs/workflow/tasks/${id}.md`, edit(fs.readFileSync(path.join(p.repo, taskPath), 'utf8').replaceAll('T-0001', id).replace(/^scope: .*$/m, `scope: [${scope}]`)));
 const append = x => x.replace(/^tasks: \[(.*)\]$/m, (_, ids) => `tasks: [${ids}, T-0002]`);
@@ -154,7 +154,7 @@ test('MAINT-0026 review F7: where milestone records are not governing, the found
 });
 
 // The acceptance evidence: the tasks added since the milestone's plan was last authorised are listed in deferred.
-const config = { approval: { label: 'owner-merge', mechanism: 'owner-merge', checkpoint: 'milestone', defer_to_acceptance: true }, paths: { production: ['src/**'], governing: ['docs/workflow/milestones/**'], planning: ['docs/**'] } };
+const config = { acceptance_evidence: true, approval: { label: 'owner-merge', mechanism: 'owner-merge', checkpoint: 'milestone', defer_to_acceptance: true }, paths: { production: ['src/**'], governing: ['docs/workflow/milestones/**'], planning: ['docs/**'] } };
 const msText = ({ status = 'Authorised', tasks = ['T-0001'], scope = 'src' } = {}) => `---\nrecord: milestone\nid: M-0001\noutcome: a journey\nstatus: ${status}\nscope: [${scope}]\ntasks: [${tasks.join(', ')}]\n---\n# M-0001\n`;
 function history(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-maint-0026-'));
@@ -188,7 +188,7 @@ test('MAINT-0026: the acceptance evidence must list a task added since the plan,
   const head = h.commit('Accept M-0001');
   const errors = owed(h, added, head, []);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /deferred must list the tasks added to M-0001's tasks: since its plan was last authorised \([0-9a-f]{12}\), which the owner approves here: T-0002$/);
+  assert.match(errors[0], /deferred must list the tasks added to M-0001's tasks: since it was authorised \([0-9a-f]{12}\), which the owner approves here: T-0002$/);
   assert.deepEqual(owed(h, added, head, ['T-0002: the fix of the date bug']), []);
   // A line naming only another task does not stand for it.
   assert.equal(owed(h, added, head, ['T-0001: planned']).length, 1);
@@ -207,7 +207,7 @@ test('MAINT-0026: a milestone created Authorised in one commit needs nothing lis
   assert.match(owed(g, added, g.commit('Accept M-0001 with T-0004'), [])[0], /approves here: T-0004$/);
 });
 
-test('MAINT-0026: after a re-plan the ids it carries are the owner\'s, and later tasks-only additions are owed', t => {
+test('MAINT-0026: ids a re-plan carried are over-listed with the rest (the evidence may say the owner merged them)', t => {
   const h = history(t);
   h.milestone({}, 'M-0001 authorised', 'T-0001');
   h.milestone({ tasks: ['T-0001', 'T-0002'] }, 'T-0002 added', 'T-0002');
@@ -217,13 +217,13 @@ test('MAINT-0026: after a re-plan the ids it carries are the owner\'s, and later
   const added = h.milestone({ status: 'Authorised', scope: 'src, ops', tasks: ['T-0001', 'T-0002', 'T-0003', 'T-0004'] }, 'T-0004 added', 'T-0004');
   h.write(milestonePath, msText({ status: 'Accepted', scope: 'src, ops', tasks: ['T-0001', 'T-0002', 'T-0003', 'T-0004'] }));
   const head = h.commit('Accept M-0001');
-  const errors = owed(h, added, head, []);
+  const errors = owed(h, added, head, ['T-0004: listed']);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /approves here: T-0004$/);
-  assert.deepEqual(owed(h, added, head, ['T-0004: listed']), []);
+  assert.match(errors[0], /approves here: T-0002, T-0003$/);
+  assert.deepEqual(owed(h, added, head, ['T-0002: merged by the owner', 'T-0003: merged by the owner (re-plan)', 'T-0004: listed']), []);
 });
 
-test('MAINT-0026: an Authorised to Active move is not a plan revision, and the walk goes on past it', t => {
+test('MAINT-0026: an Authorised to Active move does not hide a task added before it', t => {
   const h = history(t);
   h.milestone({}, 'M-0001 authorised', 'T-0001');
   h.milestone({ tasks: ['T-0001', 'T-0002'] }, 'T-0002 added', 'T-0002');
@@ -242,10 +242,13 @@ test('MAINT-0026: the acceptance check fails closed, naming why, when the walk c
   // No trusted history to read.
   assert.match(owed(h, added, head, ['T-0002'], null)[0], /cannot be worked out: the trusted branch is not a Git history/);
   // The milestone is not in the trusted branch's history at all (renamed, or never merged there).
-  assert.match(owed(h, h.root, head, ['T-0002'])[0], /cannot be worked out: the trusted branch's history shows no revision that planned M-0001/);
-  // Nothing to work out when the milestone lists no tasks.
+  assert.match(owed(h, h.root, head, ['T-0002'])[0], /cannot be worked out: the trusted branch's history does not show where M-0001 was authorised/);
+  // Shallow history: the trusted side cannot be walked.
+  const shallow = { ...h.at(added), kind: 'git', isShallow: () => true };
+  assert.match(acceptanceEvidenceErrors({ evidence: evidenceFor(head, ['T-0002']), milestone: 'M-0001', config, candidate: h.at(head), baseline: shallow, records: { tasks: new Map() } }).join('\n'), /cannot be worked out: the clone is shallow/);
+  // Nothing to work out when the milestone lists no tasks, on either side.
   h.write(milestonePath, msText({ status: 'Accepted', tasks: [] }));
-  assert.deepEqual(owed(h, added, h.commit('Accept M-0001 with no tasks'), []), []);
+  assert.deepEqual(owed(h, h.root, h.commit('Accept M-0001 with no tasks'), []), []);
 });
 
 // Review of the pull request (R1 to R3): the ids owed are computed from the trusted branch, not from what the agent's own diffs show.

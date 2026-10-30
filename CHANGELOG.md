@@ -4,6 +4,7 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 
 ## Unreleased
 
+- **The CI pool's build image lets a job's `playwright install` run.** The image installs Playwright's browsers in `/opt/ms-playwright` as root and left the directory read-only for the `runner` user. A job's own `npx playwright install` takes a lock there (`mkdir __dirlock`) even when its browsers are present, retried for about 8 minutes and failed with `EACCES`. The runner now owns the directory; a container serves one job, so nothing written there reaches another. Upgrade: a host rebuilds its pool images. `server/ci-runner/test_ci_pool.py`.
 - **`templates/github/project-ci.yml` waits for Postgres over TCP.** The "Start Postgres in RAM" step ran `pg_isready` on the container's socket. The image's first-start server listens on that socket only, then stops and starts the real server, so the check could pass before the server the tests reach over 127.0.0.1 was up. It now checks with `-h 127.0.0.1`. Upgrade: a project that copied the template changes the same line. `validator/test/template-db-ready.test.js`.
 
 ## v2.14.0

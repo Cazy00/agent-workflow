@@ -695,6 +695,14 @@ esac
         self.assertFalse([c for c in calls if c.startswith(("stop", "publish"))])
         self.assertTrue(calls[0].startswith("exec -T w --env KIND=gate"), calls)
 
+    def test_the_runner_owns_the_playwright_browsers_directory(self):  # 2026-10-30: EACCES on __dirlock in a job
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        self.assertIn("chown -R runner:runner /opt/ms-playwright", body)
+        # after the browsers are installed there, and after the runner user exists
+        self.assertLess(body.index("playwright install --with-deps"), body.index("chown -R runner:runner /opt/ms-playwright"))
+        self.assertLess(body.index("useradd -m -s /bin/bash runner"), body.index("chown -R runner:runner /opt/ms-playwright"))
+
     def test_the_tmpfs_line_is_written_when_the_image_has_no_fstab(self):  # 2026-10-30 build failure
         t = self.text("ci-pool-image")
         part = t[t.index("touch /etc/fstab\n"):t.index("systemctl enable ci-pool-runner.service")]

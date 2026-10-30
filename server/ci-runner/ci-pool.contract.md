@@ -57,3 +57,14 @@ is success. The pool calls it whenever it deletes a container.
 - Each pass costs the source about `api_calls_per_repo_poll` calls per repository (default 6); the pool stretches
   `poll_seconds` so that `api_calls_per_hour` (default 1500) is not exceeded.
 - The pool's own limits (the label cap, memory and pressure checks) apply before `create` is called.
+- **Admission limits** are config, not part of the job or JIT sources. `admission` holds three keys: `min_mem_available_mib`,
+  `max_cpu_psi_avg60` and `max_mem_psi_avg60` (pressure is PSI `some`, avg60, 0..100). A label may carry its own `admission`
+  with any of the same keys; its limits are the global ones overlaid, key by key, by its own. The config is refused (at
+  start, and by `ci-pool check-config`) for another key, a value that is not a number, a pressure outside 0..100 or a
+  negative memory. A reading that is missing refuses. A `max_cpu_psi_avg60` of 100 means CPU pressure does not hold that
+  label (its reading must still exist); below 100 a reading at or above the limit refuses.
+- **A refusal holds only its label.** When the admission rule refuses a start, that label starts nothing more in the pass, in
+  any repository; other labels still try, against their own limits. The memory of containers started a moment ago counts for
+  every label. The event `admission_refused` names the `label`, the `job` and the `why`.
+- **`ci-pool check-config --config FILE`** reads and validates the config only (no `lxc`, no network). It exits 0, or exits 2
+  with the reason on stderr.

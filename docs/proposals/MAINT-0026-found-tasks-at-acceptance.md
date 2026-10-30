@@ -49,7 +49,7 @@ One plan review (Opus), verdict pass, five should-fix findings and two notes. Al
 | F7 (non-governing records) | Nothing changes where M is not governing: the owner reason stays and readiness applies the found-task rule. Tested. |
 
 ## Proposed change
-Implementation: `validator/lib/tasks-only.js` (new), `ci.js`, `readiness.js`, `acceptance-evidence.js`, `acceptance-brief.js`. Instruction: `SCHEMA.md`, `templates/milestone.md`, `templates/acceptance.md`, `procedures/execute.md`, `procedures/readiness.md`, `procedures/accept-release.md`. Fixture: `validator/test/maint-0026.test.js`.
+Implementation: `validator/lib/tasks-only.js` (new), `ci.js`, `readiness.js`, `acceptance-evidence.js`. Instruction: `SCHEMA.md`, `templates/milestone.md`, `templates/acceptance.md`, `procedures/execute.md`, `procedures/readiness.md`, `procedures/accept-release.md`. Fixture: `validator/test/maint-0026.test.js`.
 Policy basis: POLICY's owner-merge paragraph, "A change to requirements, decisions or workflow controls still waits for the owner's merge". The owner still approves each task: at the acceptance, which cannot complete without listing it, not with a merge inside the milestone.
 
 **Replace test.** To replace this rule: `tasks-only.js` (one predicate), the note in `readiness.js` and the evidence check change; `wf ci`'s output contract (`merge`, `owner_reasons`, `deferred`) does not.

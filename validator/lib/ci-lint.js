@@ -42,7 +42,7 @@ export function parseYaml(source) {
     const inner = out.filter(l => l.trim() !== '');
     const base = inner.length ? Math.min(...inner.map(indentOf)) : 0;
     const text = out.map(l => l.slice(Math.min(base, indentOf(l)))).join('\n');
-    return header.startsWith('|') ? text.replace(/\n+$/, header.includes('-') ? '' : '\n') : text.replace(/\n(?!\n)/g, ' ').trim();
+    return header.startsWith('|') ? text.replace(/\n+$/, '') + (header.includes('-') ? '' : '\n') : text.replace(/\n(?!\n)/g, ' ').trim();
   }
   function node(minIndent) {
     skip();
@@ -123,7 +123,7 @@ export function lintWorkflow({ name, text, trustedBranch = 'main', privateRepo =
     for (const dep of asList(job.needs)) {
       if (typeof dep !== 'string' || !wf.jobs[dep]) continue;
       const q = dep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (new RegExp(`needs\\.${q}(?![\\w-])|needs\\[\\\\?['"]${q}\\\\?['"]\\]`).test(body)) continue;
+      if (new RegExp(`needs\\.${q}(?![\\w-])|needs\\[\\\\?['"]${q}\\\\?['"]\\]|needs\\.\\*|toJSON\\(needs\\)`).test(body)) continue;
       if (uploads(dep) && /download-artifact/.test(body)) continue;
       if (DEPLOY.test(id) || DEPLOY.test(String(job.name ?? '')) || job.environment != null) continue;
       warn('a serial chain', `job ${id} needs ${dep} but uses nothing from it (no needs.${dep} output or result, no artifact): they could run in parallel, so drop the needs: and let a final job gate on both if one result is wanted`);
@@ -146,6 +146,7 @@ export function lintWorkflow({ name, text, trustedBranch = 'main', privateRepo =
 
   if (privateRepo === true) {
     for (const [id, job] of jobs) {
+      if (job.environment != null || /\bsecrets\./.test(JSON.stringify(job))) continue; // a job holding deployment secrets stays on GitHub's runner (server/ci-runner/README.md)
       for (const label of asList(job['runs-on']).filter(x => typeof x === 'string' && !x.includes('${{'))) {
         if (/^(ubuntu|windows|macos)-/.test(label)) warn('GitHub-hosted runner on a private repository', `job ${id} runs on ${label}, which is billed in minutes on a private repository; run it on the project's runner: runs-on: \${{ vars.CI_BUILD == 'on' && 'wf-build' || '${label}' }}`);
       }

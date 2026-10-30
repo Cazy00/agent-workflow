@@ -135,7 +135,8 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$PRODUCT" = true ]; then
             # GITHUB_SHA is GitHub's test merge commit of the head into the base: the commit the jobs above ran on.
             tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
-            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=wf-tested-tree -f description="tree=$tree merge=$GITHUB_SHA" > /dev/null
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=wf-tested-tree -f description="tree=$tree merge=$GITHUB_SHA" > /dev/null \
+              || echo "no marker left (a fork's token cannot write statuses): the push to the trusted branch will run in full"
           fi
   deploy:
     name: deploy

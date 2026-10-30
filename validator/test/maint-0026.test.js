@@ -278,3 +278,21 @@ test('MAINT-0026 review R3: the acceptance cannot hide an appended task by dropp
   h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001'] }));
   assert.equal(owed(h, added, h.commit('Accept M-0001'), []).length, 1);
 });
+
+// Review S1: a found task that carries an accepted finding stays the owner's to remove once a tasks-only merge named it in tasks:.
+test('MAINT-0026 review S1: a carrier appended to tasks: cannot then be removed, or have its found_from changed, by the agent', t => {
+  const p = found(t);
+  p.edit(taskPath, x => x.replace('status: Ready', 'status: Done').replace('subset: []', 'subset: []\naccepted_findings: [R-0001/F1]'));
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Draft', 'status: Draft\nfound_from: R-0001/F1'));
+  p.edit(milestonePath, append);
+  const trusted = p.commit('T-0002 carries R-0001/F1, and a tasks-only merge named it in tasks:');
+  const carrier = what => `it removes, or changes the milestone or found_from of, found tasks that carry accepted findings of a milestone not yet accepted: ${what}`;
+  for (const [what, fn] of [['T-0002 (removed)', () => p.git('rm', '-q', 'docs/workflow/tasks/T-0002.md')], ['T-0002 (found_from)', () => p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('found_from: R-0001/F1', 'found_from: R-0001/F9'))]]) {
+    p.git('checkout', '-q', '--detach', trusted);
+    fn();
+    const r = p.run(['ci', '--baseline', trusted, '--candidate', p.commit(`records: ${what}`)]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(r.out.merge, 'owner');
+    assert.deepEqual(r.out.owner_reasons, [carrier(what)]);
+  }
+});

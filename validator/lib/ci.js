@@ -413,7 +413,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // v2.9.0 final check A1: so is the carrier a merged carry relies on, a found task there (foundRoom's) whose found_from an
     // accepted_findings entry names: removing the Draft T-0002 that carried Done T-0001's R-0001/F1 passed alone, and freed its
     // place in found_tasks. Removing it, or changing its milestone or found_from, is the owner's; its claim, work and Done commit
-    // change neither, and a Done one is judged above.
+    // change neither, and a Done one is judged above. MAINT-0026 review S1: so it is whether or not the milestone's tasks: names it
+    // by now, as a tasks-only merge (lib/tasks-only.js) can have appended it there with the agent's merge alone.
     const dropped = [], removedDone = [], changedDone = [], carriers = [], relied = reliedOn([baselineRecords, candidateRecords]);
     for (const { path: p, data: d } of baselineRecords.tasks.values()) {
       const ms = baselineRecords.milestones.get(d?.milestone)?.data;
@@ -421,7 +422,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const now = candidateRecords.tasks.get(d.id)?.data;
       if (d.status === 'Done' && !candidate.exists(p)) removedDone.push(d.id);
       else if (d.status === 'Done' && candidate.read(p) !== baseline.read(p)) changedDone.push(d.id);
-      else if (d.status !== 'Done' && d.found_from && relied.has(d.found_from) && ms?.tasks != null && !list(ms.tasks).includes(d.id)) {
+      else if (d.status !== 'Done' && d.found_from && relied.has(d.found_from) && ms?.tasks != null) {
         const moved = !now ? ['removed'] : ['milestone', 'found_from'].filter(k => now[k] !== d[k]);
         if (moved.length) carriers.push(`${d.id} (${moved.join(', ')})`);
       }

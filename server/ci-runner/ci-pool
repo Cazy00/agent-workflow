@@ -187,12 +187,18 @@ def load_config(path):
             raise PoolError(f"config: bad repo {r!r}")
     if not cfg.get("labels"):
         raise PoolError("config: no labels")
+    if not isinstance(cfg["labels"], dict):
+        raise PoolError("config: labels must be an object of label -> settings")
     for label, spec in cfg["labels"].items():
         if not LABEL_RE.match(label):
             raise PoolError(f"config: bad label {label!r}")
+        if not isinstance(spec, dict):
+            raise PoolError(f"config: label {label} must be an object")
         for k in ("profile", "image", "cap", "memory"):
             if k not in spec:
                 raise PoolError(f"config: label {label} lacks {k}")
+        if isinstance(spec["cap"], bool) or not isinstance(spec["cap"], int) or spec["cap"] < 0:
+            raise PoolError(f"config: label {label} cap must be an integer, 0 or more")
         if mem_mib(spec["memory"]) is None:
             raise PoolError(f"config: label {label} memory must look like 5GiB (MiB, GiB, MB or GB)")
         check_admission(f"label {label} admission", spec.get("admission", {}))
@@ -686,7 +692,7 @@ def main(argv=None):
         # the config only: no lxc, no network; for whoever edits it before the service reads it
         try:
             load_config(args.config)
-        except (PoolError, OSError, ValueError) as e:
+        except (PoolError, OSError, ValueError, TypeError, AttributeError) as e:
             print(f"ci-pool: {e}", file=sys.stderr)
             return 2
         return 0

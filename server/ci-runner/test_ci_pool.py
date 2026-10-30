@@ -659,6 +659,29 @@ class AdmissionConfigTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("ci-pool:", r.stderr)
 
+    def test_check_config_refuses_a_malformed_labels_block_or_cap_with_exit_2_and_no_traceback(self):
+        good = {"profile": "p", "image": "i", "cap": 1, "memory": "1GiB"}
+        cases = {
+            "labels is a list": ["x"],
+            "a label value is not a dict": {"wf-gate": "x"},
+            "cap is a string": {"wf-gate": {**good, "cap": "1"}},
+            "cap is a bool": {"wf-gate": {**good, "cap": True}},
+            "cap is negative": {"wf-gate": {**good, "cap": -1}},
+        }
+        for why, labels in cases.items():
+            with self.subTest(why):
+                d = tempfile.TemporaryDirectory()
+                self.addCleanup(d.cleanup)
+                path = os.path.join(d.name, "c.json")
+                with open(path, "w") as f:
+                    json.dump({"version": 1, "labels": labels, "source_cmd": ["a"], "jit_cmd": ["b"]}, f)
+                r = subprocess.run([sys.executable, os.path.join(HERE, "ci-pool"), "check-config", "--config", path], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertIn("ci-pool:", r.stderr)
+        r = subprocess.run([sys.executable, os.path.join(HERE, "ci-pool"), "check-config", "--config", os.path.join(HERE, "ci-pool.config.example.json")], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+
     def test_the_example_gives_the_gate_label_no_cpu_limit(self):
         cfg = pool.load_config(os.path.join(HERE, "ci-pool.config.example.json"))
         self.assertEqual(pool.label_limits(cfg, "wf-gate")["max_cpu_psi_avg60"], 100)

@@ -262,6 +262,21 @@ test('MAINT-0026: an Authorised to Active move does not hide a task added before
   assert.match(owed(h, started, head, [])[0], /approves here: T-0002$/);
 });
 
+// The listing is owed only where the whole switch is on (lib/tasks-only.js, deferring): acceptance_evidence alone, the scaffold
+// default, lists nothing for a task added to tasks: after authorisation, since there the owner's merge approved it.
+test('MAINT-0026: acceptance_evidence without defer_to_acceptance owes no listing for an added task', t => {
+  const h = history(t);
+  h.milestone({}, 'M-0001 authorised', 'T-0001');
+  const added = h.milestone({ tasks: ['T-0001', 'T-0002'] }, 'M-0001 names T-0002', 'T-0002');
+  h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001', 'T-0002'] }));
+  const head = h.commit('Accept M-0001');
+  const errorsFor = cfg => acceptanceEvidenceErrors({ evidence: evidenceFor(head, []), milestone: 'M-0001', config: cfg, candidate: h.at(head), baseline: h.at(added), records: { tasks: new Map() } }).filter(e => /tasks added to M-0001/.test(e));
+  assert.equal(errorsFor(config).length, 1);
+  const { defer_to_acceptance, ...approval } = config.approval;
+  assert.deepEqual(errorsFor({ ...config, approval }), []);
+  assert.deepEqual(errorsFor({ ...config, approval: { ...approval, defer_to_acceptance: false } }), []);
+});
+
 test('MAINT-0026: the acceptance check fails closed, naming why, when the walk cannot finish', t => {
   const h = history(t);
   h.milestone({}, 'M-0001 authorised', 'T-0001');

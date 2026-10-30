@@ -172,7 +172,7 @@
   },
   "v2.15.0": {
     "notes": [
-      "Nothing to do beyond moving the pin.",
+      "A project must only move the pin; the notes below say what changes and what a CI pool host or a project that copied the template may do.",
       "MAINT-0026: a project with approval.defer_to_acceptance and acceptance_evidence: true gets a tasks-only change to a milestone record (appending T-NNNN ids to tasks:) as the agent's merge, and the milestone's acceptance evidence must list the found tasks in deferred (every id the milestone's tasks: did not hold at its authorisation). A project with defer_to_acceptance alone keeps the owner's merge.",
       "A host that runs the CI pool (server/ci-runner) re-runs install-host.sh, then rebuilds its build image (ci-pool-image build wf-build) so the runner owns the Playwright directory. Optional: give wf-gate \"admission\": {\"max_cpu_psi_avg60\": 100} in the pool config (only the installed wf ci runs on wf-gate; a job that runs a pull request's code stays on wf-build); ci-pool check-config --config FILE validates the file.",
       "A project that copied templates/github/project-ci.yml changes the \"Start Postgres in RAM\" step's pg_isready to -h 127.0.0.1."

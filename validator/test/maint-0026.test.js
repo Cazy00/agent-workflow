@@ -194,12 +194,17 @@ test('MAINT-0026: the acceptance evidence must list a task added since the plan,
   assert.equal(owed(h, added, head, ['T-0001: planned']).length, 1);
 });
 
-test('MAINT-0026: a milestone created Authorised in one commit needs nothing listed for its own tasks', t => {
+test('MAINT-0026: a milestone created Authorised in one commit needs nothing listed for its own tasks, only for those added later', t => {
   const h = history(t);
   const created = h.milestone({ tasks: ['T-0001', 'T-0003'] }, 'M-0001 created Authorised', 'T-0001', 'T-0003');
   h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001', 'T-0003'] }));
   const head = h.commit('Accept M-0001');
   assert.deepEqual(owed(h, created, head, []), []);
+  const g = history(t);
+  g.milestone({ tasks: ['T-0001', 'T-0003'] }, 'M-0001 created Authorised', 'T-0001', 'T-0003');
+  const added = g.milestone({ tasks: ['T-0001', 'T-0003', 'T-0004'] }, 'T-0004 added', 'T-0004');
+  g.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001', 'T-0003', 'T-0004'] }));
+  assert.match(owed(g, added, g.commit('Accept M-0001 with T-0004'), [])[0], /approves here: T-0004$/);
 });
 
 test('MAINT-0026: after a re-plan the ids it carries are the owner\'s, and later tasks-only additions are owed', t => {

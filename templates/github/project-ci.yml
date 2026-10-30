@@ -1,0 +1,148 @@
+# A project's own CI, shaped for speed (v2.14.0, procedures/delivery.md "Faster CI"). A starting point, not installed by bin/wf-adopt:
+# copy it to .github/workflows/ci.yml, replace __TRUSTED_BRANCH__, the three product jobs' commands and the deploy job, and keep the shape.
+# `wf doctor` warns when a workflow of the project breaks one of these rules. The installed wf-ci.yml is a separate workflow and stays.
+#
+# - The database runs in RAM: a step starts Postgres with `docker run --tmpfs`, fsync, synchronous_commit and full_page_writes off. A
+#   service container takes no command, so it cannot start Postgres that way. The data is gone when the job ends, which is the point.
+#   (Postgres 18 keeps its data under /var/lib/postgresql/18/docker, so the tmpfs covers the folder above it. The size is a ceiling that
+#   counts against the runner's memory; set it above what the suite writes.)
+# - Independent jobs run side by side. A `needs:` is for a job that uses what the other makes (an output, an artifact, its result).
+# - One run per pull request: a new push cancels the run it replaces. A push to the trusted branch never cancels or replaces another, so
+#   no deploy is dropped (its group is the commit).
+# - A push to the trusted branch reuses its pull request's result only when its tree SHA is exactly the tree the pull request's checks
+#   passed on (`wf reuse`): the PR run tested GitHub's test merge commit and, once every job passed, leaves that commit's tree as the
+#   status `wf-tested-tree` on the PR head. A PR that was behind the trusted branch merges to a different tree, so its push runs in
+#   full. Anyone who can write statuses could forge the marker; that needs write access, as editing this file does, and it saves only
+#   the run after the merge, never a check the pull request needed.
+# - A change to records only (`wf paths` says records_only, since v2.14.0; an older pin leaves the field out and runs everything) skips the
+#   product jobs. `result` is the one required check; skipped jobs count as passed in it.
+# - The deploy job always runs on a push to the trusted branch once `result` passed: reuse and records-only skip tests, never a deploy.
+#   Keep a job that holds deployment secrets on GitHub's runner (server/ci-runner/README.md).
+# - Runner labels are fixed here (`wf-build`) and `CI_BUILD` only switches them on; a project depends on no other label.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [__TRUSTED_BRANCH__]
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  scope:
+    name: scope
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    outputs:
+      product: ${{ steps.decide.outputs.product }}
+    steps:
+      # The trusted side: a pull request is judged by the base branch's pin (scripts/wf there), a push by the pushed commit's.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Decide whether the product jobs run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          product=true
+          git fetch -q origin "$CANDIDATE" || true
+          zero=0000000000000000000000000000000000000000
+          if [ -n "$BASE" ] && [ "$BASE" != "$zero" ]; then
+            records=$(scripts/wf paths --baseline "$BASE" --candidate "$CANDIDATE" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).records_only===true))' || echo false)
+            [ "$records" = true ] && { echo "records only: the product jobs are skipped"; product=false; }
+          fi
+          if [ "$EVENT" = push ] && [ "$product" = true ]; then
+            marker=none
+            pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.sha // empty' || true)
+            if [ -n "$pr_head" ]; then
+              marker=$(gh api "repos/$GITHUB_REPOSITORY/commits/$pr_head/statuses?per_page=100" --jq '[.[] | select(.context == "wf-tested-tree")][0] | select(.state == "success") | .description // empty' || true)
+            fi
+            decision=$(scripts/wf reuse --candidate "$GITHUB_SHA" --marker "${marker:-none}")
+            echo "$decision"
+            [ "$decision" = reuse=true ] && product=false
+          fi
+          echo "product=$product" >> "$GITHUB_OUTPUT"
+  lint:
+    needs: scope
+    if: needs.scope.outputs.product == 'true'
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: echo "replace with the project's lint and type checks"
+  unit:
+    needs: scope
+    if: needs.scope.outputs.product == 'true'
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: echo "replace with the tests that need no database"
+  database:
+    needs: scope
+    if: needs.scope.outputs.product == 'true'
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Start Postgres in RAM
+        run: |
+          docker run -d --name ci-db --tmpfs /var/lib/postgresql:rw,size=2g -e POSTGRES_PASSWORD=ci -p 127.0.0.1:5432:5432 postgres:18 -c fsync=off -c synchronous_commit=off -c full_page_writes=off
+          for _ in $(seq 60); do docker exec ci-db pg_isready -U postgres && exit 0; sleep 1; done
+          docker logs ci-db; exit 1
+      - run: echo "replace with the tests that use the database at postgres://postgres:ci@127.0.0.1:5432/postgres"
+      - name: Remove the database
+        if: always()
+        run: docker rm -f ci-db
+  result:
+    name: result
+    needs: [scope, lint, unit, database]
+    if: always()
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Judge the jobs, and leave the tested tree on a pull request that passed in full
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          PRODUCT: ${{ needs.scope.outputs.product }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          case " $RESULTS " in *" failure "*|*" cancelled "*) echo "a job did not pass: $RESULTS"; exit 1;; esac
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$PRODUCT" = true ]; then
+            # GITHUB_SHA is GitHub's test merge commit of the head into the base: the commit the jobs above ran on.
+            tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=wf-tested-tree -f description="tree=$tree merge=$GITHUB_SHA" > /dev/null
+          fi
+  deploy:
+    name: deploy
+    needs: result
+    if: github.event_name == 'push' && needs.result.result == 'success'
+    runs-on: ubuntu-latest # holds deployment secrets: GitHub's runner
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - run: echo "replace with the project's deploy; it runs on every push to the trusted branch whatever was skipped above"

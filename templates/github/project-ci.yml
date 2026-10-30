@@ -37,7 +37,7 @@ concurrency:
 jobs:
   scope:
     name: scope
-    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-gate' || 'ubuntu-latest' }} # git and node only: the light lane, no Docker
+    runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       product: ${{ steps.decide.outputs.product }}

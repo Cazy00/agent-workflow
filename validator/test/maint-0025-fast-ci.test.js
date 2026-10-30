@@ -29,6 +29,23 @@ test('records-only: an owner-approved acceptance test is not a record', t => {
   assert.equal(isRecordsOnlyPath(c, 'docs/other.md'), true);
 });
 
+// F4: a milestone's or a task's status decides which mapped acceptance tests may fail (MAINT-0012), so where the project names
+// owner-approved acceptance tests, a change to either can make tests required and is never records-only.
+test('records-only: with owner-approved acceptance tests, milestone and task records change what must pass and are not records-only', t => {
+  const p = project(t, { configEdit: c => ({ ...c, paths: { ...c.paths, acceptance_tests: [...(c.paths.acceptance_tests ?? []), 'tests/acceptance/**'] } }) });
+  const c = loadConfig(gitSource(p.repo, 'HEAD'));
+  for (const no of [`${rd}/milestones/M-0001.md`, `${rd}/tasks/T-0001.md`]) assert.equal(isRecordsOnlyPath(c, no), false, no);
+  for (const ok of [`${rd}/decisions/D-0001.md`, `${rd}/feedback/inbox/F-1.md`, 'docs/notes.md']) assert.equal(isRecordsOnlyPath(c, ok), true, ok);
+});
+
+// F5: config.json and acceptance.json live at docs/workflow/ whatever records_dir says (SCHEMA.md), and the profile in the records directory.
+test('records-only: the config stays out under a custom records_dir', t => {
+  const p = project(t, { configEdit: c => ({ ...c, records_dir: 'records', paths: { ...c.paths, planning: [...(c.paths.planning ?? []), 'docs/**'] } }) });
+  const c = loadConfig(gitSource(p.repo, 'HEAD'));
+  for (const no of ['docs/workflow/config.json', 'docs/workflow/acceptance.json', 'records/profile.md']) assert.equal(isRecordsOnlyPath(c, no), false, no);
+  assert.equal(isRecordsOnlyPath(c, 'docs/notes.md'), true);
+});
+
 const pathsOf = (p, from, to) => { const r = spawnSync(process.execPath, [cli, 'paths', '--repo', p.repo, '--baseline', from, '--candidate', to, '--json'], { encoding: 'utf8' }); assert.ok([0, 1].includes(r.status), r.stderr); return JSON.parse(r.stdout); };
 
 test('wf paths reports records_only: true for a milestone close, false for code and for an empty change', t => {

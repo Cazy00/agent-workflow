@@ -58,14 +58,17 @@ export function classifyPaths(config, changed) {
 // MAINT-0025 (v2.14.0): "records only", the change CI may skip a project's product steps for (delivery.md) and the difference a
 // baseline run may be lent across (baseline-run.js). One definition for both. Every path is a planning path (tasks, feedback,
 // checkpoints, docs) or a milestone or decision record: those two are `governing` in the default config because the owner approves
-// them, but they hold no code, so a milestone-close records change is records-only too. The records directory's config, acceptance
-// definitions and profile change what a project's own checks run and never count; neither does an owner-approved acceptance test.
-export const NOT_PLANNING = ['config.json', 'acceptance.json', 'profile.md'];
+// them, but they hold no code, so a milestone-close records change is records-only too. Never counted: the config and acceptance
+// definitions (always at docs/workflow/, whatever records_dir says) and the profile (in the records directory), which change what a
+// project's own checks run; an owner-approved acceptance test; and, where the project names owner-approved acceptance tests, a
+// milestone or task record, whose status decides which of them may fail (POLICY § 9) and so which must pass.
+export const NOT_PLANNING = ['docs/workflow/config.json', 'docs/workflow/acceptance.json'];
 export function isRecordsOnlyPath(config, path) {
   const rd = `${(config.records_dir ?? 'docs/workflow').replace(/\/+$/, '')}/`;
-  if (path.startsWith(rd) && NOT_PLANNING.includes(path.slice(rd.length))) return false;
+  if (NOT_PLANNING.includes(path) || path === `${rd}profile.md`) return false;
   const [c] = classifyPaths(config, [path]);
   if (c.acceptance_test) return false;
+  if ((config.paths?.acceptance_tests ?? []).length > 0 && ['milestones/', 'tasks/'].some(d => path.startsWith(rd + d))) return false;
   if (c.category === 'planning') return true;
   return c.category === 'governing' && ['milestones/', 'decisions/'].some(d => path.startsWith(rd + d));
 }

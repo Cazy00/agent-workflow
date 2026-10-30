@@ -582,10 +582,11 @@ async function main() {
     result = { ok: true, delivered, pending: map.filter(mayFail).map(m => ({ ...entry(m), waiting: waiting.get(m.acceptance) })), required: map.filter(m => !mayFail(m)).map(entry) };
   }
   else if (cmd === 'paths') {
-    const classes = classifyPaths(config, changed());
+    const paths = changed();
+    const classes = classifyPaths(config, paths);
     // MAINT-0017 A3: a project's CI may skip its product steps on planning_only (delivery.md); empty or unclassified is never.
     // v2.14.0: records_only also counts milestone and decision records (lib/paths.js), which planning_only never did.
-    result = { ok: !classes.some(c => c.category === 'unclassified'), planning_only: classes.length > 0 && classes.every(c => c.category === 'planning'), records_only: recordsOnly(config, changed()), classes };
+    result = { ok: !classes.some(c => c.category === 'unclassified'), planning_only: classes.length > 0 && classes.every(c => c.category === 'planning'), records_only: recordsOnly(config, paths), classes };
   }
   else if (cmd === 'ci') {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');

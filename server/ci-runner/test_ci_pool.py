@@ -659,6 +659,42 @@ class ImageAndUnitTests(unittest.TestCase):
         self.assertIn("install -d -m 0700 /etc/ci-pool", t)
         self.assertIn('"/etc/ci-pool/jit"', self.text("ci-pool"))  # the path the pool pushes to is inside it
 
+    def test_a_failed_provisioning_says_where_and_leaves_no_log_in_the_image(self):
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        for line in ("umask 022", "exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1", "set -x", "chmod 0644 /tmp/runner.tar.gz"):
+            self.assertIn(line, body)
+        self.assertIn("provisioning failed (exit $rc) at line $LINENO: $BASH_COMMAND", body)
+        self.assertLess(body.index("cloud-init clean --logs"), body.index("rm -f /var/log/ci-pool-provision.log"))
+        self.assertIn('$LXC exec -T "$work"', t)
+        after = t[t.index("\nPROVISION\n"):]
+        self.assertLess(after.index("tail -n 200 /var/log/ci-pool-provision.log"), after.index('exit "$rc"'))
+        self.assertLess(after.index('exit "$rc"'), after.index("$LXC stop"))
+
+    def test_a_failed_provisioning_prints_its_log_and_publishes_nothing(self):  # #71 review
+        t = self.text("ci-pool-image")
+        part = t[t.index("\nrc=0\n"):t.index("# Publish under a new alias")]
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "lxc")
+            log = os.path.join(d, "log")
+            with open(fake, "w") as f:
+                f.write('''#!/usr/bin/env bash
+echo "$*" >> "$LOG"
+case "$*" in
+  "exec -T w "*" -- bash -s") cat >/dev/null; exit 3 ;;
+  "exec -T w -- tail -n 200 /var/log/ci-pool-provision.log") echo "MARKER-LOG" ;;
+esac
+''')
+            os.chmod(fake, 0o755)
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\nkind=gate work=w NODE_MAJOR=22 POSTGRES_IMAGE=p TMP_SIZE=2G\n' + part],
+                               capture_output=True, text=True, env={**os.environ, "LXC": fake, "LOG": log})
+            with open(log) as f:
+                calls = f.read().splitlines()
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("MARKER-LOG", r.stderr)
+        self.assertFalse([c for c in calls if c.startswith(("stop", "publish"))])
+        self.assertTrue(calls[0].startswith("exec -T w --env KIND=gate"), calls)
+
     def test_the_unit_sets_nothing_that_stops_snap_lxc(self):  # F4
         unit = [l for l in self.text("ci-pool.service").splitlines() if not l.startswith("#")]
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])

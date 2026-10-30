@@ -24,6 +24,7 @@ case "$2" in
 esac
 alias="ci-pool-$kind"
 work="ci-pool-image-$kind-$$"
+trap 'rc=$?; echo "ci-pool-image: failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
 trap '$LXC delete --force "$work" >/dev/null 2>&1 || true' EXIT
 
 # The build container is made on the pool profile it will run with (so Docker works in it), at the pool's size.
@@ -31,9 +32,16 @@ $LXC launch ubuntu:24.04 "$work" --profile "ci-pool-$kind"
 $LXC exec "$work" -- cloud-init status --wait >/dev/null || true
 $LXC file push "$SHARE/ci-pool-entrypoint" "$work/usr/local/sbin/ci-pool-entrypoint" --mode 0755
 $LXC file push "$SHARE/ci-pool-runner.service" "$work/etc/systemd/system/ci-pool-runner.service" --mode 0644
-$LXC exec "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
-  --env TMP_SIZE="$TMP_SIZE" -- bash -s <<'PROVISION'
+# -T: no terminal. The provisioning logs itself inside the container; if it fails, its tail is printed before the EXIT trap
+# deletes the container, since the service's journal otherwise says only that the build exited.
+rc=0
+$LXC exec -T "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
+  --env TMP_SIZE="$TMP_SIZE" -- bash -s <<'PROVISION' || rc=$?
 set -euo pipefail
+umask 022
+exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1
+set -x
+trap 'rc=$?; echo "ci-pool-image: provisioning failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl jq sudo xz-utils software-properties-common
@@ -67,6 +75,7 @@ version="$(jq -r .tag_name <<<"$release")"; version="${version#v}"
 sha="$(jq -r .body <<<"$release" | sed -n "s/.*<!-- BEGIN SHA linux-${rarch} -->\([0-9a-f]\{64\}\)<!-- END SHA linux-${rarch} -->.*/\1/p" | head -n1)"
 [ -n "$sha" ] || { echo "The runner release publishes no linux-${rarch} checksum; stopping." >&2; exit 1; }
 curl -fsSL -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v${version}/actions-runner-linux-${rarch}-${version}.tar.gz"
+chmod 0644 /tmp/runner.tar.gz
 echo "${sha}  /tmp/runner.tar.gz" | sha256sum -c -
 install -d -o runner -g runner /opt/actions-runner
 sudo -u runner tar xzf /tmp/runner.tar.gz -C /opt/actions-runner
@@ -111,9 +120,15 @@ echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,size=${TMP_SIZE},mode=1777 
 systemctl enable ci-pool-runner.service
 # the image carries no machine identity, token or log
 cloud-init clean --logs
+rm -f /var/log/ci-pool-provision.log
 truncate -s 0 /etc/machine-id
 rm -rf /var/lib/apt/lists/*
 PROVISION
+if [[ $rc -ne 0 ]]; then
+  echo "ci-pool-image: provisioning failed (exit $rc); the last 200 lines of its log:" >&2
+  $LXC exec -T "$work" -- tail -n 200 /var/log/ci-pool-provision.log >&2 || true
+  exit "$rc"
+fi
 $LXC stop "$work"
 # Publish under a new alias first, then rotate: a build that fails leaves the current image and its -prev as they were.
 $LXC image alias delete "$alias-new" >/dev/null 2>&1 || true

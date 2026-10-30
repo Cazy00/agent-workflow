@@ -52,7 +52,7 @@ sudo ci-runner register OWNER/shop shop-ci shop-gate
 
 `register` first checks that GitHub doesn't show the repository publicly. Then it asks once, hidden, for the registration token from the repository's *Settings → Actions → Runners → New self-hosted runner* (only an admin of the repository can make one). Each runner is registered under its role's label, taken from its container: `wf-build` or `wf-gate`.
 
-Then, in *Settings → Secrets and variables → Actions → Variables*, set `CI_BUILD` = `on` and `WF_GATE` = `on`. The project's own CI uses `runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}` for its product jobs; the installed workflow files read `WF_GATE`.
+Then, in *Settings → Secrets and variables → Actions → Variables*, set `CI_BUILD` = `on` and `WF_GATE` = `on`. The project's own CI uses `runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}` for its product jobs; the installed workflow files read `WF_GATE`. `templates/github/project-ci.yml` is a project CI in that shape: parallel jobs, the database in RAM, one run per pull request, and a push that reuses its pull request's result on an identical tree (`procedures/delivery.md`, *Faster CI*).
 
 Runners registered by v2.5.0 under other labels need these labels added (*Settings → Actions → Runners →* the runner *→* labels, an admin's step), or registering again.
 

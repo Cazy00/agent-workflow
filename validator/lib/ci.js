@@ -1,7 +1,7 @@
 // The CI verdict for a change. SCHEMA.md "CI verdict".
 import { DIRS, IN_PROGRESS, WfError, loadConfig, validateRecords, loadAll, list, namesIn } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
-import { classifyPaths, deepChanges, isTestOnlyPath } from './paths.js';
+import { classifyPaths, deepChanges, isTestOnlyPath, recordsOnly } from './paths.js';
 import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
@@ -441,5 +441,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
 
   // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).
   const workflow = config.workflow?.version || config.workflow?.revision ? { version: config.workflow.version ?? null, revision: config.workflow.revision ?? null } : null;
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
 }

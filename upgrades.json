@@ -162,5 +162,12 @@
     "notes": [
       "Nothing to do beyond moving the pin. Where milestone records are governing (paths.governing), a task the owner approves after authorisation is added to its milestone's tasks: in the pull request that carries its work, which the owner merges; readiness takes the candidate's tasks: for it, and adding a task to tasks: no longer makes the milestone's other tasks stale. Milestone records are governing in config.default.json; check yours with `wf paths --changed docs/workflow/milestones/M-0001.md`. Where they are not, the found-task rule is unchanged; add docs/workflow/milestones/** to paths.governing, as a workflow change, to get the new route."
     ]
+  },
+  "v2.14.0": {
+    "notes": [
+      "Nothing to do beyond moving the pin; a host that runs the CI pool (server/ci-runner) re-runs install-host.sh to get the pool and ci-pool-image changes of this release. Optional, for faster CI: copy templates/github/project-ci.yml over the project's own CI by hand (parallel product jobs behind one scope job, the test database in RAM, one run per pull request, a push to the trusted branch that reuses its pull request's result only on an identical tree through wf reuse (the marker is read only from github-actions[bot], linking a run of the repository's Actions), and a deploy that always runs), and re-copy templates/github/wf-ci.yml where unedited (one summary line). The project's CI needs scripts/wf at v2.14.0 or later for wf reuse and the records_only field; an older pin leaves the field out, which means run everything.",
+      "wf doctor now warns (never fails) about the project's own workflows: a test database without tmpfs or fsync off, a serial chain without data dependency, no concurrency that cancels the run it replaces, a full rerun on a push to the trusted branch, and a GitHub-hosted runner on a private repository. Runner labels stay wf-build and wf-gate.",
+      "wf paths and wf ci report records_only, which also counts milestone and decision records (and, where paths.acceptance_tests names owner-approved tests, never a milestone or task record); wf next's baseline walk uses it, so a milestone-close commit no longer stops it from lending the last code commit's passing run."
+    ]
   }
 }

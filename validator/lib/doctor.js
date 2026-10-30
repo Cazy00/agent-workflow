@@ -6,7 +6,9 @@
 // project's reviewer and walker agents were "not registered" and ran as general-purpose agents with write tools.
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { workTreeRoot } from './git.js';
+import { lintWorkflow } from './ci-lint.js';
 
 // The project's own preflight commands run without the owner's signing material or the workflow's own secrets, as
 // `wf attest` withholds them (lib/attest.js), from the config of the trusted branch the working tree's config names
@@ -37,6 +39,16 @@ export function ruleWarnings({ rules, branch }) {
   return warnings;
 }
 
+// v2.14.0: the project's own workflows (`.github/workflows/*.yml`, the installed `wf-*` files left out), read from the working tree.
+// Each finding is a warning that CI waits for no reason (lib/ci-lint.js); a repository whose privacy is unknown gets no runner warning.
+function workflowWarnings({ repo, trustedBranch, privateRepo }) {
+  let dir;
+  try { dir = path.join(workTreeRoot(repo), '.github', 'workflows'); } catch { return []; }
+  let names;
+  try { names = fs.readdirSync(dir).filter(f => /\.ya?ml$/.test(f) && !f.startsWith('wf-')).sort(); } catch { return []; }
+  return names.flatMap(name => lintWorkflow({ name, text: fs.readFileSync(path.join(dir, name), 'utf8'), trustedBranch, privateRepo }));
+}
+
 const real = p => { try { return fs.realpathSync(p); } catch { return p; } };
 export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   const checks = [];
@@ -45,6 +57,7 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
     const root = real(workTreeRoot(repo)), here = real(cwd);
     add('session started in the repository root', here === root, here === root ? `in ${root}` : `started in ${here}, not in the repository root ${root}: the project's agents and instructions (.claude/agents, CLAUDE.md, AGENTS.md) are not loaded from a parent folder, so its reviewer and walker agents are missing: start the session in ${root}`, "the project's agents and instructions");
   }
+  let privateRepo = null;
   const [major] = process.versions.node.split('.').map(Number);
   add('node 22 or later', major >= 22, `node ${process.versions.node}`, 'the validator');
   const git = run('git', ['--version']);
@@ -61,7 +74,7 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
     if (config.repository) {
       const repo = run('gh', ['api', `repos/${config.repository}`]);
       let push = null;
-      try { push = JSON.parse(repo.out).permissions?.push ?? null; } catch { push = null; }
+      try { const body = JSON.parse(repo.out); push = body.permissions?.push ?? null; privateRepo = typeof body.private === 'boolean' ? body.private : null; } catch { push = null; }
       add(`push access to ${config.repository}`, repo.ok && push === true, repo.ok ? (push === true ? 'yes' : 'the signed-in account cannot push') : 'the repository could not be read', 'branches and pull requests');
     }
   }
@@ -85,6 +98,8 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
     if (Array.isArray(rules)) warnings.push(...ruleWarnings({ rules, branch }));
     else warnings.push({ name: `the rules on ${branch}`, detail: `could not read the rules on ${branch} (${firstLine(read.out) || 'no usable answer'}): whether a review or merge queue holds the agent's auto-merge back is unknown`, needed_for: 'auto-merge' });
   }
+  // v2.14.0: where CI waits for no reason. Warnings: no gate reads them and they never change `ok`.
+  if (repo) warnings.push(...workflowWarnings({ repo, trustedBranch: config.trusted_branch ?? 'main', privateRepo }));
   const second = config.review?.second_model;
   if (second?.tool) {
     const tool = run(second.tool, ['--version']);

@@ -7,7 +7,7 @@
 //   directory, so a passing run of that ancestor tested the baseline's code (the last code commit's run, for records-only merges).
 // The gate reads only the format of `baseline_result` (records.js), so nothing here grants anything: this checks the run before the
 // agent writes its reference, because a green head whose test-merge held other code, or a run that failed, is not the baseline's.
-import { classifyPaths } from './paths.js';
+import { isRecordsOnlyPath } from './paths.js';
 import { loadConfig } from './records.js';
 import { httpsRun } from './acceptance.js';
 
@@ -17,9 +17,10 @@ const SAME_CODE_EVENTS = ['push', 'workflow_dispatch']; // the ref's own tip is 
 // The events whose runs test a commit. A run of any other event (`schedule`: wf-status refreshing the issue every few hours, wf-client-page
 // rebuilding the page) ran the workflow's file from the branch tip and tested nothing about this commit, so it neither lends nor rejects.
 const TESTING_EVENTS = [...SAME_CODE_EVENTS, 'pull_request'];
-// What a records-only difference may hold: the planning records. The config (workflow pin, paths, required checks), the acceptance
-// definitions and the profile are in the records directory too, but they change what the project's own checks run.
-const NOT_PLANNING = ['config.json', 'acceptance.json', 'profile.md'];
+// What a records-only difference may hold is paths.js's `isRecordsOnlyPath`: planning records and, since v2.14.0, milestone and decision
+// records (governing by default, yet no code, so a milestone-close change was wrongly a code change here). The config (workflow pin,
+// paths, required checks), the acceptance definitions and the profile are in the records directory too, but they change what the
+// project's own checks run.
 
 export function baselineCandidates(source, recordsDir) {
   if (source?.kind !== 'git') return [];
@@ -37,7 +38,7 @@ export function baselineCandidates(source, recordsDir) {
   try {
     const own = `${recordsDir}/`;
     const config = loadConfig(source);
-    const planning = p => p.startsWith(own) && !NOT_PLANNING.includes(p.slice(own.length)) && classifyPaths(config, [p]).every(c => c.category === 'planning' && !c.acceptance_test);
+    const planning = p => p.startsWith(own) && isRecordsOnlyPath(config, p);
     for (const commit of (source.firstParentChain() ?? []).slice(1)) {
       if (out.filter(c => c.kind === 'records-only').length >= MAX_RECORDS_ONLY) break;
       if (!source.changedPaths(commit).every(planning)) break;

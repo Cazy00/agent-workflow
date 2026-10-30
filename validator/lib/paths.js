@@ -54,3 +54,20 @@ export function classifyPaths(config, changed) {
     return { path, category: 'unclassified', ...flag };
   });
 }
+
+// MAINT-0025 (v2.14.0): "records only", the change CI may skip a project's product steps for (delivery.md) and the difference a
+// baseline run may be lent across (baseline-run.js). One definition for both. Every path is a planning path (tasks, feedback,
+// checkpoints, docs) or a milestone or decision record: those two are `governing` in the default config because the owner approves
+// them, but they hold no code, so a milestone-close records change is records-only too. The records directory's config, acceptance
+// definitions and profile change what a project's own checks run and never count; neither does an owner-approved acceptance test.
+export const NOT_PLANNING = ['config.json', 'acceptance.json', 'profile.md'];
+export function isRecordsOnlyPath(config, path) {
+  const rd = `${(config.records_dir ?? 'docs/workflow').replace(/\/+$/, '')}/`;
+  if (path.startsWith(rd) && NOT_PLANNING.includes(path.slice(rd.length))) return false;
+  const [c] = classifyPaths(config, [path]);
+  if (c.acceptance_test) return false;
+  if (c.category === 'planning') return true;
+  return c.category === 'governing' && ['milestones/', 'decisions/'].some(d => path.startsWith(rd + d));
+}
+// At least one path, and every one of them.
+export const recordsOnly = (config, paths) => paths.length > 0 && paths.every(p => isRecordsOnlyPath(config, p.replace(/\\/g, '/').replace(/^\.\//, '')));

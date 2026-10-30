@@ -114,7 +114,9 @@ HOOK
   rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
 fi
 
-# /tmp in RAM (counts against the container's memory limit): tests that write many small files are several times faster
+# /tmp in RAM (counts against the container's memory limit): tests that write many small files are several times faster.
+# The ubuntu:24.04 container image ships no /etc/fstab, and sed -i exits 2 on a missing file.
+touch /etc/fstab
 sed -i '\#^tmpfs[[:space:]]\+/tmp[[:space:]]#d' /etc/fstab
 echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,size=${TMP_SIZE},mode=1777 0 0" >> /etc/fstab
 systemctl enable ci-pool-runner.service

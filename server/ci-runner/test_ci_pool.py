@@ -659,6 +659,18 @@ class ImageAndUnitTests(unittest.TestCase):
         self.assertIn("install -d -m 0700 /etc/ci-pool", t)
         self.assertIn('"/etc/ci-pool/jit"', self.text("ci-pool"))  # the path the pool pushes to is inside it
 
+    def test_a_failed_provisioning_says_where_and_leaves_no_log_in_the_image(self):
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        for line in ("umask 022", "exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1", "set -x", "chmod 0644 /tmp/runner.tar.gz"):
+            self.assertIn(line, body)
+        self.assertIn("provisioning failed (exit $rc) at line $LINENO: $BASH_COMMAND", body)
+        self.assertLess(body.index("cloud-init clean --logs"), body.index("rm -f /var/log/ci-pool-provision.log"))
+        self.assertIn('$LXC exec -T "$work"', t)
+        after = t[t.index("\nPROVISION\n"):]
+        self.assertLess(after.index("tail -n 200 /var/log/ci-pool-provision.log"), after.index('exit "$rc"'))
+        self.assertLess(after.index('exit "$rc"'), after.index("$LXC stop"))
+
     def test_the_unit_sets_nothing_that_stops_snap_lxc(self):  # F4
         unit = [l for l in self.text("ci-pool.service").splitlines() if not l.startswith("#")]
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])

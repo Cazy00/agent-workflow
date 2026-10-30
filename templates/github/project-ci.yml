@@ -12,8 +12,11 @@
 # - A push to the trusted branch reuses its pull request's result only when its tree SHA is exactly the tree the pull request's checks
 #   passed on (`wf reuse`): the PR run tested GitHub's test merge commit and, once every job passed, leaves that commit's tree as the
 #   status `wf-tested-tree` on the PR head. A PR that was behind the trusted branch merges to a different tree, so its push runs in
-#   full. Anyone who can write statuses could forge the marker; that needs write access, as editing this file does, and it saves only
-#   the run after the merge, never a check the pull request needed.
+#   full. The trust boundary is that only this workflow's own token writes the marker: the push reads a `wf-tested-tree` status only when
+#   its creator is `github-actions[bot]` and its target_url is a run of this repository's Actions. Any other account that can write a
+#   commit status (a classic token with `repo:status`, an installed app) is ignored. A workflow of the repository that holds the same
+#   token could still post one, so keep `statuses: write` to the `result` job. The post-merge run is the deploy gate: a forged marker
+#   would skip the tests before a deploy, which is why the author is checked and not trusted.
 # - A change to records only (`wf paths` says records_only, since v2.14.0; an older pin leaves the field out and runs everything) skips the
 #   product jobs. `result` is the one required check; skipped jobs count as passed in it.
 # - The deploy job always runs on a push to the trusted branch once `result` passed: reuse and records-only skip tests, never a deploy.
@@ -68,9 +71,12 @@ jobs:
             marker=none
             pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.sha // empty' || true)
             if [ -n "$pr_head" ]; then
-              marker=$(gh api "repos/$GITHUB_REPOSITORY/commits/$pr_head/statuses?per_page=100" --jq '[.[] | select(.context == "wf-tested-tree")][0] | select(.state == "success") | .description // empty' || true)
+              # Only this workflow's own token writes the marker: its creator is github-actions[bot] and it links a run of this repository.
+              runs="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/"
+              marker=$(gh api "repos/$GITHUB_REPOSITORY/commits/$pr_head/statuses?per_page=100" --jq "[.[] | select(.context == \"wf-tested-tree\" and .creator.login == \"github-actions[bot]\" and ((.target_url // \"\") | startswith(\"$runs\")))][0] | select(.state == \"success\") | .description // empty" || true)
             fi
-            decision=$(scripts/wf reuse --candidate "$GITHUB_SHA" --marker "${marker:-none}")
+            # Any error from wf reuse (an older pin, an unreadable marker) means a full run, never a failed one.
+            decision=$(scripts/wf reuse --candidate "$GITHUB_SHA" --marker "${marker:-none}") || decision=reuse=false
             echo "$decision"
             [ "$decision" = reuse=true ] && product=false
           fi
@@ -134,9 +140,10 @@ jobs:
           case " $RESULTS " in *" failure "*|*" cancelled "*) echo "a job did not pass: $RESULTS"; exit 1;; esac
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$PRODUCT" = true ]; then
             # GITHUB_SHA is GitHub's test merge commit of the head into the base: the commit the jobs above ran on.
-            tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
-            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=wf-tested-tree -f description="tree=$tree merge=$GITHUB_SHA" > /dev/null \
-              || echo "no marker left (a fork's token cannot write statuses): the push to the trusted branch will run in full"
+            # The marker is an optimisation: no failed call below may fail the required check. It links this run, which the push checks.
+            tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha) || tree=
+            [ -n "$tree" ] && gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=success -f context=wf-tested-tree -f description="tree=$tree merge=$GITHUB_SHA" -f target_url="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null \
+              || echo "no marker left (a fork's token cannot write statuses, or the API failed): the push to the trusted branch will run in full"
           fi
   deploy:
     name: deploy

@@ -26,7 +26,7 @@ case " $* " in *" -X POST "*) printf '%s\\n' "$*" >> "$FAKE_POSTS"; exit 0;; esa
 case "$url" in
   */commits/*/pulls) json="$FAKE_PULLS";;
   */statuses*) json="$FAKE_STATUSES";;
-  */git/commits/*) json="{\\"tree\\":{\\"sha\\":\\"$FAKE_TREE\\"}}";;
+  */git/commits/*) [ -n "$FAKE_TREE_FAIL" ] && exit 1; json="{\\"tree\\":{\\"sha\\":\\"$FAKE_TREE\\"}}";;
   *) exit 1;;
 esac
 printf '%s' "$json" | jq -r "$filter"
@@ -41,10 +41,11 @@ printf '%s' "$json" | jq -r "$filter"
     const r = spawnSync('bash', ['-c', script], { cwd: p.repo, encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}`, HOME: p.temp, GITHUB_OUTPUT: out, GITHUB_REPOSITORY: 'fixture/project', GH_TOKEN: 'x', FAKE_POSTS: posts, ...env } });
     return { ...r, product: fs.existsSync(out) ? /product=(\w+)/.exec(fs.readFileSync(out, 'utf8'))?.[1] : null };
   };
-  const status = (description, state = 'success') => JSON.stringify([{ context: 'wf-tested-tree', state, description }, { context: 'ci/other', state: 'success', description: 'x' }]);
+  const status = (description, state = 'success', extra = {}) => JSON.stringify([{ context: 'wf-tested-tree', state, description, creator: { login: 'github-actions[bot]' }, target_url: RUN_URL, ...extra }, { context: 'ci/other', state: 'success', description: 'x', creator: { login: 'someone' } }]);
   const pulls = head => JSON.stringify([{ head: { sha: head } }]);
   return { p, run, posts, status, pulls };
 }
+const RUN_URL = 'https://github.com/fixture/project/actions/runs/123';
 const skip = { skip: jqAvailable ? false : 'jq is not installed' };
 
 // A pull request into main, checked on GitHub's test merge, then merged by a merge commit.
@@ -113,7 +114,7 @@ test('the result job leaves the tested tree on a pull request that passed in ful
   const { p, run, posts } = bench(t);
   const m = merged(p);
   const tree = p.git('rev-parse', `${m.testMerge}^{tree}`);
-  const env = { GITHUB_EVENT_NAME: 'pull_request', PRODUCT: 'true', HEAD_SHA: m.head, GITHUB_SHA: m.testMerge, FAKE_TREE: tree };
+  const env = { GITHUB_EVENT_NAME: 'pull_request', PRODUCT: 'true', HEAD_SHA: m.head, GITHUB_SHA: m.testMerge, GITHUB_RUN_ID: '123', FAKE_TREE: tree };
   const pass = run(result, { ...env, RESULTS: 'success success success success' });
   assert.equal(pass.status, 0, pass.stderr);
   const posted = fs.readFileSync(posts, 'utf8');
@@ -131,4 +132,61 @@ test('the result job leaves the tested tree on a pull request that passed in ful
   assert.ok(!fs.existsSync(posts), 'a run that skipped the product jobs tested nothing to remember');
   assert.equal(run(result, { ...env, GITHUB_EVENT_NAME: 'push', RESULTS: 'success success success success' }).status, 0);
   assert.ok(!fs.existsSync(posts), 'a push leaves no marker');
+});
+
+test('push: only this repository\'s workflow token may write the marker (F1)', skip, t => {
+  const { p, run, status, pulls } = bench(t);
+  const m = merged(p);
+  const push = statuses => run(scope, { EVENT: 'push', BASE: m.before, CANDIDATE: m.pushed, GITHUB_SHA: m.pushed, FAKE_PULLS: pulls(m.head), FAKE_STATUSES: statuses });
+  const good = marker(p, m.testMerge);
+  assert.equal(push(status(good)).product, 'false', 'the workflow\'s own token');
+  for (const [name, extra] of [
+    ['another app', { creator: { login: 'other-app[bot]' } }],
+    ['a person with a classic token', { creator: { login: 'someone' } }],
+    ['no creator', { creator: null }],
+    ['no run link', { target_url: null }],
+    ['a link to another repository\'s run', { target_url: 'https://github.com/fixture/other/actions/runs/1' }],
+    ['a link outside Actions', { target_url: 'https://example.com/fixture/project/actions/runs/1' }],
+    ['a link to a repository that shares the prefix', { target_url: 'https://github.com/fixture/project2/actions/runs/1' }],
+  ]) {
+    const r = push(status(good, 'success', extra));
+    assert.equal(r.status, 0, name + r.stderr);
+    assert.equal(r.product, 'true', `${name}: a forged marker must not skip the tests`);
+  }
+  // A forged status cannot hide the workflow's own pass or stand in front of it either way: only its own statuses are read.
+  const forged = { context: 'wf-tested-tree', state: 'failure', description: 'x', creator: { login: 'other-app[bot]' }, target_url: RUN_URL };
+  assert.equal(push(JSON.stringify([forged, ...JSON.parse(status(good))])).product, 'false', 'a newer status from another account is not read');
+});
+
+test('push: when wf reuse itself errors, the push runs in full instead of failing (F2)', skip, t => {
+  const { p, run, status, pulls } = bench(t);
+  const m = merged(p);
+  const push = statuses => run(scope, { EVENT: 'push', BASE: m.before, CANDIDATE: m.pushed, GITHUB_SHA: m.pushed, FAKE_PULLS: pulls(m.head), FAKE_STATUSES: statuses });
+  const dashed = push(status('--x'));
+  assert.equal(dashed.status, 0, dashed.stderr);
+  assert.equal(dashed.product, 'true', 'a description the option parser refuses');
+  // A pin before v2.14.0: `reuse` is an unknown command and exits 2.
+  fs.writeFileSync(path.join(p.repo, 'scripts', 'wf'), `#!/bin/sh\n[ "$1" = reuse ] && { echo "unknown command" >&2; exit 2; }\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cli)} --repo "$PWD" "$@"\n`, { mode: 0o755 });
+  const old = push(status(marker(p, m.testMerge)));
+  assert.equal(old.status, 0, old.stderr);
+  assert.equal(old.product, 'true', 'an unknown command');
+});
+
+test('the result job never fails the required check over the marker (F3)', skip, t => {
+  const { p, run, posts } = bench(t);
+  const m = merged(p);
+  const env = { GITHUB_EVENT_NAME: 'pull_request', PRODUCT: 'true', HEAD_SHA: m.head, GITHUB_SHA: m.testMerge, GITHUB_RUN_ID: '123', RESULTS: 'success success success success' };
+  const r = run(result, { ...env, FAKE_TREE_FAIL: '1' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!fs.existsSync(posts), 'no tree, no marker');
+  assert.match(r.stderr + r.stdout, /no marker left/);
+});
+
+test('the marker names the run that wrote it (F1)', skip, t => {
+  const { p, run, posts } = bench(t);
+  const m = merged(p);
+  const tree = p.git('rev-parse', `${m.testMerge}^{tree}`);
+  const r = run(result, { GITHUB_EVENT_NAME: 'pull_request', PRODUCT: 'true', HEAD_SHA: m.head, GITHUB_SHA: m.testMerge, GITHUB_RUN_ID: '123', FAKE_TREE: tree, RESULTS: 'success success success success' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.readFileSync(posts, 'utf8').includes(`target_url=${RUN_URL}`), fs.readFileSync(posts, 'utf8'));
 });

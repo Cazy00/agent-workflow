@@ -121,7 +121,10 @@ test('the template\'s shape: parallel jobs on one scope, a RAM database, one run
   const filled = written.replace('$tree', 'a'.repeat(40)).replace('$GITHUB_SHA', 'b'.repeat(40));
   assert.deepEqual(parseMarker(filled), { tree: 'a'.repeat(40), merge: 'b'.repeat(40) });
   assert.match(w.jobs.scope.steps.at(-1).run, /wf reuse --candidate "\$GITHUB_SHA" --marker/);
-  assert.match(w.jobs.scope.steps.at(-1).run, /context == "wf-tested-tree"/);
+  assert.match(w.jobs.scope.steps.at(-1).run, /context == \\"wf-tested-tree\\"/);
+  assert.match(w.jobs.scope.steps.at(-1).run, /creator\.login == \\"github-actions\[bot\]\\"/, 'only the workflow\'s own token');
+  assert.match(w.jobs.scope.steps.at(-1).run, /startswith\(\\"\$runs\\"\)/, 'a run of this repository\'s Actions');
+  assert.match(w.jobs.result.steps[0].run, /target_url=/);
   assert.match(w.jobs.result.steps[0].run, /context=wf-tested-tree/);
   assert.match(w.jobs.result.permissions.statuses, /write/);
   assert.equal(w.permissions.statuses, 'read', 'only the result job writes statuses');

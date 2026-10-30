@@ -32,6 +32,7 @@ MEM_RE = re.compile(r"^([0-9]+)(MiB|GiB|MB|GB)$")
 MIN_POLL_SECONDS = 15
 YOUNG_SECONDS = 60  # a container this young has not used its memory yet
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+ADMISSION_KEYS = ("min_mem_available_mib", "max_cpu_psi_avg60", "max_mem_psi_avg60")
 
 DEFAULTS = {
     "poll_seconds": 15,
@@ -152,9 +153,32 @@ def _epoch(stamp):
 
 
 # ── config and state ─────────────────────────────────────────────────────────────────────────────────────────────
+def check_admission(where, adm):
+    """Refuse an admission block that names another key, a non-number, a pressure outside 0..100 or a negative memory."""
+    if not isinstance(adm, dict):
+        raise PoolError(f"config: {where} must be an object")
+    for k, v in adm.items():
+        if k not in ADMISSION_KEYS:
+            raise PoolError(f"config: {where} has an unknown key {k!r} (allowed: {', '.join(ADMISSION_KEYS)})")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+            raise PoolError(f"config: {where}.{k} must be a number")
+        if k.endswith("_avg60") and not 0 <= v <= 100:
+            raise PoolError(f"config: {where}.{k} must be between 0 and 100")
+        if k.startswith("min_mem") and v < 0:
+            raise PoolError(f"config: {where}.{k} must not be negative")
+
+
+def label_limits(cfg, label):
+    """The admission limits of a label: the global ones overlaid by the label's own."""
+    return {**cfg["admission"], **cfg["labels"][label].get("admission", {})}
+
+
 def load_config(path):
     with open(path) as f:
         user = json.load(f)
+    if not isinstance(user, dict):
+        raise PoolError("config: must be a JSON object")
+    check_admission("admission", user.get("admission", {}))
     cfg = {**DEFAULTS, **user, "admission": {**DEFAULTS["admission"], **user.get("admission", {})}}
     if cfg.get("version") != 1:
         raise PoolError("config: version must be 1")
@@ -171,6 +195,7 @@ def load_config(path):
                 raise PoolError(f"config: label {label} lacks {k}")
         if mem_mib(spec["memory"]) is None:
             raise PoolError(f"config: label {label} memory must look like 5GiB (MiB, GiB, MB or GB)")
+        check_admission(f"label {label} admission", spec.get("admission", {}))
     for k in ("source_cmd", "jit_cmd"):
         if not (isinstance(cfg.get(k), list) and cfg[k] and all(isinstance(a, str) for a in cfg[k])):
             raise PoolError(f"config: {k} must be a non-empty list of strings")
@@ -231,10 +256,11 @@ def read_host():
 
 
 def admission_refusal(host, limits):
-    """Why a container may not start now, or '' when it may. A reading that is missing refuses."""
+    """Why a container may not start now, or '' when it may. A reading that is missing refuses. A CPU limit of 100 or more
+    means CPU pressure does not hold the label (avg60 never exceeds 100), though its reading must still exist."""
     if host["mem_available_mib"] is None or host["mem_available_mib"] < limits["min_mem_available_mib"]:
         return f"MemAvailable {host['mem_available_mib']} MiB below {limits['min_mem_available_mib']}"
-    if host["cpu_psi"] is None or host["cpu_psi"] >= limits["max_cpu_psi_avg60"]:
+    if host["cpu_psi"] is None or (limits["max_cpu_psi_avg60"] < 100 and host["cpu_psi"] >= limits["max_cpu_psi_avg60"]):
         return f"cpu pressure avg60 {host['cpu_psi']} not below {limits['max_cpu_psi_avg60']}"
     if host["mem_psi"] is None or host["mem_psi"] >= limits["max_mem_psi_avg60"]:
         return f"memory pressure avg60 {host['mem_psi']} not below {limits['max_mem_psi_avg60']}"
@@ -427,6 +453,7 @@ class Pool:
         return total
 
     def launch(self, pool, now):
+        refused = set()  # labels the admission rule refused in this pass: each is skipped for the rest of it, in every repository
         for repo in self.cfg["repos"]:
             try:
                 jobs = self.queued(repo)
@@ -439,6 +466,8 @@ class Pool:
                 if label is not None:
                     by_label.setdefault(label, []).append(job)
             for label, wanted in by_label.items():
+                if label in refused:
+                    continue
                 spec = self.cfg["labels"][label]
                 need = len(wanted) - self.unassigned(pool, repo, label)
                 for job in wanted:
@@ -453,10 +482,11 @@ class Pool:
                     host = self.host()
                     if host["mem_available_mib"] is not None:
                         host = {**host, "mem_available_mib": host["mem_available_mib"] - self.reserved_mib(pool, now)}
-                    why = admission_refusal(host, self.cfg["admission"])
+                    why = admission_refusal(host, label_limits(self.cfg, label))
                     if why:
-                        log("admission_refused", job=jid, why=why)
-                        return  # the whole host is the reason: no other job starts this pass
+                        log("admission_refused", label=label, job=jid, why=why)
+                        refused.add(label)  # only this label waits; another label's limits may still admit
+                        break
                     if not self._start(repo, label, jid, spec, pool, now):
                         break  # a failure is likely to repeat for the next job of this label
                     pool[self.cname(label, jid)] = {"name": self.cname(label, jid), "status": "Running"}
@@ -648,10 +678,18 @@ def check_profiles(cfg, lxc, files):
 # ── entry point ──────────────────────────────────────────────────────────────────────────────────────────────────
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="ci-pool")
-    ap.add_argument("command", choices=["run", "once", "check-profiles"])
+    ap.add_argument("command", choices=["run", "once", "check-profiles", "check-config"])
     ap.add_argument("--config", default=DEFAULT_CONFIG)
     ap.add_argument("--file", action="append", default=[])
     args = ap.parse_args(argv)
+    if args.command == "check-config":
+        # the config only: no lxc, no network; for whoever edits it before the service reads it
+        try:
+            load_config(args.config)
+        except (PoolError, OSError, ValueError) as e:
+            print(f"ci-pool: {e}", file=sys.stderr)
+            return 2
+        return 0
     try:
         if args.command == "check-profiles" and args.file:
             return check_profiles(None, None, args.file)

@@ -695,6 +695,19 @@ esac
         self.assertFalse([c for c in calls if c.startswith(("stop", "publish"))])
         self.assertTrue(calls[0].startswith("exec -T w --env KIND=gate"), calls)
 
+    def test_the_tmpfs_line_is_written_when_the_image_has_no_fstab(self):  # 2026-10-30 build failure
+        t = self.text("ci-pool-image")
+        part = t[t.index("touch /etc/fstab\n"):t.index("systemctl enable ci-pool-runner.service")]
+        with tempfile.TemporaryDirectory() as d:
+            fstab = os.path.join(d, "fstab")  # absent, as in the ubuntu:24.04 container image
+            script = "set -euo pipefail\nTMP_SIZE=2G\n" + part.replace("/etc/fstab", fstab)
+            for _ in range(2):  # a second run keeps one tmpfs line
+                r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+            with open(fstab) as f:
+                lines = f.read().splitlines()
+        self.assertEqual(lines, ["tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,size=2G,mode=1777 0 0"])
+
     def test_the_unit_sets_nothing_that_stops_snap_lxc(self):  # F4
         unit = [l for l in self.text("ci-pool.service").splitlines() if not l.startswith("#")]
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])

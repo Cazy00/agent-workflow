@@ -126,7 +126,7 @@ rm -rf /var/lib/apt/lists/*
 PROVISION
 if [[ $rc -ne 0 ]]; then
   echo "ci-pool-image: provisioning failed (exit $rc); the last 200 lines of its log:" >&2
-  $LXC exec "$work" -- tail -n 200 /var/log/ci-pool-provision.log >&2 || true
+  $LXC exec -T "$work" -- tail -n 200 /var/log/ci-pool-provision.log >&2 || true
   exit "$rc"
 fi
 $LXC stop "$work"

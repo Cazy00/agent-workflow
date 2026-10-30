@@ -62,7 +62,9 @@ is success. The pool calls it whenever it deletes a container.
   with any of the same keys; its limits are the global ones overlaid, key by key, by its own. The config is refused (at
   start, and by `ci-pool check-config`) for another key, a value that is not a number, a pressure outside 0..100 or a
   negative memory. A reading that is missing refuses. A `max_cpu_psi_avg60` of 100 means CPU pressure does not hold that
-  label (its reading must still exist); below 100 a reading at or above the limit refuses.
+  label (its reading must still exist); below 100 a reading at or above the limit refuses. The 100 rule is for CPU only:
+  `max_mem_psi_avg60` keeps `>=` at every value. The label is also a trust boundary: only the installed gate workflow (`wf ci`,
+  from the trusted branch) runs on `wf-gate`; a job that runs code from a pull request or its base runs on `wf-build`.
 - **A refusal holds only its label.** When the admission rule refuses a start, that label starts nothing more in the pass, in
   any repository; other labels still try, against their own limits. The memory of containers started a moment ago counts for
   every label. The event `admission_refused` names the `label`, the `job` and the `why`.

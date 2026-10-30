@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { gitSource } from '../lib/sources.js';
 import { baselineHint } from '../lib/baseline-run.js';
-import { isRecordsOnlyPath, recordsOnly } from '../lib/paths.js';
+import { classifyPaths, isRecordsOnlyPath, recordsOnly } from '../lib/paths.js';
 import { loadConfig } from '../lib/records.js';
 import { decideReuse, formatMarker, parseMarker } from '../lib/ci-reuse.js';
 import { project, taskPath, cli } from './helpers/maint-0018.js';
@@ -61,7 +61,9 @@ test('wf ci carries records_only, so a project\'s CI can skip its product steps 
 
 // The NOT_PLANNING fix: baseline-run's records-only walk called a milestone or decision record code, because they are governing.
 test('baseline-run: the walk goes through a milestone-close commit, and still stops at the config', t => {
-  const p = project(t);
+  // As config.default.json has it: milestone and decision records are governing, because the owner approves them.
+  const p = project(t, { configEdit: c => ({ ...c, paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'] } }) });
+  assert.equal(classifyPaths(loadConfig(gitSource(p.repo, 'HEAD')), [`${rd}/milestones/M-0001.md`])[0].category, 'governing');
   p.write('src/a.js', 'export const a = 1;\n');
   const code = p.commit('the last code commit');
   p.edit(`${rd}/milestones/M-0001.md`, x => `${x}\naccepted\n`);

@@ -8,7 +8,7 @@ import { FINDING, list, loadAll, loadConfig } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { parseMarked, sameVendorError } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
-import { milestonePathOf, owedTasks } from './tasks-only.js';
+import { deferring, milestonePathOf, owedTasks } from './tasks-only.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
 export const parseAcceptanceEvidence = text => parseMarked(text, ACCEPTANCE_MARKER, 'acceptance evidence');
@@ -226,7 +226,7 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   // in with an agent's merge (lib/tasks-only.js), so the owner approves it here and deferred names each. The revision is found by
   // walking the trusted branch's history of the record; the check fails closed, naming why, when that cannot be done.
   const rd = config.records_dir ?? 'docs/workflow';
-  const appended = owedTasks({ config, rd, trusted: baseline, milestone, now: parseFrontMatter(candidate.read(milestonePathOf(rd, milestone)) ?? '').data });
+  const appended = !deferring(config) ? { ids: [] } : owedTasks({ config, rd, trusted: baseline, milestone, now: parseFrontMatter(candidate.read(milestonePathOf(rd, milestone)) ?? '').data });
   if (appended.error) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since its plan was last authorised, but they cannot be worked out: ${appended.error}`);
   else {
     const unlisted = appended.ids.filter(id => !lines.some(d => d.includes(id)));

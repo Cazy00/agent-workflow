@@ -22,7 +22,7 @@ Implementer checks, independent reviewer/context and dispositions, assembled int
 Walked before you were asked (`procedures/accept-release.md`): revision, environment and its first load time, languages and screen sizes; where each scenario, tried without the steps, got stuck; each step with what it showed and a screenshot; what was corrected in the steps; what the environment needed first. The trial steps below are the corrected ones.
 
 ## Decided for your acceptance
-What `wf ci` left to this acceptance (`approval.defer_to_acceptance`): acceptance tests changed; review findings accepted rather than fixed (each task's `accepted_findings`), with why; scenarios that waited on work found along the way. Accepting the milestone accepts these; say which to change instead.
+What `wf ci` left to this acceptance (`approval.defer_to_acceptance`): acceptance tests changed; review findings accepted rather than fixed (each task's `accepted_findings`), with why; scenarios that waited on work found along the way; tasks added to the milestone's `tasks:` after its plan was authorised (each with its pull request, in `deferred` of the evidence). Accepting the milestone accepts these; say which to change instead.
 
 ## Limitations
 Known issues and unavailable verification:

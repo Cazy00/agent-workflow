@@ -64,7 +64,7 @@ ${bullets([
     `Found tasks: ${found.map(t => `${t.id} (${t.status ?? '?'}), found from ${t.found_from ?? '— (no found_from)'}`).join('; ') || 'none'}`,
     `Accepted findings owed at acceptance, each in the package's *Decided for your acceptance*${evidence ? ' and the evidence\'s `deferred`' : ''}: ${[...owed].map(([f, by]) => `${f} (${[...by].sort().join(', ')}${carrier(f) ? `; carried by ${carrier(f)}` : ''})`).join(', ') || 'none'}`,
     config.approval?.defer_to_acceptance === true
-      ? `Left for the owner by approval.defer_to_acceptance: those findings, and each task pull request's \`deferred\` from \`wf ci\` (acceptance tests changed, scenarios that waited on found work)${evidence ? ', in the evidence\'s `deferred` and `tests_changed`' : ''}`
+      ? `Left for the owner by approval.defer_to_acceptance: those findings, and each task pull request's \`deferred\` from \`wf ci\` (acceptance tests changed, scenarios that waited on found work, tasks appended to the milestone's tasks:)${evidence ? ', in the evidence\'s `deferred` and `tests_changed`' : ''}`
       : 'approval.defer_to_acceptance is off: the owner merged each of those already',
   ])}
 

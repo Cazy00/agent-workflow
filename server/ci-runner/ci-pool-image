@@ -109,6 +109,10 @@ HOOK
   PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright npx --yes playwright install --with-deps chromium firefox webkit
   echo 'PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' >> /etc/environment
   chmod -R a+rX /opt/ms-playwright
+  # The job's own `playwright install` takes a lock inside this directory even when the browsers are there (mkdir
+  # __dirlock), and a project on another Playwright version adds its browsers here: the runner owns it. A container
+  # serves one job, so nothing it writes here reaches another job.
+  chown -R runner:runner /opt/ms-playwright
   systemctl stop docker docker.socket
   # the pre-pulled images stay; nothing else Docker made at build time does
   rm -rf /var/lib/docker/tmp/* 2>/dev/null || true

@@ -13,6 +13,7 @@ import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 import { ACCEPTED, prunable } from './prune.js';
+import { tasksOnlyChange } from './tasks-only.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 // The records the owner approves, whatever a project's config classifies them as (owner-merge's `merge`, MAINT-0010).
@@ -152,6 +153,14 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
+  // MAINT-0026: the milestone records this change only appends tasks to (lib/tasks-only.js, the one judge). Under
+  // approval.defer_to_acceptance the owner approves those tasks at the milestone's acceptance, so the record is neither the plan
+  // changing, a record the owner approves, nor a governing change waiting for the owner here.
+  const tasksOnlyOf = new Map();
+  if (trust?.label === 'owner-merge') for (const c of classes) {
+    const r = tasksOnlyChange({ config, rd, base: baseline, cand: candidate, path: c.path, records: candidateRecords });
+    if (r.ok) tasksOnlyOf.set(c.path, r.added);
+  }
   // MAINT-0020 P8: an accepted milestone's Done task records stay on the trusted branch until `wf prune` removes them (execute.md).
   for (const r of baselineRecords.milestones.values()) {
     const left = r.data?.id && ACCEPTED.includes(r.data.status) ? prunable(baselineRecords, r.data.id).remove.filter(t => candidate.exists(t.path)) : [];
@@ -292,7 +301,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (done.length) findings.push(`note: it completes acceptance scenarios without a test run (${done.join(', ')}); the owner approves that with the round's baseline receipt, never a derived one`);
   }
   for (const category of ['governing', 'enforcement']) {
-    const protectedPaths = classes.filter(c => c.category === category).map(c => c.path);
+    const protectedPaths = classes.filter(c => c.category === category && !tasksOnlyOf.has(c.path)).map(c => c.path);
     if (protectedPaths.length) {
       const purpose = category === 'enforcement' ? 'workflow-change' : 'governing-change';
       const receipt = trust?.claim(purpose, candidate.name);
@@ -344,15 +353,17 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // stay the owner's merge.
     const defer = config.approval?.defer_to_acceptance === true && agentMerges(checkpoint);
     const later = reason => (defer ? deferred : ownerReasons).push(reason);
-    const of = category => classes.filter(c => c.category === category).map(c => c.path);
+    const of = category => classes.filter(c => c.category === category && !tasksOnlyOf.has(c.path)).map(c => c.path);
     if (!agentMerges(checkpoint)) ownerReasons.push(`the owner merges every change (checkpoint ${checkpoint ?? 'change'})`);
     // MAINT-0018 B3: a clarification nothing waits on belongs in the milestone's acceptance pull request (execute.md); put
     // back, it leaves the review standing (lib/carry.js), and the agent merges.
     if (of('governing').length) ownerReasons.push(`it changes the plan or requirements: ${of('governing').join(', ')}${production.length ? ' (a clarification nothing waits on goes into the milestone\'s acceptance pull request: put the file back here and the review still carries over)' : ''}`);
     // The records the owner approves stay the owner's whatever an older config classifies them as: a milestone's
     // acceptance lifts the checkpoint's hold, so the agent must never merge it.
-    const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category)).map(c => c.path);
+    const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category) && !tasksOnlyOf.has(c.path)).map(c => c.path);
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
+    // MAINT-0026: a tasks-only change to a milestone record is the agent's merge; the acceptance lists the tasks (acceptance-evidence.js).
+    for (const [p, ids] of tasksOnlyOf) if (ids.length) deferred.push(`it adds tasks to ${p.split('/').pop().replace(/\.md$/, '')}'s tasks: list, for the owner to approve at the milestone's acceptance: ${ids.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
     if (acceptanceTests.length) later(`it changes acceptance tests: ${acceptanceTests.join(', ')}`);
     if (waiting.length) later(`it makes acceptance scenarios wait for tasks they did not wait for, so their mapped tests may fail until then: ${waiting.join(', ')}`);
@@ -402,7 +413,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // v2.9.0 final check A1: so is the carrier a merged carry relies on, a found task there (foundRoom's) whose found_from an
     // accepted_findings entry names: removing the Draft T-0002 that carried Done T-0001's R-0001/F1 passed alone, and freed its
     // place in found_tasks. Removing it, or changing its milestone or found_from, is the owner's; its claim, work and Done commit
-    // change neither, and a Done one is judged above.
+    // change neither, and a Done one is judged above. MAINT-0026 review S1: so it is whether or not the milestone's tasks: names it
+    // by now, as a tasks-only merge (lib/tasks-only.js) can have appended it there with the agent's merge alone.
     const dropped = [], removedDone = [], changedDone = [], carriers = [], relied = reliedOn([baselineRecords, candidateRecords]);
     for (const { path: p, data: d } of baselineRecords.tasks.values()) {
       const ms = baselineRecords.milestones.get(d?.milestone)?.data;
@@ -410,7 +422,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const now = candidateRecords.tasks.get(d.id)?.data;
       if (d.status === 'Done' && !candidate.exists(p)) removedDone.push(d.id);
       else if (d.status === 'Done' && candidate.read(p) !== baseline.read(p)) changedDone.push(d.id);
-      else if (d.status !== 'Done' && d.found_from && relied.has(d.found_from) && ms?.tasks != null && !list(ms.tasks).includes(d.id)) {
+      else if (d.status !== 'Done' && d.found_from && relied.has(d.found_from) && ms?.tasks != null) {
         const moved = !now ? ['removed'] : ['milestone', 'found_from'].filter(k => now[k] !== d[k]);
         if (moved.length) carriers.push(`${d.id} (${moved.join(', ')})`);
       }
@@ -436,7 +448,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     else if (merge === 'owner') { findings.push(`auto-merge is on, but the owner merges this pull request (${ownerReasons.join('; ')}): turn it off with gh pr merge --disable-auto`); fail = true; }
   }
   if (classes.some((c) => c.category === 'enforcement')) findings.push('enforcement paths changed: protected review required; separate workflow-change approval and trusted validator execution must be established');
-  if (classes.some((c) => c.category === 'governing')) findings.push('governing paths changed: decision approval (code-owner review) required');
+  if (classes.some((c) => c.category === 'governing' && !tasksOnlyOf.has(c.path))) findings.push('governing paths changed: decision approval (code-owner review) required');
   for (const c of classes.filter((c) => c.category === 'generated')) findings.push(`generated artifact ${c.path}: regenerate with ${c.producer ?? 'its declared producer'}`);
 
   // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).

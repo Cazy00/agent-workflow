@@ -8,6 +8,7 @@ import { FINDING, list, loadAll, loadConfig } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { parseMarked, sameVendorError } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
+import { deferring, milestonePathOf } from './tasks-only.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
 export const parseAcceptanceEvidence = text => parseMarked(text, ACCEPTANCE_MARKER, 'acceptance evidence');
@@ -59,6 +60,28 @@ export function authorisedAt(source, path) {
     if (status && status !== 'Draft') return c;
   }
   return null;
+}
+// MAINT-0026: the ids a milestone's acceptance must list as deferred, computed from the trusted branch (review B1 to B3): the
+// milestone's tasks now, less those its authorisation held. "Now" is the trusted branch's `tasks:` and the candidate's together, as
+// the accepted findings are read (MAINT-0016, I1), so the acceptance cannot hide an appended id by dropping it. An id the owner
+// approved later, in a re-plan, is listed too: the evidence may say the owner merged it. Fails closed ({ error }), naming why, when
+// the authorisation cannot be found, the history is shallow or it cannot be read.
+export function owedTasks({ config, trusted, candidate, milestone }) {
+  if (!deferring(config)) return { ids: [] };
+  const path = milestonePathOf(config.records_dir ?? 'docs/workflow', milestone);
+  const tasksOf = source => list(parseFrontMatter(source.read(path) ?? '').data?.tasks);
+  const now = [...new Set([...tasksOf(trusted?.kind === 'git' ? trusted : candidate), ...tasksOf(candidate)])];
+  if (!now.length) return { ids: [] };
+  if (trusted?.kind !== 'git') return { error: 'the trusted branch is not a Git history' };
+  try {
+    if (trusted.isShallow()) return { error: 'the clone is shallow' };
+    const authorised = authorisedAt(trusted, path);
+    if (!authorised) return { error: `the trusted branch's history does not show where ${milestone} was authorised` };
+    const held = tasksOf(trusted.atRevision(authorised));
+    return { ids: now.filter(id => !held.includes(id)), authorised };
+  } catch (e) {
+    return { error: `the trusted branch's history of ${path} cannot be read (${e.message})` };
+  }
 }
 // MAINT-0023 P6 (the owner approved it, 27 October 2026): a milestone diff larger than any reviewer model takes is reviewed in
 // parts. The base the review starts from comes at or before the trusted branch's authorisation of the milestone (above).
@@ -221,5 +244,13 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   const owed = [...new Set([records].flat().flatMap(r => [...r.tasks.values()]).map(t => t.data).filter(t => t?.milestone === milestone).flatMap(t => list(t.accepted_findings)))];
   const missing = owed.filter(id => !lines.some(d => d.includes(id)));
   if (missing.length) errors.push(`deferred must list the findings the milestone's tasks accepted rather than fixed: ${missing.join(', ')}`);
+  // MAINT-0026: under approval.defer_to_acceptance a task appended to the milestone's tasks: after its authorisation went in with an
+  // agent's merge (lib/tasks-only.js), so the owner approves it here and deferred names each.
+  const appended = owedTasks({ config, trusted: baseline, candidate, milestone });
+  if (appended.error) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since it was authorised, but they cannot be worked out: ${appended.error}`);
+  else {
+    const unlisted = appended.ids.filter(id => !lines.some(d => d.includes(id)));
+    if (unlisted.length) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since it was authorised (${appended.authorised.slice(0, 12)}), which the owner approves here: ${unlisted.join(', ')}`);
+  }
   return errors;
 }

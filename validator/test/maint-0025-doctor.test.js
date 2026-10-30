@@ -122,6 +122,11 @@ test('the template\'s shape: parallel jobs on one scope, a RAM database, one run
   assert.equal(w.jobs.database.services, undefined, 'a service container takes no command');
   for (const j of ['scope', 'lint', 'unit', 'database', 'result']) assert.match(w.jobs[j]['runs-on'], /'wf-build'/, `${j}: the fixed label`);
   assert.deepEqual(new Set(Object.values(w.jobs).map(j => j['runs-on']).filter(r => !/wf-build/.test(r))), new Set(['ubuntu-latest']), 'only the deploy, which holds secrets, uses GitHub\'s runner');
+  // The gate label is trusted: only the installed gate workflow runs on it. A job here runs code from the pull request or its base.
+  for (const [n, j] of Object.entries(w.jobs)) {
+    assert.doesNotMatch(String(j['runs-on']), /wf-gate/, `${n}: no job of the template runs on the gate`);
+    if (/wf-gate/.test(String(j['runs-on']))) assert.doesNotMatch(JSON.stringify(j.steps), /scripts\/wf/, n);
+  }
   // The deploy is never skipped by records-only or reuse: it depends on the result job, not on the scope output.
   assert.doesNotMatch(JSON.stringify(w.jobs.deploy), /needs\.scope|outputs|reuse/);
   assert.match(w.jobs.deploy.if, /github\.event_name == 'push' && needs\.result\.result == 'success'/);

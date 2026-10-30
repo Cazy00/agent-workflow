@@ -524,6 +524,170 @@ class ConfigTests(unittest.TestCase):
                 pool.load_config(p)
 
 
+class LightLaneTests(unittest.TestCase):
+    GATE_OPEN = {"max_cpu_psi_avg60": 100}
+
+    def env(self, **gate_extra):
+        e = Env(self)
+        e.cfg["labels"]["wf-gate"]["admission"] = {**self.GATE_OPEN, **gate_extra}
+        e.cfg["repos"] = ["o/r", "o/s"]
+        return e
+
+    def test_a_gate_job_starts_at_cpu_pressure_60_while_a_build_job_is_refused(self):
+        e = self.env()
+        e.host = {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": 0.0}
+        e.job("100", "wf-build")
+        e.job("201", "wf-gate")
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), ["pool-wf-gate-201"])
+
+    def test_a_build_refusal_does_not_stop_a_gate_job_queued_after_it_in_the_same_or_another_repo(self):
+        e = self.env()
+        e.host = {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": 0.0}
+        sources = {"o/r": [("100", "wf-build"), ("201", "wf-gate")], "o/s": [("300", "wf-build"), ("401", "wf-gate")]}
+        base = e.cmd
+
+        def cmd(argv):
+            if argv[0] == "src" and argv[1] == "queued":
+                jobs = [{"id": i, "labels": [l], "created_at": "2026-10-29T19:00:00Z"} for i, l in sources[argv[2]]]
+                e.commands.append(argv)
+                return json.dumps({"version": 1, "repo": argv[2], "private": True, "jobs": jobs})
+            return base(argv)
+        e.pool.run_cmd = cmd
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.pool.tick()
+        self.assertEqual(sorted(e.lxc.names("start")), ["pool-wf-gate-201", "pool-wf-gate-401"])
+        refused = [json.loads(l) for l in out.getvalue().splitlines() if '"admission_refused"' in l]
+        self.assertEqual([r["label"] for r in refused], ["wf-build"], "the label is refused once and then skipped, in every repository")
+
+    def test_a_refused_label_is_tried_again_in_the_next_pass(self):
+        e = self.env()
+        e.host = {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": 0.0}
+        e.job("100", "wf-build")
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), [])
+        e.host["cpu_psi"] = 5.0
+        e.now += 15
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), ["pool-wf-build-100"])
+
+    def test_a_gate_job_is_still_refused_on_memory_and_on_a_missing_reading(self):
+        for host in ({"mem_available_mib": 2000, "cpu_psi": 60.0, "mem_psi": 0.0},
+                     {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": 10.0},
+                     {"mem_available_mib": None, "cpu_psi": 60.0, "mem_psi": 0.0},
+                     {"mem_available_mib": 20000, "cpu_psi": None, "mem_psi": 0.0},
+                     {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": None}):
+            e = self.env()
+            e.host = host
+            e.job("201", "wf-gate")
+            e.tick()
+            self.assertEqual(e.lxc.names("start"), [], host)
+
+    def test_a_label_limit_overlays_the_global_one_key_by_key(self):
+        e = self.env(min_mem_available_mib=9000)
+        e.host = {"mem_available_mib": 8000, "cpu_psi": 60.0, "mem_psi": 0.0}
+        e.job("201", "wf-gate")
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), [], "the label's own memory floor applies")
+        e.host["mem_available_mib"] = 9500
+        e.now += 15
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), ["pool-wf-gate-201"])
+
+    def test_a_cpu_limit_of_100_admits_a_reading_of_100_and_40_with_limit_40_refuses(self):
+        host = {"mem_available_mib": 20000, "cpu_psi": 100.0, "mem_psi": 0.0}
+        self.assertEqual(pool.admission_refusal(host, {**pool.DEFAULTS["admission"], "max_cpu_psi_avg60": 100}), "")
+        self.assertEqual(pool.admission_refusal({**host, "cpu_psi": 100.0}, {**pool.DEFAULTS["admission"], "max_cpu_psi_avg60": 99.5}) != "", True)
+        host40 = {**host, "cpu_psi": 40.0}
+        self.assertNotEqual(pool.admission_refusal(host40, {**pool.DEFAULTS["admission"], "max_cpu_psi_avg60": 40}), "")
+        self.assertEqual(pool.admission_refusal({**host, "cpu_psi": 39.9}, {**pool.DEFAULTS["admission"], "max_cpu_psi_avg60": 40}), "")
+        self.assertNotEqual(pool.admission_refusal({**host, "cpu_psi": None}, {**pool.DEFAULTS["admission"], "max_cpu_psi_avg60": 100}), "")
+
+    def test_a_config_with_no_label_admission_behaves_as_before(self):
+        e = Env(self)  # the global limits alone
+        e.host = {"mem_available_mib": 20000, "cpu_psi": 60.0, "mem_psi": 0.0}
+        e.job("100", "wf-build")
+        e.job("201", "wf-gate")
+        e.tick()
+        self.assertEqual(e.lxc.names("start"), [], "both labels are held by the global CPU limit")
+        e.host["cpu_psi"] = 5.0
+        e.now += 15
+        e.tick()
+        self.assertEqual(sorted(e.lxc.names("start")), ["pool-wf-build-100", "pool-wf-gate-201"])
+        self.assertEqual(pool.label_limits(e.cfg, "wf-gate"), e.cfg["admission"])
+
+
+class AdmissionConfigTests(unittest.TestCase):
+    def write(self, admission=None, label_admission=None):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        label = {"profile": "p", "image": "i", "cap": 1, "memory": "1GiB"}
+        if label_admission is not None:
+            label["admission"] = label_admission
+        doc = {"version": 1, "repos": [], "labels": {"wf-gate": label}, "source_cmd": ["a"], "jit_cmd": ["b"]}
+        if admission is not None:
+            doc["admission"] = admission
+        p = os.path.join(d.name, "c.json")
+        with open(p, "w") as f:
+            json.dump(doc, f)
+        return p
+
+    def test_a_good_label_admission_loads_and_overlays(self):
+        cfg = pool.load_config(self.write(label_admission={"max_cpu_psi_avg60": 100, "min_mem_available_mib": 0, "max_mem_psi_avg60": 12.5}))
+        self.assertEqual(pool.label_limits(cfg, "wf-gate"), {"min_mem_available_mib": 0, "max_cpu_psi_avg60": 100, "max_mem_psi_avg60": 12.5})
+
+    def test_unknown_keys_non_numbers_and_out_of_range_values_are_refused(self):
+        for bad in ({"max_cpu": 50}, {"max_cpu_psi_avg60": "100"}, {"max_cpu_psi_avg60": True}, {"max_cpu_psi_avg60": None},
+                    {"max_cpu_psi_avg60": 100.5}, {"max_cpu_psi_avg60": -1}, {"max_mem_psi_avg60": 101},
+                    {"min_mem_available_mib": -1}, {"min_mem_available_mib": "3072"}, [1], "x"):
+            with self.assertRaises(pool.PoolError, msg=bad):
+                pool.load_config(self.write(label_admission=bad))
+            if isinstance(bad, dict):
+                with self.assertRaises(pool.PoolError, msg=bad):
+                    pool.load_config(self.write(admission=bad))
+
+    def test_check_config_exits_0_for_a_good_config_and_2_with_the_reason_for_a_bad_one(self):
+        run = lambda path: subprocess.run([sys.executable, os.path.join(HERE, "ci-pool"), "check-config", "--config", path], capture_output=True, text=True)
+        r = run(self.write(label_admission={"max_cpu_psi_avg60": 100}))
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+        r = run(self.write(label_admission={"max_cpu_psi_avg60": 101}))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("wf-gate", r.stderr)
+        self.assertIn("max_cpu_psi_avg60", r.stderr)
+        r = run(os.path.join(HERE, "no-such-file.json"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("ci-pool:", r.stderr)
+
+    def test_check_config_refuses_a_malformed_labels_block_or_cap_with_exit_2_and_no_traceback(self):
+        good = {"profile": "p", "image": "i", "cap": 1, "memory": "1GiB"}
+        cases = {
+            "labels is a list": ["x"],
+            "a label value is not a dict": {"wf-gate": "x"},
+            "cap is a string": {"wf-gate": {**good, "cap": "1"}},
+            "cap is a bool": {"wf-gate": {**good, "cap": True}},
+            "cap is negative": {"wf-gate": {**good, "cap": -1}},
+        }
+        for why, labels in cases.items():
+            with self.subTest(why):
+                d = tempfile.TemporaryDirectory()
+                self.addCleanup(d.cleanup)
+                path = os.path.join(d.name, "c.json")
+                with open(path, "w") as f:
+                    json.dump({"version": 1, "labels": labels, "source_cmd": ["a"], "jit_cmd": ["b"]}, f)
+                r = subprocess.run([sys.executable, os.path.join(HERE, "ci-pool"), "check-config", "--config", path], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertIn("ci-pool:", r.stderr)
+        r = subprocess.run([sys.executable, os.path.join(HERE, "ci-pool"), "check-config", "--config", os.path.join(HERE, "ci-pool.config.example.json")], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+
+    def test_the_example_gives_the_gate_label_no_cpu_limit(self):
+        cfg = pool.load_config(os.path.join(HERE, "ci-pool.config.example.json"))
+        self.assertEqual(pool.label_limits(cfg, "wf-gate")["max_cpu_psi_avg60"], 100)
+        self.assertEqual(pool.label_limits(cfg, "wf-build")["max_cpu_psi_avg60"], 40)
+
+
 class GithubSourceTests(unittest.TestCase):
     """ci-pool-github against a loopback stub of the GitHub API."""
 
@@ -694,6 +858,14 @@ esac
         self.assertIn("MARKER-LOG", r.stderr)
         self.assertFalse([c for c in calls if c.startswith(("stop", "publish"))])
         self.assertTrue(calls[0].startswith("exec -T w --env KIND=gate"), calls)
+
+    def test_the_runner_owns_the_playwright_browsers_directory(self):  # 2026-10-30: EACCES on __dirlock in a job
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        self.assertIn("chown -R runner:runner /opt/ms-playwright", body)
+        # after the browsers are installed there, and after the runner user exists
+        self.assertLess(body.index("playwright install --with-deps"), body.index("chown -R runner:runner /opt/ms-playwright"))
+        self.assertLess(body.index("useradd -m -s /bin/bash runner"), body.index("chown -R runner:runner /opt/ms-playwright"))
 
     def test_the_tmpfs_line_is_written_when_the_image_has_no_fstab(self):  # 2026-10-30 build failure
         t = self.text("ci-pool-image")

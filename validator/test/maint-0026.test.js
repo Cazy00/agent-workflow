@@ -247,3 +247,31 @@ test('MAINT-0026: the acceptance check fails closed, naming why, when the walk c
   h.write(milestonePath, msText({ status: 'Accepted', tasks: [] }));
   assert.deepEqual(owed(h, added, h.commit('Accept M-0001 with no tasks'), []), []);
 });
+
+// Review of the pull request (R1 to R3): the ids owed are computed from the trusted branch, not from what the agent's own diffs show.
+test('MAINT-0026 review R1: an agent-added task stays owed after a later non-plan owner edit', t => {
+  const h = history(t);
+  h.milestone({}, 'M-0001 authorised', 'T-0001');
+  h.milestone({ tasks: ['T-0001', 'T-0002'] }, 'T-0002 added (agent merge)', 'T-0002');
+  const verified = h.milestone({ status: 'Verified', tasks: ['T-0001', 'T-0002'] }, 'M-0001 verified');
+  h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001', 'T-0002'] }));
+  assert.equal(owed(h, verified, h.commit('Accept M-0001'), []).length, 1);
+});
+
+test('MAINT-0026 review R2: a rebase-merged append before its task record stays owed', t => {
+  const h = history(t);
+  h.milestone({}, 'M-0001 authorised', 'T-0001');
+  h.write(milestonePath, msText({ tasks: ['T-0001', 'T-0002'] })); h.commit('M-0001 names T-0002');
+  h.write('docs/workflow/tasks/T-0002.md', '---\nrecord: task\nid: T-0002\nmilestone: M-0001\nstatus: Draft\n---\n# T-0002\n');
+  const tip = h.commit('T-0002 record');
+  h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001', 'T-0002'] }));
+  assert.equal(owed(h, tip, h.commit('Accept M-0001'), []).length, 1);
+});
+
+test('MAINT-0026 review R3: the acceptance cannot hide an appended task by dropping it from tasks:', t => {
+  const h = history(t);
+  h.milestone({}, 'M-0001 authorised', 'T-0001');
+  const added = h.milestone({ tasks: ['T-0001', 'T-0002'] }, 'T-0002 added', 'T-0002');
+  h.write(milestonePath, msText({ status: 'Accepted', tasks: ['T-0001'] }));
+  assert.equal(owed(h, added, h.commit('Accept M-0001'), []).length, 1);
+});

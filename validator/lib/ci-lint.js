@@ -8,7 +8,8 @@ const strip = line => {
   let q = null;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
-    if (q) { if (c === q) q = null; } else if (c === '"' || c === "'") q = c;
+    // A quote opens only at the start of a scalar (YAML): the apostrophe in `echo don't # x` is plain text.
+    if (q) { if (c === q) q = null; } else if ((c === '"' || c === "'") && (i === 0 || /[\s\[{,]/.test(line[i - 1]))) q = c;
     else if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i).trimEnd();
   }
   return line.trimEnd();
@@ -86,8 +87,8 @@ const triggers = on => {
   if (Array.isArray(on)) return Object.fromEntries(on.map(x => [x, null]));
   return on && typeof on === 'object' ? on : {};
 };
-const DB = /(?:^|[\s\/])(postgres|postgis|timescaledb|pgvector|mysql|mariadb)(?=[:@\s"']|$)/i;
-const dbOf = text => DB.exec(String(text))?.[1]?.toLowerCase().replace(/^(postgis|timescaledb|pgvector)$/, 'postgres') ?? null;
+const DB = /(?:^|[\s\/])(postgres(?:ql)?|postgis|timescaledb|pgvector|mysql|mariadb)(?=[:@\s"']|$)/i;
+const dbOf = text => DB.exec(String(text))?.[1]?.toLowerCase().replace(/^(postgresql|postgis|timescaledb|pgvector)$/, 'postgres') ?? null;
 const DEPLOY = /deploy|release|publish|promote|rollout/i;
 
 export function lintWorkflow({ name, text, trustedBranch = 'main', privateRepo = null }) {

@@ -45,6 +45,15 @@ test('a database without tmpfs or fsync off', () => {
   assert.deepEqual(lint(wf('  t:\n    runs-on: x\n    services:\n      db:\n        image: mariadb:11\n    steps:\n      - run: t')), ['a database on disk']);
 });
 
+test('lint gaps: postgresql images, and an apostrophe inside an unquoted value (F9)', () => {
+  const svc = image => wf(`  t:\n    runs-on: x\n    services:\n      db:\n        image: ${image}\n    steps:\n      - run: npm test`);
+  assert.deepEqual(lint(svc('bitnami/postgresql:16')), ['a database on disk']);
+  assert.deepEqual(lint(svc('postgres:16')), ['a database on disk']);
+  // A quote opens only at the start of a scalar: the apostrophe in don't does not hide the comment that follows.
+  assert.equal(parseYaml(`a:\n  - run: echo don't # a comment\n  - run: echo 'it # stays'\n`).a[0].run, "echo don't");
+  assert.equal(parseYaml(`a:\n  - run: echo 'it # stays'\n`).a[0].run, "echo 'it # stays'");
+});
+
 test('a serial chain without data dependency; data, artifacts, results and deploys are not one', () => {
   const chain = (second, extra = '') => wf(`  a:\n    runs-on: x\n    steps:\n      - run: build${extra}\n  b:\n    needs: a\n    runs-on: x\n${second}`);
   const steps = '    steps:\n      - run: test\n';

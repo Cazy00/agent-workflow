@@ -2,6 +2,10 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## Unreleased
+
+- **`templates/github/project-ci.yml` waits for Postgres over TCP.** The "Start Postgres in RAM" step ran `pg_isready` on the container's socket. The image's first-start server listens on that socket only, then stops and starts the real server, so the check could pass before the server the tests reach over 127.0.0.1 was up. It now checks with `-h 127.0.0.1`. Upgrade: a project that copied the template changes the same line. `validator/test/template-db-ready.test.js`.
+
 ## v2.14.0
 
 Faster CI (the CI pool's design, `server/ci-runner/`; a project's measured waits). Every change is optional for an adopted project or takes effect only when it re-copies a template. The records-only skip is narrower than `planning_only` in one way and wider in another (below); it never skips a deploy.

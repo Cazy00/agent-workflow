@@ -113,7 +113,9 @@ jobs:
       - name: Start Postgres in RAM
         run: |
           docker run -d --name ci-db --tmpfs /var/lib/postgresql:rw,size=2g -e POSTGRES_PASSWORD=ci -p 127.0.0.1:5432:5432 postgres:18 -c fsync=off -c synchronous_commit=off -c full_page_writes=off
-          for _ in $(seq 60); do docker exec ci-db pg_isready -U postgres && exit 0; sleep 1; done
+          # Over TCP, as the tests connect: the image's first-start server listens on its socket only and then restarts, so a
+          # socket check can pass before the server the tests reach is up.
+          for _ in $(seq 60); do docker exec ci-db pg_isready -h 127.0.0.1 -U postgres -q && exit 0; sleep 1; done
           docker logs ci-db; exit 1
       - run: echo "replace with the tests that use the database at postgres://postgres:ci@127.0.0.1:5432/postgres"
       - name: Remove the database

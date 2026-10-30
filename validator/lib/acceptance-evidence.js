@@ -8,6 +8,7 @@ import { FINDING, list, loadAll, loadConfig } from './records.js';
 import { parseFrontMatter } from './frontmatter.js';
 import { parseMarked, sameVendorError } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
+import { milestonePathOf, owedTasks } from './tasks-only.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
 export const parseAcceptanceEvidence = text => parseMarked(text, ACCEPTANCE_MARKER, 'acceptance evidence');
@@ -221,5 +222,15 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
   const owed = [...new Set([records].flat().flatMap(r => [...r.tasks.values()]).map(t => t.data).filter(t => t?.milestone === milestone).flatMap(t => list(t.accepted_findings)))];
   const missing = owed.filter(id => !lines.some(d => d.includes(id)));
   if (missing.length) errors.push(`deferred must list the findings the milestone's tasks accepted rather than fixed: ${missing.join(', ')}`);
+  // MAINT-0026: under approval.defer_to_acceptance a task appended to the milestone's tasks: since its plan was last authorised went
+  // in with an agent's merge (lib/tasks-only.js), so the owner approves it here and deferred names each. The revision is found by
+  // walking the trusted branch's history of the record; the check fails closed, naming why, when that cannot be done.
+  const rd = config.records_dir ?? 'docs/workflow';
+  const appended = owedTasks({ config, rd, trusted: baseline, milestone, now: parseFrontMatter(candidate.read(milestonePathOf(rd, milestone)) ?? '').data });
+  if (appended.error) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since its plan was last authorised, but they cannot be worked out: ${appended.error}`);
+  else {
+    const unlisted = appended.ids.filter(id => !lines.some(d => d.includes(id)));
+    if (unlisted.length) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since its plan was last authorised (${appended.revision.slice(0, 12)}), which the owner approves here: ${unlisted.join(', ')}`);
+  }
   return errors;
 }

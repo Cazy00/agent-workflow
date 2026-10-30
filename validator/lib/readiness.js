@@ -3,6 +3,7 @@ import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js
 import { governingChanged } from './freshness.js';
 import { overlaps } from './scope.js';
 import { classifyPaths } from './paths.js';
+import { milestonePathOf, tasksOnlyChange } from './tasks-only.js';
 export { overlaps } from './scope.js';
 
 export const STAGES = ['implement', 'verify', 'integrate', 'accept', 'release'];
@@ -49,8 +50,13 @@ export function ownerAdded({ config, base, cand, milestone }) {
   if (!b || !c || ![b.path, c.path].every(p => classifyPaths(config, [p])[0]?.category === 'governing')) return [];
   return list(c.data?.tasks).filter(id => !list(b.data?.tasks).includes(id));
 }
-export function addedByOwner({ config, base, cand, milestone, id }) {
-  return ownerAdded({ config, base, cand, milestone }).includes(id) ? `${id} is added to ${milestone}'s tasks: in this change, so it is planned once the owner approves the milestone record (wf ci passes that only to the owner)` : null;
+// MAINT-0026: under approval.defer_to_acceptance a change that only appends tasks to the record (lib/tasks-only.js) is the agent's
+// merge, and the owner approves the task at the milestone's acceptance, where it is listed.
+export function addedByOwner({ config, base, cand, milestone, id, baseline = null, candidate = null }) {
+  if (!ownerAdded({ config, base, cand, milestone }).includes(id)) return null;
+  const rd = config.records_dir ?? 'docs/workflow';
+  if (baseline && candidate && tasksOnlyChange({ config, rd, base: baseline, cand: candidate, path: milestonePathOf(rd, milestone), records: cand }).ok) return `${id} is added to ${milestone}'s tasks: in this change, so it is planned; the owner approves it at ${milestone}'s acceptance, where it is listed (approval.defer_to_acceptance)`;
+  return `${id} is added to ${milestone}'s tasks: in this change, so it is planned once the owner approves the milestone record (wf ci passes that only to the owner)`;
 }
 
 export function stageOf(task) {
@@ -112,7 +118,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   const candAll = candidate === baseline ? null : loadAll(candidate, rd);
   const ownerIds = ownerAdded({ config, base, cand: candAll, milestone: t.milestone });
   const room = ['Authorised', 'Active'].includes(milestone?.status) ? foundRoom({ milestone: { ...milestone, id: t.milestone }, id: taskId, records: [base, ...(candAll ? [candAll] : [])], added: ownerIds }) : null;
-  const added = room ? addedByOwner({ config, base, cand: candAll, milestone: t.milestone, id: taskId }) : null;
+  const added = room ? addedByOwner({ config, base, cand: candAll, milestone: t.milestone, id: taskId, baseline, candidate }) : null;
   if (added) pending.push(added);
   else if (room) {
     const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;

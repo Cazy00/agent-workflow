@@ -109,7 +109,7 @@ jobs:
               try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### wf ci could not run\nIts reason is in the log.\n"); process.exit(0); }
               const fails = r.verdict === "fail" ? r.findings.filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: )/.test(f)) : [];
               const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
-              if (r.records_only) lines.push("**Records only:** a project's own CI may skip its product jobs (procedures/delivery.md).");
+              if (r.records_only) lines.push("**Records only:** a project’s own CI may skip its product jobs (procedures/delivery.md).");
               if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
               if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
               if (r.deferred?.length) lines.push("**For the owner at the milestone’s acceptance:**", ...r.deferred.map(x => `- ${x}`));

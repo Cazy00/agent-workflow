@@ -2,6 +2,14 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.15.1
+
+A patch: `templates/github/wf-ci.yml` failed on every pull request of a project that copied it at v2.14.0 or v2.15.0.
+
+- **The `wf-ci.yml` summary line no longer closes its quote.** The line v2.14.0 added for `records_only` had an ASCII apostrophe in "project's", inside the "Run the gate" step's single-quoted `node -e '…'` script. It closed the quote, and the step failed with `syntax error near unexpected token '('`, so `wf ci` failed on every pull request. The line now uses ’ (U+2019) like its neighbours.
+- Tests: `validator/test/workflow-run-syntax.test.js` replaces each `${{ … }}` in every `run:` script of `templates/github/*.yml` and `.github/workflows/*.yml` with a word and checks the script with `bash -n` and each `node -e '…'` body with `node --check` (and for an ASCII apostrophe); it skips a step whose shell is not bash or sh, and fails on the old line.
+- Upgrade: a project that copied `templates/github/wf-ci.yml` at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over `.github/workflows/wf-ci.yml` with `__TRUSTED_BRANCH__` replaced by the trusted branch, or lets `bin/wf-upgrade` refresh an unchanged copy. Otherwise only the pin moves.
+
 ## v2.15.0
 
 Found tasks are approved at the milestone's acceptance (MAINT-0026), and the CI pool gets a light lane with two small fixes beside it (the build image's Playwright directory, the template's Postgres wait). MAINT-0026 takes effect at the pin move only for a project with both `approval.defer_to_acceptance` and `acceptance_evidence: true` (`acceptance_evidence` alone, the scaffold default, changes nothing); the rest is optional for an adopted project (a host re-runs the install, a project that copied the template changes one line).

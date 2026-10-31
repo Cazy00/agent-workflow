@@ -177,5 +177,10 @@
       "A host that runs the CI pool (server/ci-runner) re-runs install-host.sh, then runs ci-pool check-config --config FILE right after, before the service restarts on the new code (load_config now also validates the global admission, labels and cap, so a config that loaded before can be refused; a refusal now holds only its label), then rebuilds its build image (ci-pool-image build wf-build) so the runner owns the Playwright directory. Optional: give wf-gate \"admission\": {\"max_cpu_psi_avg60\": 100} in the pool config (only the installed wf ci runs on wf-gate; a job that runs a pull request's code stays on wf-build); ci-pool check-config --config FILE validates the file.",
       "A project that copied templates/github/project-ci.yml changes the \"Start Postgres in RAM\" step's pg_isready to -h 127.0.0.1."
     ]
+  },
+  "v2.15.1": {
+    "notes": [
+      "A project that copied templates/github/wf-ci.yml at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over .github/workflows/wf-ci.yml with __TRUSTED_BRANCH__ replaced by the trusted branch, or lets bin/wf-upgrade refresh an unchanged copy (a customised copy: change the one summary line that says \"Records only\" so its apostrophe is ’, not '). At those versions the \"Run the gate\" step fails with a shell syntax error on every pull request. Otherwise only the pin moves."
+    ]
   }
 }

@@ -180,7 +180,7 @@
   },
   "v2.15.1": {
     "notes": [
-      "A project that copied templates/github/wf-ci.yml at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over .github/workflows/wf-ci.yml (a customised copy: change the one summary line that says \"Records only\" so its apostrophe is ’, not '). At those versions the \"Run the gate\" step fails with a shell syntax error on every pull request. Otherwise only the pin moves."
+      "A project that copied templates/github/wf-ci.yml at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over .github/workflows/wf-ci.yml with __TRUSTED_BRANCH__ replaced by the trusted branch, or lets bin/wf-upgrade refresh an unchanged copy (a customised copy: change the one summary line that says \"Records only\" so its apostrophe is ’, not '). At those versions the \"Run the gate\" step fails with a shell syntax error on every pull request. Otherwise only the pin moves."
     ]
   }
 }

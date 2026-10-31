@@ -7,8 +7,8 @@ Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/relea
 A patch: `templates/github/wf-ci.yml` failed on every pull request of a project that copied it at v2.14.0 or v2.15.0.
 
 - **The `wf-ci.yml` summary line no longer closes its quote.** The line v2.14.0 added for `records_only` had an ASCII apostrophe in "project's", inside the "Run the gate" step's single-quoted `node -e '…'` script. It closed the quote, and the step failed with `syntax error near unexpected token '('`, so `wf ci` failed on every pull request. The line now uses ’ (U+2019) like its neighbours.
-- Tests: `validator/test/workflow-run-syntax.test.js` replaces each `${{ … }}` in every `run:` script of `templates/github/*.yml` and `.github/workflows/*.yml` with a word and checks the script with `bash -n`; it fails on the old line.
-- Upgrade: a project that copied `templates/github/wf-ci.yml` at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it. Otherwise only the pin moves.
+- Tests: `validator/test/workflow-run-syntax.test.js` replaces each `${{ … }}` in every `run:` script of `templates/github/*.yml` and `.github/workflows/*.yml` with a word and checks the script with `bash -n` and each `node -e '…'` body with `node --check` (and for an ASCII apostrophe); it skips a step whose shell is not bash or sh, and fails on the old line.
+- Upgrade: a project that copied `templates/github/wf-ci.yml` at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over `.github/workflows/wf-ci.yml` with `__TRUSTED_BRANCH__` replaced by the trusted branch, or lets `bin/wf-upgrade` refresh an unchanged copy. Otherwise only the pin moves.
 
 ## v2.15.0
 

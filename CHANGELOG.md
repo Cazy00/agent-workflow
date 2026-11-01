@@ -2,6 +2,14 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.16.1
+
+A patch: a task the milestone review read, whose record was marked Done only after the review, failed the acceptance evidence and so `wf ci` (MAINT-0028, `docs/proposals/MAINT-0028-record-lags-code.md`; found at headless-lightroom M-0006's acceptance). Nothing is required to move the pin.
+
+- **A record that lags its code.** Under `review.cadence: milestone` with a fix check, a task not `Done` at the review's revision and fixing no finding also passes when its code was delivered before the review: it was past `Draft` at the review's revision; every `Done` version of its record names the same `implemented`, which is the review's revision or an ancestor of it and comes after the review's base (the first part's base with `parts`); and no production path changed between the review's and the fix check's revisions lies in its `scope` (at either revision or in the change), unless it lies in the `scope` of another task the fix check stands for (past `Draft`, not `Done` at the review's revision, naming a finding in every version), read at the fix check's revision. Readiness and this check share one scope matcher (`validator/lib/scope.js` `inTaskScope`). Otherwise the failure says which of these is missing. This assumes task pull requests merge with merge commits; a squash or rebase merge leaves `implemented` out of history and the task still fails.
+- Tests: `validator/test/maint-0028.test.js`; a replay by hand on M-0006's own history (not committed: it reads another repository) passes the task the old check failed.
+- Upgrade: only the pin moves.
+
 ## v2.16.0
 
 A fast lane per task, a full lane per milestone, owners merge only the plan and the acceptance, draft runs never fail (MAINT-0027, `docs/proposals/MAINT-0027-fast-lane.md`). Nothing is required to move the pin; the found-task rule takes effect only where `approval.defer_to_acceptance` and `acceptance_evidence: true` are both set.

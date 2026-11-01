@@ -9,6 +9,7 @@ import { parseFrontMatter } from './frontmatter.js';
 import { parseMarked, sameVendorError } from './delivery-evidence.js';
 import { mergedFrom } from './carry.js';
 import { deferring, milestonePathOf } from './tasks-only.js';
+import { inTaskScope } from './scope.js';
 
 export const ACCEPTANCE_MARKER = '<!-- agent-workflow:acceptance-evidence@1 -->';
 export const parseAcceptanceEvidence = text => parseMarked(text, ACCEPTANCE_MARKER, 'acceptance evidence');
@@ -137,14 +138,13 @@ const partsPaths = (parts, at) => parts.flatMap(p => at(p.revision).changedPaths
 // its record the fix-check rule reads, why its code is not shown delivered before the review, or null when it is: it was planned
 // (past Draft) at the review's revision; every Done version names the same `implemented`, the candidate it was delivered at; that
 // revision is the review's or an earlier one, and after the review's base, so base..revision holds it; and no production path
-// changed between the review and the fix check lies in its scope (as at the review, the fix check and the change), unless a task
-// fixing a finding has it in scope: readiness keeps a task's changed production paths inside its scope (readiness.js), so code a
+// changed between the review and the fix check lies in its scope (as at the review, the fix check and the change), unless another
+// task the fix check stands for (past Draft, not Done at the review, a finding in found_from in every version; review B1, S1)
+// has it in scope at the fix check's revision: readiness keeps a task's changed production paths inside its scope (readiness.js), so code a
 // record dates to an early commit while it landed after the review shows here. The records' truth is not checked, as above.
-const inScope = (p, scopes) => scopes.some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'));
-function deliveredBeforeReview({ r, fc, base, at, config, milestone, reviewed, checked }) {
+function deliveredBeforeReview({ r, fc, base, at, config, reviewed, fixScopes }) {
   let late = null;
   const latePaths = () => late ??= classifyPaths(config, at(fc.revision).changedPaths(r.revision)).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
-  const fixScopes = [...checked.tasks.values()].map(x => x.data).filter(d => d?.milestone === milestone && typeof d.found_from === 'string' && FINDING.test(d.found_from)).flatMap(d => list(d.scope));
   return (id, mine) => {
     const then = reviewed.get(id)?.data;
     if (!then || then.status === 'Draft') return `it was Draft or absent at the review's revision`;
@@ -157,7 +157,8 @@ function deliveredBeforeReview({ r, fc, base, at, config, milestone, reviewed, c
     if (!SHA.test(base ?? '') || at(base)?.isAncestor(rev) !== false) return `its implemented ${short} is the review's base or comes before it`;
     const scopes = [...new Set([then, ...mine].flatMap(d => list(d.scope)).filter(text))];
     if (!scopes.length) return 'it has no scope to show none of its code came after the review';
-    const its = latePaths().filter(p => inScope(p, scopes) && !inScope(p, fixScopes));
+    const excused = fixScopes(id);
+    const its = latePaths().filter(p => inTaskScope(p, scopes) && !inTaskScope(p, excused));
     return its.length ? `its scope's code changed after the review: ${its.slice(0, 5).join(', ')}${its.length > 5 ? ', …' : ''}` : null;
   };
 }
@@ -201,11 +202,17 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }
   else {
     const reviewed = loadAll(at(r.revision), rd).tasks, checked = loadAll(at(fc.revision), rd);
     const versions = [checked, records].flat().flatMap(x => [...x.tasks.values()]).map(x => x.data).filter(d => d?.id && d.milestone === milestone && d.status !== 'Draft');
-    const delivered = deliveredBeforeReview({ r, fc, base: split ? r.parts?.[0]?.base : r.base, at, config, milestone, reviewed, checked });
-    for (const id of new Set(versions.map(d => d.id))) {
+    const ids = [...new Set(versions.map(d => d.id))];
+    const fixes = id => versions.filter(d => d.id === id).every(d => typeof d.found_from === 'string' && FINDING.test(d.found_from));
+    const doneAtReview = id => reviewed.get(id)?.data?.status === 'Done';
+    // The tasks the fix check stands for, and their scopes as merged, at its revision; never the task being judged.
+    const fixers = ids.filter(id => fixes(id) && !doneAtReview(id));
+    const merged = f => { const d = checked.tasks.get(f)?.data; return d?.milestone === milestone && d.status !== 'Draft' ? list(d.scope) : []; };
+    const fixScopes = id => fixers.filter(f => f !== id).flatMap(merged).filter(text);
+    const delivered = deliveredBeforeReview({ r, fc, base: split ? r.parts?.[0]?.base : r.base, at, config, reviewed, fixScopes });
+    for (const id of ids) {
       const mine = versions.filter(d => d.id === id);
-      const fixes = mine.every(d => typeof d.found_from === 'string' && FINDING.test(d.found_from));
-      if (reviewed.get(id)?.data?.status === 'Done' || fixes) continue;
+      if (doneAtReview(id) || fixes(id)) continue;
       const why = delivered(id, mine);
       if (why) errors.push(`${id} was not Done at the milestone review's revision ${r.revision.slice(0, 12)} and fixes none of its findings (found_from): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check; nor does its record show its code was delivered before the review: ${why}`);
     }

@@ -1,7 +1,7 @@
 // Task readiness against the trusted baseline. SCHEMA.md "Readiness evaluation".
 import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js';
 import { governingChanged } from './freshness.js';
-import { overlaps } from './scope.js';
+import { inTaskScope, overlaps } from './scope.js';
 import { classifyPaths } from './paths.js';
 import { deferring, milestonePathOf, tasksOnlyChange } from './tasks-only.js';
 export { overlaps } from './scope.js';
@@ -129,7 +129,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
     if (!t.found_from) defer('without found_from', `${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
     else if (!room.within) defer('beyond its found_tasks allowance', `${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
   }
-  for (const p of changed) if (!list(t.scope).some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'))) fail(`changed production path ${p} is outside task scope`);
+  for (const p of changed) if (!inTaskScope(p, list(t.scope))) fail(`changed production path ${p} is outside task scope`);
   if (t.feature_readiness && !baseline.exists(t.feature_readiness)) fail(`feature_readiness ${t.feature_readiness} is not on the baseline`);
   if (list(t.risks).some(r => ['shared-contract', 'synchronisation', 'money', 'stock', 'security', 'irreversible-data', 'cross-component'].includes(r)) && (!t.design || !baseline.exists(t.design))) fail('a governing design is required for the recorded risk');
   for (const assumption of list(t.assumptions)) if (!list(base.profile?.data?.permitted_assumptions).includes(assumption)) fail(`assumption ${assumption} is not delegated by the profile`);

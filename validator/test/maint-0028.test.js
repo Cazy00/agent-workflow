@@ -137,3 +137,30 @@ test('MAINT-0028: with parts, the first part\'s base bounds the delivered revisi
   const qe = fixCheck(q, qq.fixed); delete qe.review.base; qe.review.parts = [{ base: q.authorised, revision: q.s2 }, { base: q.s2, revision: q.reviewed }];
   assert.match(errors(q, qq.head, qe), /its implemented [0-9a-f]{12} is the review's base or comes before it/);
 });
+
+// Deep review B1, S1: only a task the fix check stands for excuses late code in its scope, never a Draft, a task Done before the
+// review, or the task being judged.
+test('MAINT-0028: only a finding fix the fix check stands for excuses late code', t => {
+  const r = repo(t);
+  r.write(`${RD}/tasks/T-0099.md`, task('T-0099', 'Draft', 'found_from: R-0009/F2\nscope: [src/]\n'));
+  const rr = lagging(r, r.delivered, { late: 'src/b/y.js' });
+  assert.match(errors(r, rr.head, fixCheck(r, rr.fixed)), /its scope's code changed after the review: src\/b\/y\.js/, 'a Draft');
+  const q = repo(t);
+  q.write(`${RD}/tasks/T-0098.md`, task('T-0098', 'Done', 'found_from: R-0008/F1\nscope: [src/]\n')); q.reviewed = q.commit('an old finding fixed before the review');
+  const qq = lagging(q, q.delivered, { late: 'src/b/y.js' });
+  assert.match(errors(q, qq.head, fixCheck(q, qq.fixed)), /its scope's code changed after the review: src\/b\/y\.js/, 'Done before the review');
+  const s = repo(t);
+  s.write('src/c/fix.js', 'fixed\n'); s.write(`${RD}/tasks/T-0004.md`, FIX); s.write('src/b/y.js', 'late\n');
+  s.write(`${RD}/tasks/T-0002.md`, s.T2('Active', 'found_from: R-0009/F1\n')); const sfixed = s.commit('late code, T-0002 names a finding for now');
+  s.write(`${RD}/tasks/T-0002.md`, s.T2('Done', `found_from: trial\nimplemented: ${s.delivered}\n`)); s.commit('T-0002 Done');
+  assert.match(errors(s, accept(s), fixCheck(s, sfixed)), /its scope's code changed after the review: src\/b\/y\.js/, 'its own scope');
+});
+
+// Deep review N2: the task's pull request merged with a merge commit, `implemented` its branch head, reached through a second parent.
+test('MAINT-0028: implemented as a merged branch head passes', t => {
+  const r = repo(t);
+  r.git('checkout', '-q', '-b', 'T-0002b', r.s2); r.write('src/b/z.js', 'T-0002 part 2\n'); const head = r.commit('T-0002 part 2 on its branch');
+  r.git('checkout', '-q', 'main'); r.git('merge', '-q', '--no-ff', 'T-0002b', '-m', 'Merge pull request #7'); r.reviewed = r.git('rev-parse', 'HEAD');
+  const { fixed, head: end } = lagging(r, head);
+  assert.equal(errors(r, end, fixCheck(r, fixed)), '');
+});

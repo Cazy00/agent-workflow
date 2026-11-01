@@ -15,9 +15,9 @@ Under `review.cadence: milestone` with a fix check, `onlyReviewErrors` (`validat
 A task that was not `Done` at the review's revision and fixes no finding also passes when the records show its code was delivered before the review. Every one of these must hold:
 
 1. **It was planned before the review.** The task's record exists at the review's revision with a status other than `Draft`.
-2. **It names its delivered revision.** Every version of the record that the check reads (at the fix check's revision and in the change) is `Done` and names the same `implemented`, a full commit hash. `implemented` already exists: the candidate a Done task's receipts name (`closeout.js`).
-3. **The review read that revision.** `implemented` resolves in this pull request's history, is the review's revision or an ancestor of it, and is not the review's base (the first part's base with `parts`) nor an ancestor of it: the code sits inside `base..revision`. A hash that is not a commit, a commit on a side branch, a commit after the review, or one from before the milestone fails.
-4. **None of its code came after the review.** The task has a non-empty `scope`. No production or generated path changed between the review's revision and the fix check's revision lies in its scope (the union of its `scope` at the review's revision, the fix check's revision and the change), unless that path also lies in the `scope` of a task that fixes a finding (at the fix check's revision). This is what stops a record from naming an early, reviewed commit while the task's real code landed after the review: wf ci's readiness check already keeps a task's changed production paths inside its scope (`readiness.js`).
+2. **It names its delivered revision.** Among the versions of the record the check reads (at the fix check's revision and in the change), at least one is `Done`, and every `Done` one names the same `implemented`, a full commit hash. `implemented` already exists: the candidate a Done task's receipts name (`closeout.js`).
+3. **The review read that revision.** `implemented` resolves in this pull request's history, is the review's revision or an ancestor of it, and is not the review's base (the first part's base with `parts`) nor an ancestor of it: the code sits inside `base..revision`. A hash that is not a commit, a commit on a side branch, a commit after the review, or the base or one of its ancestors fails. A commit made on a branch before the authorisation but merged inside `base..revision` passes; the review's diff holds it.
+4. **None of its code came after the review.** The task has a non-empty `scope`. No production or generated path changed between the review's revision and the fix check's revision lies in its scope (the union of its `scope` at the review's revision, the fix check's revision and the change), unless that path also lies, at the fix check's revision, in the `scope` of another task the fix check stands for: past `Draft`, not `Done` at the review's revision, a finding in `found_from` in every version read (deep review B1, S1). Scope is matched by the one helper readiness uses (`scope.js` `inTaskScope`, deep review S2). This is what stops a record from naming an early, reviewed commit while the task's real code landed after the review: wf ci's readiness check already keeps a task's changed production paths inside its scope (`readiness.js`).
 
 The failure message says which of these failed. It suggests setting `implemented` only when it is missing; an `implemented` after the review is told that its code needs the review or must fix a finding, never to name an earlier commit (plan review F2).
 
@@ -38,7 +38,7 @@ B42's related detail: `fix_check.revision` must descend from the review's revisi
 ## Fixtures
 `validator/test/maint-0028.test.js`: the M-0006 shape (code reviewed, record `Done` with `implemented` after the review) passes; a task whose code came after the review fails (implemented after the review; implemented forged to an early commit while its scope's code changed after the review); a hash that is not a commit, a side-branch commit and a commit before the base fail; no `implemented`, no scope, or Draft at the review fails; a late path in a fix task's scope passes; with `parts` the first part's base bounds it. Code after the review in both its scope and a fix task's still fails on its delivered revision (plan review F4). The MAINT-0022 fixtures stand unchanged.
 
-On M-0006's own history (headless-lightroom, plan review F1): the task the old check failed was T-0062 (`found_from: trial`), Active at the review's revision 249a2c3, marked Done in 97cb026 with `implemented` a806531, an ancestor of 249a2c3 and not of the base 673f38d; its scope lies inside the finding-fixing T-0063's. Replaying the acceptance evidence's check on that history with the fix check at #108's merge, the old code reports T-0062 and the new code passes it.
+On M-0006's own history (headless-lightroom, plan review F1): the task the old check failed was T-0062 (`found_from: trial`), Active at the review's revision 249a2c3, marked Done in 97cb026 with `implemented` a806531, an ancestor of 249a2c3 and not of the base 673f38d; its scope lies inside the finding-fixing T-0063's. T-0062 passed rule 4 through that fix scope, so the case did not exercise rule 4's failure; the fixtures do. Replaying (by hand, not committed: it reads another repository) the acceptance evidence's check on that history with the fix check at #108's merge, the old code reports T-0062 and the new code passes it.
 
 ## Ships as
 A patch release, v2.16.1 (`CHANGELOG.md`: a release is the merge of the pull request that bumps `package.json`). Nothing is required to move the pin. No project's pin changes here.
@@ -49,11 +49,14 @@ Implementation and fixtures; one sentence in `SCHEMA.md` and `procedures/review.
 ## Plan review
 `codereview plan`, claude:opus, verdict pass, 1 November 2026: F1 (check M-0006's real history) done above; F2 (do not push agents to rewrite `implemented`) taken in the messages; F3 (squash merges) documented; F4 fixture added; F5 noted in the residual; F6 clause added.
 
+## Deep review
+`codereview attest --level deep`, claude:opus, receipt `rv5c8b00851a4a22a6`, verdict fail at `06256fd`: B1 (a Draft or pre-review finding task's scope excused late code) and S1 (the judged task's own scope did) fixed, fix scopes now come only from tasks the fix check stands for; S2 (a second scope matcher) fixed, one shared `inTaskScope`; N1 wording aligned here; N2 a merged-branch fixture added and the replay marked as by hand.
+
 ## Size (words; `procedures/maintenance.md`)
 | | before | after |
 |---|---|---|
 | POLICY | 6229 | 6229 |
-| SCHEMA | 11529 | 11621 |
+| SCHEMA | 11529 | 11657 |
 | QUICKSTART | 2997 | 2997 |
 | skill | 321 | 321 |
 | `execute.md` | 2622 | 2645 |

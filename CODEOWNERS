@@ -1,1 +1,2 @@
-* @Cazy00
+# No default owner is requested on a pull request: a `* @owner` line mailed a review request to the owner on every pull request, and
+# merges go through the merge route (the owner's tap or the merge tool), never through a review request. Do not add one back.

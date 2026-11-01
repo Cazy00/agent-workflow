@@ -11,18 +11,24 @@
 # before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
 # account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which
 # needs the agent's delivery evidence for a production change: it reads it from the pull request description, so
-# editing the description reruns this check on the same head: push the head, let its CI finish, then write the evidence. The run on
-# the push fails ("evidence missing") and the rerun supersedes it, which is harmless where the merge route judges each check by its
-# latest run; where a merge route still counts superseded runs, an empty commit after the evidence remains the fallback. In manual mode the owner's signed receipts are checked on the owner's machine
+# `gh pr ready` reruns this check once the evidence is in the description: the task's pull request is a draft until then (below), pushed
+# once, so there is no failing run on "evidence missing" to supersede. In manual mode the owner's signed receipts are checked on the owner's machine
 # (`wf closeout`), so here it checks the records only.
 # Under owner-merge with approval.auto_merge (MAINT-0016) the agent turns on auto-merge for the pull requests `wf ci` leaves
 # to it; this check also runs when auto-merge is turned on or off, and fails a pull request the owner merges that has it on
 # while its checks still run, so GitHub cannot merge it on the other checks alone. Turned on after every check has passed,
 # auto-merge merges at once: that rests on the agent keeping the rule (procedures/approval-evidence.md).
+#
+# Draft pull requests (MAINT-0027, procedures/delivery.md): the task's pull request is opened as a draft, and the agent pushes once, so
+# a draft run is information, not a gate. On a draft this job is named `wf ci (draft)`, runs the same gate, writes the verdict and the
+# findings to the run's summary and always exits 0. The name differs on purpose: a green draft run must never be the required `wf ci`
+# check, and GitHub refuses to merge a draft anyway. `gh pr ready` fires `ready_for_review`, which reruns this job as `wf ci`, judged and
+# failing as before; converting back to a draft fires `converted_to_draft`, whose run supersedes (cancels) the ready one. A repository
+# with no required `wf ci` check relies on its merge route to require `wf ci` by name, because the draft run's name is different.
 name: wf
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled]
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, auto_merge_enabled, auto_merge_disabled]
 permissions:
   contents: read
 concurrency:
@@ -30,7 +36,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   ci:
-    name: wf ci
+    name: ${{ github.event.pull_request.draft && 'wf ci (draft)' || 'wf ci' }}
     # GitHub's runner unless the pull request is into __TRUSTED_BRANCH__ and the repository variable WF_GATE is `on`:
     # then the project's gate runner, labelled `wf-gate` (MAINT-0017, server/ci-runner), a container with no Docker and
     # no sudo, apart from the project's tests and deploys. The label is fixed here, because any write collaborator can
@@ -89,12 +95,20 @@ jobs:
           DESCRIPTION: ${{ github.event.pull_request.body }}
           # Whether auto-merge is on (MAINT-0016): an environment value, which an older pinned validator ignores.
           WF_PR_AUTO_MERGE: ${{ github.event.pull_request.auto_merge && 'on' || 'off' }}
+          # A draft is judged and reported, never failed (MAINT-0027): the name above keeps its run from standing for the required check.
+          WF_DRAFT: ${{ github.event.pull_request.draft && 'true' || 'false' }}
         run: |
           set -euo pipefail
           wf() { node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" "$@"; }
           if [ "$WF_LABEL" = manual ]; then
             echo "manual mode: checking the records; the owner's receipts are checked by wf closeout"
-            wf records --candidate "$HEAD_SHA"
+            code=0
+            wf records --candidate "$HEAD_SHA" || code=$?
+            if [ "$WF_DRAFT" = true ]; then
+              echo "### wf ci (draft): records check exit $code. A draft run never fails; mark the pull request ready to run the gate." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            exit "$code"
           else
             # The task comes from the branch name (T-0001-…, codex/T-0001-…, claude/T-0001-…); the delivery evidence
             # from the description's marked block (procedures/execute.md *Checkpoints and task records*).
@@ -108,7 +122,9 @@ jobs:
               let r;
               try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### wf ci could not run\nIts reason is in the log.\n"); process.exit(0); }
               const fails = r.verdict === "fail" ? r.findings.filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: )/.test(f)) : [];
-              const lines = [`### wf ci: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
+              const lines = [`### wf ci${process.env.WF_DRAFT === "true" ? " (draft)" : ""}: ${r.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
+              if (process.env.WF_DRAFT === "true") lines.push("**Draft:** this run is information only and never fails. `gh pr ready` runs the gate that counts.");
+              if (r.lane) lines.push(`**Lane:** ${r.lane}.`);
               if (r.records_only) lines.push("**Records only:** a project’s own CI may skip its product jobs (procedures/delivery.md).");
               if (r.merge === "agent") lines.push("**Merge:** the agent may merge this once every required check has passed.");
               if (r.merge === "owner") { lines.push("**Merge:** the owner.", ...r.owner_reasons.map(x => `- ${x}`)); console.log(`::notice title=The owner merges this::${r.owner_reasons.join("; ").replace(/[\r\n%]/g, " ")}`); }
@@ -116,5 +132,6 @@ jobs:
               if (r.workflow) lines.push(`Judged by agent-workflow ${r.workflow.version ?? ""} (${String(r.workflow.revision ?? "").slice(0, 12)}), the base branch’s pin.`);
               fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             ' "$RUNNER_TEMP/ci.json" || true
+            [ "$WF_DRAFT" = true ] && exit 0
             exit "$code"
           fi

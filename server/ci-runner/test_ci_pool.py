@@ -368,6 +368,12 @@ class MemoryTests(unittest.TestCase):  # B41 item 14
         [d] = self.events(e, "deleted")
         self.assertEqual((d["container"], d["why"], d["memory_peak_mib"], d["oom_kill"]), (c, "runner_exited", 4500, 1))
 
+    def test_an_orphan_reports_null_memory(self):  # review of #84, F3
+        e = Env(self)
+        e.lxc.instances["pool-wf-gate-999"] = {"status": "Stopped", "created_at": e.now - 60}
+        [d] = self.events(e, "deleted")
+        self.assertEqual((d["why"], d["memory_peak_mib"], d["oom_kill"]), ("orphan", None, None))
+
     def test_a_container_never_read_reports_null(self):
         e = Env(self)
         e.job("100")
@@ -471,6 +477,17 @@ class ReaperFixTests(unittest.TestCase):
         e.api_calls = 10 ** 9
         e.tick()
         self.assertEqual(e.pool.poll_seconds(), pool.MAX_REPORTED_PAUSE)
+
+    def test_jit_answers_are_not_counted(self):  # review of #84, F4
+        e = Env(self)
+        real = e.cmd
+        e.cmd = lambda argv: (json.dumps({**json.loads(real(argv)), "api_calls": 500}) if argv[:2] == ["jit", "create"]
+                              else real(argv))
+        e.pool.run_cmd = e.cmd
+        e.job("100")
+        e.tick()
+        self.assertEqual(e.creates(), 1)
+        self.assertEqual(e.pool.last_calls, 0)
 
     def test_a_pass_whose_source_fails_counts_only_what_answered(self):
         e = Env(self, repos=["o/a"])
@@ -963,8 +980,9 @@ esac
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])
         self.assertIn("systemd-run --wait --pipe /snap/bin/lxc list", self.text("README.md"))
 
-    def _rotate(self, aliases):
-        """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases; its calls."""
+    def _rotate(self, aliases, stale="", query_fails=False):
+        """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with
+        `stale`, a -new alias left on that fingerprint by an earlier build); returns (exit code, calls)."""
         t = self.text("ci-pool-image")
         tail = t[t.index("# Publish under a new alias"):]
         listing = "\n".join(f"{a},x,CONTAINER,x" for a in aliases)
@@ -978,36 +996,60 @@ case "$*" in
   "image alias list --format csv") printf '%s\\n' "$LISTING" ;;
   "image info ci-pool-gate-prev") echo "Fingerprint: prevfp" ;;
   "image info ci-pool-gate") echo "Fingerprint: curfp" ;;
-  "image info ci-pool-gate-new") echo "Fingerprint: newfp" ;;
+  "image info ci-pool-gate-new")
+    if [[ -f "$LOG.published" ]]; then echo "Fingerprint: newfp"
+    elif [[ -n "$STALE" ]]; then echo "Fingerprint: $STALE"
+    else exit 1; fi ;;
+  publish*) touch "$LOG.published" ;;
+  query*) [[ -z "$QUERY_FAILS" ]] ;;
 esac
 ''')
             os.chmod(fake, 0o755)
             r = subprocess.run(["bash", "-c", 'set -euo pipefail\nalias=ci-pool-gate kind=gate work=w\n' + tail], capture_output=True,
-                               text=True, env={**os.environ, "LXC": fake, "LOG": log, "LISTING": listing})
-            self.assertEqual(r.returncode, 0, r.stderr)
+                               text=True, env={**os.environ, "LXC": fake, "LOG": log, "LISTING": listing, "STALE": stale,
+                                               "QUERY_FAILS": "1" if query_fails else ""})
             with open(log) as f:
-                return f.read().splitlines()
+                return r.returncode, f.read().splitlines()
 
     def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
-        calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        self.assertEqual(code, 0)
         self.assertIn("image delete prevfp", calls)
         self.assertLess(calls.index("image delete prevfp"), calls.index("image alias create ci-pool-gate-prev curfp"))
         self.assertNotIn("image delete curfp", calls)
 
     def test_the_live_alias_is_repointed_in_one_call(self):  # B41 item 21
-        calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        self.assertEqual(code, 0)
         patch = 'query -X PATCH /1.0/images/aliases/ci-pool-gate --data {"target": "newfp"}'
         self.assertIn(patch, calls)
         # the live alias is never deleted or renamed, so a launch between two calls still finds an image
-        self.assertFalse([c for c in calls if c.startswith(("image alias rename ci-pool-gate ", "image alias delete ci-pool-gate "))
-                          and c.split()[3] == "ci-pool-gate"])
+        self.assertFalse([c for c in calls if c.split()[:4] in (["image", "alias", "delete", "ci-pool-gate"],
+                                                                ["image", "alias", "rename", "ci-pool-gate"])])
         self.assertLess(calls.index("image alias create ci-pool-gate-prev curfp"), calls.index(patch))
         self.assertEqual(calls[-1], "image alias delete ci-pool-gate-new")  # dropped only after the repoint
 
     def test_a_first_image_takes_the_alias_by_rename(self):
-        calls = self._rotate([])
+        code, calls = self._rotate([])
+        self.assertEqual(code, 0)
         self.assertIn("image alias rename ci-pool-gate-new ci-pool-gate", calls)
         self.assertFalse([c for c in calls if c.startswith("query")])
+
+    def test_a_stale_new_image_is_deleted_before_the_next_publish(self):  # review of #84, F2
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], stale="stalefp")
+        self.assertEqual(code, 0)
+        self.assertLess(calls.index("image delete stalefp"), calls.index(next(c for c in calls if c.startswith("publish"))))
+        for kept in ("curfp", "prevfp"):  # a -new that names a kept image loses only its alias
+            code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], stale=kept)
+            before_publish = calls[:calls.index(next(c for c in calls if c.startswith("publish")))]
+            self.assertFalse([c for c in before_publish if c.startswith("image delete")], kept)
+            self.assertIn("image alias delete ci-pool-gate-new", before_publish)
+
+    def test_a_failed_repoint_leaves_the_live_alias_and_the_next_build_cleans_up(self):  # review of #84, F2
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], query_fails=True)
+        self.assertNotEqual(code, 0)
+        self.assertTrue(calls[-1].startswith("query -X PATCH"))  # it stops there: -new stays for the next build to find
+        self.assertNotIn("image alias rename ci-pool-gate ci-pool-gate-prev", calls)
 
 if __name__ == "__main__":
     unittest.main()

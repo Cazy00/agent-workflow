@@ -320,14 +320,18 @@ class Pool:
             raise PoolError(f"{argv[0]}: not JSON") from e
         if not isinstance(doc, dict) or doc.get("version") != CONTRACT_VERSION:
             raise PoolError(f"{argv[0]}: contract version {doc.get('version') if isinstance(doc, dict) else '?'}, want {CONTRACT_VERSION}")
+        return doc
+
+    def _count(self, doc):
+        """Add a source answer's `api_calls` to the pass (queued and running only; JIT calls are not counted)."""
         calls = doc.get("api_calls")
         if isinstance(calls, int) and not isinstance(calls, bool) and calls >= 0:
             self.pass_calls += calls
-        return doc
 
     def queued(self, repo):
         """Queued jobs of a repo that the pool may serve, oldest first; [] for a repo that does not answer as private."""
         doc = self._json(self.cfg["source_cmd"] + ["queued", repo])
+        self._count(doc)
         if doc.get("repo") != repo:
             raise PoolError(f"source answered for {doc.get('repo')!r}, asked {repo!r}")
         if doc.get("private") is not True:
@@ -338,6 +342,7 @@ class Pool:
 
     def running_runner_names(self, repo):
         doc = self._json(self.cfg["source_cmd"] + ["running", repo])
+        self._count(doc)
         return {j.get("runner_name") for j in doc.get("jobs", []) if isinstance(j, dict)}
 
     def jit_create(self, repo, label, name):
@@ -470,7 +475,7 @@ class Pool:
         if entry is not None:
             entry["status"] = "finished"
             entry["finished"] = self.clock()
-        mem = {k: entry.get(k) for k in ("memory_peak_mib", "oom_kill")} if entry is not None else {}
+        mem = {k: entry.get(k) if entry is not None else None for k in ("memory_peak_mib", "oom_kill")}
         log("deleted", container=name, job=jid, why=why, **mem)
 
     def count(self, pool, label):

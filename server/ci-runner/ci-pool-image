@@ -137,11 +137,21 @@ if [[ $rc -ne 0 ]]; then
 fi
 $LXC stop "$work"
 # Publish under a new alias first, then rotate: a build that fails leaves the current image and its -prev as they were.
+# A -new left by a build that failed after its publish names an image nothing else keeps: delete that image, not
+# only its alias, unless it is the current or the -prev one (published images do not expire).
+stale_fp="$($LXC image info "$alias-new" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || stale_fp=""
+if [[ -n "$stale_fp" ]]; then
+  keep_cur="$($LXC image info "$alias" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || keep_cur=""
+  keep_prev="$($LXC image info "$alias-prev" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || keep_prev=""
+  if [[ "$stale_fp" != "$keep_cur" && "$stale_fp" != "$keep_prev" ]]; then
+    $LXC image delete "$stale_fp" || echo "ci-pool-image: could not delete the stale image $stale_fp; delete it by hand." >&2
+  fi
+fi
 $LXC image alias delete "$alias-new" >/dev/null 2>&1 || true
 $LXC publish "$work" --alias "$alias-new" "description=ci-pool $kind $(date -u +%F)"
-new_fp="$($LXC image info "$alias-new" | awk '/^Fingerprint:/ {print $2}')"
+new_fp="$($LXC image info "$alias-new" | awk '/^Fingerprint:/ {print $2}')" || new_fp=""
 if [[ -z "$new_fp" ]]; then
-  echo "ci-pool-image: no fingerprint for $alias-new; the current image is unchanged." >&2
+  echo "ci-pool-image: no fingerprint for $alias-new; the current image is unchanged (the next build deletes $alias-new)." >&2
   exit 1
 fi
 if $LXC image alias list --format csv | cut -d, -f1 | grep -qx "$alias"; then

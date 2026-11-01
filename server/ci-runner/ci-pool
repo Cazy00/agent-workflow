@@ -262,6 +262,27 @@ def read_host():
     return {"mem_available_mib": mem, "cpu_psi": psi("cpu"), "mem_psi": psi("memory")}
 
 
+def read_memory(name, root="/sys/fs/cgroup"):
+    """A running container's cgroup memory.peak (MiB, rounded up) and memory.events oom_kill; None for what is unreadable
+    (a stopped container has no cgroup). LXD puts each instance in lxc.payload.<name> at the cgroup root."""
+    base = os.path.join(root, f"lxc.payload.{name}")
+    peak = oom = None
+    try:
+        with open(os.path.join(base, "memory.peak")) as f:
+            peak = -(-int(f.read().strip()) // (1024 * 1024))
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(os.path.join(base, "memory.events")) as f:
+            for line in f:
+                k, _, v = line.partition(" ")
+                if k == "oom_kill":
+                    oom = int(v)
+    except (OSError, ValueError):
+        pass
+    return {"memory_peak_mib": peak, "oom_kill": oom}
+
+
 def admission_refusal(host, limits):
     """Why a container may not start now, or '' when it may. A reading that is missing refuses. A CPU limit of 100 or more
     means CPU pressure does not hold the label (avg60 never exceeds 100), though its reading must still exist."""
@@ -276,8 +297,8 @@ def admission_refusal(host, limits):
 
 # ── the pool ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class Pool:
-    def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time):
-        self.cfg, self.lxc, self.state, self.host, self.clock = cfg, lxc, state, host, clock
+    def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time, memory=read_memory):
+        self.cfg, self.lxc, self.state, self.host, self.clock, self.memory = cfg, lxc, state, host, clock, memory
         self.run_cmd = run_cmd or self._run_cmd
         self.pass_calls = 0   # API calls the source reported for the pass under way (ci-pool.contract.md, `api_calls`)
         self.last_calls = 0   # ... and for the last whole pass; the poll pause is stretched to keep it within the budget
@@ -401,6 +422,7 @@ class Pool:
                 if inst["status"] == "Stopped" or (inst["created_at"] and now - inst["created_at"] > cfg["hard_timeout_seconds"]):
                     self._delete(name, None, None, "orphan")
                 continue
+            self.sample_memory(name, e)
             why = None
             if inst["status"] == "Stopped":
                 why = "runner_exited"  # also a launch that a crash left unstarted
@@ -421,6 +443,15 @@ class Pool:
                 e["status"], e["finished"] = "finished", now
                 log("entry_closed", job=jid, container=e["container"], why="no container")
 
+    def sample_memory(self, name, entry):
+        """Keep the highest memory.peak and oom_kill read so far in the entry: a container that stopped has no cgroup left,
+        so its deleted event reports the last pass's reading (a peak in the job's last pause can be missed)."""
+        got = self.memory(name)
+        for k in ("memory_peak_mib", "oom_kill"):
+            v = got.get(k)
+            if isinstance(v, int) and (entry.get(k) is None or v > entry[k]):
+                entry[k] = v
+
     def _delete(self, name, entry, jid, why):
         if entry is not None:
             removed = self.jit_remove(entry["repo"], entry["runner_id"])
@@ -429,6 +460,8 @@ class Pool:
                 entry["assigned"] = True
                 log("delete_skipped", container=name, job=jid, why="runner could not be unregistered")
                 return
+        if entry is not None:
+            self.sample_memory(name, entry)  # a container still running (timeouts) gives its final reading here
         try:
             self.lxc.delete(name)
         except PoolError as e:
@@ -437,7 +470,8 @@ class Pool:
         if entry is not None:
             entry["status"] = "finished"
             entry["finished"] = self.clock()
-        log("deleted", container=name, job=jid, why=why)
+        mem = {k: entry.get(k) for k in ("memory_peak_mib", "oom_kill")} if entry is not None else {}
+        log("deleted", container=name, job=jid, why=why, **mem)
 
     def count(self, pool, label):
         """Job containers of a label that exist (running, or stopped and not yet reaped); the spare never counts."""

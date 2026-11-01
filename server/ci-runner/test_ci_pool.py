@@ -93,8 +93,10 @@ class Env:
         self.queued, self.running, self.private, self.source_fails = [], set(), True, False
         self.api_calls = None  # what each source answer reports as `api_calls`; None leaves the field out
         self.commands, self.removed, self.remove_fails = [], [], False
+        self.mem = {}  # container -> what read_memory would answer for it
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
-                              host=lambda: self.host, clock=lambda: self.now)
+                              host=lambda: self.host, clock=lambda: self.now,
+                              memory=lambda n: self.mem.get(n, {"memory_peak_mib": None, "oom_kill": None}))
 
     def cmd(self, argv):
         self.commands.append(argv)
@@ -341,6 +343,50 @@ class ReaperTests(unittest.TestCase):
         e.lxc.instances["not-a-pool-box"] = {"status": "Stopped", "created_at": 1}
         e.tick()
         self.assertEqual(e.lxc.names("delete"), ["pool-wf-gate-999"])
+
+
+class MemoryTests(unittest.TestCase):  # B41 item 14
+    def events(self, e, name):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.pool.tick()
+        return [d for d in map(json.loads, out.getvalue().splitlines()) if d.get("event") == name]
+
+    def test_the_deleted_event_carries_the_highest_peak_and_oom_kill_seen(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        c = "pool-wf-build-100"
+        e.running = {e.pool.state.jobs["100"]["runner_name"]}
+        e.queued = []
+        e.mem[c] = {"memory_peak_mib": 3000, "oom_kill": 0}
+        e.tick()
+        e.mem[c] = {"memory_peak_mib": 4500, "oom_kill": 1}
+        e.tick()
+        e.lxc.instances[c]["status"] = "Stopped"
+        del e.mem[c]  # a stopped container has no cgroup left
+        [d] = self.events(e, "deleted")
+        self.assertEqual((d["container"], d["why"], d["memory_peak_mib"], d["oom_kill"]), (c, "runner_exited", 4500, 1))
+
+    def test_a_container_never_read_reports_null(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        e.lxc.instances["pool-wf-build-100"]["status"] = "Stopped"
+        [d] = self.events(e, "deleted")
+        self.assertIsNone(d["memory_peak_mib"])
+        self.assertIsNone(d["oom_kill"])
+
+    def test_read_memory_reads_the_containers_cgroup(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = os.path.join(d, "lxc.payload.pool-wf-build-1")
+            os.mkdir(base)
+            with open(os.path.join(base, "memory.peak"), "w") as f:
+                f.write("%d\n" % (4 * 1024 ** 3 + 1))
+            with open(os.path.join(base, "memory.events"), "w") as f:
+                f.write("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\noom_group_kill 0\n")
+            self.assertEqual(pool.read_memory("pool-wf-build-1", root=d), {"memory_peak_mib": 4097, "oom_kill": 1})
+            self.assertEqual(pool.read_memory("gone", root=d), {"memory_peak_mib": None, "oom_kill": None})
 
 
 class ReaperFixTests(unittest.TestCase):

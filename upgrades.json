@@ -202,5 +202,10 @@
     "notes": [
       "Nothing is required: only the pin moves. Under review.cadence milestone, a fix check whose revision does not descend from the milestone review's now passes when that revision is not the review's or an earlier one, the review's revision is in the pull request's history, its production code equals the checked head's and the review's line changed no code after the two forked; wf ci notes the rule (MAINT-0029)."
     ]
+  },
+  "v2.16.3": {
+    "notes": [
+      "Nothing is required: only the pin moves. On a host that runs the CI pool with server/ci-runner/ci-pool-github, its queue source now also reads runs in the pending state (a run held by a concurrency group stays pending while its job is queued); the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
+    ]
   }
 }

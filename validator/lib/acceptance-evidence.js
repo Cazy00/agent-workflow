@@ -170,7 +170,24 @@ function deliveredBeforeReview({ r, fc, base, at, config, reviewed, fixScopes })
 // covers the code after the review; every task not Done at the review's revision must fix one of its findings, so the fix check
 // never stands in for the review (B1). No round three: code after the fix check fails covers, as code after an uncovered review does.
 // MAINT-0023 P6: `parts` may stand for `base`: the deep paths are read over the union of the parts, and the fix check follows the last.
-function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }) {
+// MAINT-0029 (B44): a fix check run on a head that does not descend from the review's revision, as at M-0006, where the fixes were
+// branched before a records-only review revision. Returns null when it stands for the code being accepted: it is not the review's
+// revision or an earlier one, the review's revision is in this pull request's history, and no production or generated path (the
+// classes MAINT-0028 reads for code after the review) differs between its tree and the checked head's, so records alone differ.
+// Otherwise why not, or '' when either revision is unknown or they are the same. covers() still judges the fix check's revision
+// after this: in this history, and no code after it. The checks after this one read tree diffs, which need no ancestry.
+function sameCodeAsHead({ r, fc, at, config, candidate }) {
+  const f = at(fc.revision), rev = at(r.revision);
+  if (!f || !rev || fc.revision === r.revision) return '';
+  if (rev.isAncestor(fc.revision)) return `its revision ${fc.revision.slice(0, 12)} comes before the review's`;
+  if (r.revision !== candidate.name && !candidate.isAncestor(r.revision)) return `the review's revision ${r.revision.slice(0, 12)} is not in this pull request's history`;
+  let paths;
+  try { paths = candidate.changedPaths(fc.revision); } catch { return `its revision ${fc.revision.slice(0, 12)} cannot be compared with the checked head`; }
+  const code = classifyPaths(config, paths).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
+  return code.length ? `its production code differs from the checked head's: ${code.slice(0, 5).join(', ')}${code.length > 5 ? ', …' : ''}` : null;
+}
+
+function onlyReviewErrors({ r, milestone, config, candidate, baseline, records, notes }) {
   const errors = [];
   const rd = config.records_dir ?? 'docs/workflow';
   const at = rev => { try { return SHA.test(rev ?? '') ? candidate.atRevision(rev) : null; } catch { return null; } };
@@ -198,7 +215,10 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }
   if (fc === undefined) return [...errors, ...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline)];
   if (!isObject(fc) || !['reviewer', 'model'].every(k => text(fc[k])) || !https(fc.report)) errors.push('the milestone review\'s fix check needs its reviewer, model and an https report');
   if (!isObject(fc)) return errors;
-  if (!at(fc.revision) || fc.revision === r.revision || !at(r.revision) || !at(fc.revision).isAncestor(r.revision)) errors.push('the milestone review\'s fix check must come after the review\'s revision: one fix check of the fixes to its findings');
+  const descends = !!at(fc.revision) && fc.revision !== r.revision && !!at(r.revision) && at(fc.revision).isAncestor(r.revision);
+  const why = descends ? null : sameCodeAsHead({ r, fc, at, config, candidate });
+  if (why === null && !descends) notes?.push(`the milestone review's fix check revision ${fc.revision.slice(0, 12)} does not descend from the review's revision ${r.revision.slice(0, 12)}; it passes because its production code equals the checked head's (MAINT-0029)`);
+  if (why !== null) errors.push(`the milestone review's fix check must come after the review's revision: one fix check of the fixes to its findings${why ? `; a fix check revision that does not descend from it passes only when its production code equals the checked head's (MAINT-0029), and ${why}` : ''}`);
   else {
     const reviewed = loadAll(at(r.revision), rd).tasks, checked = loadAll(at(fc.revision), rd);
     const versions = [checked, records].flat().flatMap(x => [...x.tasks.values()]).map(x => x.data).filter(d => d?.id && d.milestone === milestone && d.status !== 'Draft');
@@ -221,7 +241,7 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }
   return [...errors, ...covers(config, candidate, fc.revision, 'the milestone review\'s fix check revision', baseline)];
 }
 
-export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null }) {
+export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null, notes = null }) {
   if (!isObject(e)) return ['acceptance evidence is missing'];
   const errors = [];
   for (const k of Object.keys(e)) if (!KEYS.includes(k)) errors.push(`acceptance evidence has an unknown field ${k}`);
@@ -243,7 +263,7 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     if (!https(r.report)) errors.push('the milestone review needs an https reference to its report');
     // MAINT-0022: the reviewer's vendor, as in the delivery evidence (delivery-evidence.js sameVendorError).
     errors.push(...vendorErrors(r, config, 'the milestone review', 'review.fresh_session'));
-    if (config.review?.cadence === 'milestone') errors.push(...onlyReviewErrors({ r, milestone, config, candidate, baseline, records }));
+    if (config.review?.cadence === 'milestone') errors.push(...onlyReviewErrors({ r, milestone, config, candidate, baseline, records, notes }));
     else errors.push(...covers(config, candidate, r.revision, 'the milestone review\'s revision', baseline));
   }
   const w = e.walkthrough;

@@ -18,7 +18,13 @@ Under `review.cadence: milestone`, `onlyReviewErrors` (`validator/lib/acceptance
 
 When rule 1–3 passes it, `wf ci` prints a note naming the rule: `note: acceptance evidence: the milestone review's fix check revision F does not descend from the review's revision R; it passes because its production code equals the checked head's (MAINT-0029)`. `acceptanceEvidenceErrors` takes an optional `notes` array for this; its return value stays a list of errors. When neither rule holds, the error names both.
 
-Everything downstream keeps reading F: the deep paths (base..F), MAINT-0028's late paths (R..F) and the records at F. These are tree diffs (`git diff-tree A B`), so they do not need F to descend from R; with F's production code equal to the candidate's, which descends from R, R..F's production paths are R..candidate's.
+Everything downstream keeps reading F: the deep paths (base..F), MAINT-0028's late paths (R..F) and the records at F. The diffs are tree diffs (`git diff-tree A B`), so they do not need F to descend from R; with F's production code equal to the candidate's, which descends from R, R..F's production paths are R..candidate's. The records (plan review F1): which tasks were `Done` at the review is read at R itself, never at F; the task versions judged are F's together with the baseline's and the change's records, so a record only R's line holds is still read; the scopes of the tasks the fix check stands for are read at F, the head the fix check read, which is where its fix tasks' records live. The M-0006 test puts a task's `Done` on R's records commit only, so F holds it as `Active`.
+
+**Order** (plan review F2). Ancestry was always a proxy: descending from R proves F's commit was made after R's, not that the fix check ran after the review. What ties the fix check to the review is outside the commit graph and unchanged: the fix check's receipt is taken `--of` the review's receipt, and MAINT-0028's rule makes every task not `Done` at R cite one of the review's findings (`found_from`) or show its code was delivered before the review. Rule 1 refuses only what the graph can prove wrong.
+
+**Rule 3 and `covers()`** (plan review F3). `covers()` is a tree comparison too (`candidate.changedPaths(F)`), in a broader class, so in this history it also refuses what rule 3 refuses. Rule 3 stays as the rule's own statement, in MAINT-0028's production classes, so the rule does not depend on how `covers()` is written and its failure says which rule failed; a difference only `covers()` reads (a test, an acceptance test) fails there with its own message, and the note is printed only when `covers()` of F passes too.
+
+Callers (plan review F6): `wf ci` (`validator/lib/ci.js`) is the only caller and passes `notes`.
 
 ## What this does not weaken
 - Any code difference between F and the head still fails (rule 3, then `covers()`), so no code reaches the head that the fix check did not read.
@@ -26,9 +32,9 @@ Everything downstream keeps reading F: the deep paths (base..F), MAINT-0028's la
 - No round three; the fix check still stands only for fixes of findings (MAINT-0028 unchanged).
 
 ## Tests (`validator/test/maint-0029.test.js`, the MAINT-0028 fixture style)
-- The M-0006 shape: fixes branched before R, a records commit at R, H merged with R's line into the head; the evidence names H: passes, and the note names the rule.
-- The same with one changed code line between H and the head (in the merge): fails.
-- The old descending case still passes, with no note; a fix check that is an ancestor of R still fails.
+- The M-0006 shape: fixes branched before R, R a records-only commit (a task marked `Done` there), H merged with R's line into the head; the evidence names H: passes, and the note names the rule. Naming the merge commit still passes by the old rule, with no note.
+- The same with one changed code line in the merge: fails, naming the path; a generated-only difference fails the same way; a test-only difference fails in `covers()`, with no note.
+- The old descending case still passes, with no note; F an ancestor of R, F equal to R, and R outside the pull request's history still fail (plan review F4, F5).
 
 ## Release
 A patch, v2.16.2 (a false block lifted, nothing to do to move the pin), as v2.16.1 was: `CHANGELOG.md`, `package.json`, `upgrades.json`, SCHEMA's fix-check sentence. No project's pin changes.

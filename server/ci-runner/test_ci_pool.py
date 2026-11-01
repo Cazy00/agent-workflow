@@ -829,7 +829,8 @@ class GithubSourceTests(unittest.TestCase):
                     return self.reply({"jobs": [{"id": 13, "status": "in_progress", "runner_name": "ci-pool-wf-gate-1"},
                                                 {"id": 14, "status": "queued", "labels": ["wf-build"], "created_at": "t2"}]})
                 if "/runs/8/jobs" in self.path:
-                    return self.reply({"jobs": [{"id": 17, "status": "queued", "labels": ["wf-gate"], "created_at": "t5"}]})
+                    return self.reply({"jobs": [{"id": 17, "status": "queued", "labels": ["wf-gate"], "created_at": "t5"},
+                                                {"id": 18, "status": "pending", "labels": ["wf-gate"]}]})
                 if "/runs/7/jobs" in self.path:
                     return self.reply({"jobs": [{"id": 15, "status": "queued", "labels": ["wf-gate"], "created_at": "t4"},
                                                 {"id": 16, "status": "waiting", "labels": ["wf-gate"]}]})
@@ -882,7 +883,9 @@ class GithubSourceTests(unittest.TestCase):
 
     def test_queued_includes_a_queued_job_of_a_pending_run(self):  # B41 item 25
         r = self.run_cli("source", "queued", "o/r")
-        self.assertIn("17", [j["id"] for j in json.loads(r.stdout)["jobs"]])
+        ids = [j["id"] for j in json.loads(r.stdout)["jobs"]]
+        self.assertIn("17", ids)
+        self.assertNotIn("18", ids, "a job that is itself pending is not queued")
 
     def test_the_listings_are_paged(self):  # F1
         r = self.run_cli("source", "queued", "o/p")

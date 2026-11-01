@@ -39,7 +39,7 @@ const EVIDENCE_KEYS = ['schema', 'candidate', 'assurance', 'tasks', 'verificatio
 // agent accepted rather than fixed needs a stated resolution, and ci.js leaves that candidate's merge to the owner.
 // MAINT-0021: reviewOptional, for a test-only change (ci.js), lets the review be left out or name level none. MAINT-0022: and for
 // a task under review.cadence milestone; sameVendor is review.same_vendor (sameVendorError).
-export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, carried = {}, reviewOptional = false, sameVendor = 'never' }) {
+export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChecks, enforcedChecks = false, skippedChecks = false, carried = {}, reviewOptional = false, sameVendor = 'never' }) {
   const errors = [];
   if (!isObject(evidence)) return ['delivery evidence is missing'];
   for (const k of Object.keys(evidence)) if (!EVIDENCE_KEYS.includes(k)) errors.push(`delivery evidence has an unknown field ${k}`);
@@ -59,9 +59,12 @@ export function evidenceErrors({ evidence, revision, taskIds, owner, requiredChe
     if (new Set(s.checks.map(c => c?.name)).size !== s.checks.length) errors.push(`${stage} contains duplicate check names`);
     // MAINT-0016: under auto-merge GitHub requires the profile's checks before any merge, so a required check may be
     // `enforced` rather than waited for; what the agent ran itself is listed too, and at least one of those passed.
-    const counts = c => c?.result === 'passed' || (enforcedChecks && c?.result === 'enforced' && requiredChecks.includes(c?.name));
+    // MAINT-0027: a required check a project's CI skipped (its slow job on the fast lane) counts when `skippedChecks` says the lane `wf ci`
+    // recomputed from the baseline and the candidate is fast; the evidence's own word never does.
+    const counts = c => c?.result === 'passed' || (enforcedChecks && c?.result === 'enforced' && requiredChecks.includes(c?.name)) || (skippedChecks && c?.result === 'skipped' && requiredChecks.includes(c?.name));
     for (const c of s.checks) {
-      if (isObject(c) && c.result === 'enforced' && !enforcedChecks) errors.push(`${stage} check ${JSON.stringify(c.name)} is "enforced", which only a project with approval.auto_merge may use`);
+      if (isObject(c) && c.result === 'skipped' && !skippedChecks) errors.push(`${stage} check ${JSON.stringify(c.name)} is "skipped", which counts only on the fast lane (this change is not one: its lane is records, full or unreadable)`);
+      else if (isObject(c) && c.result === 'enforced' && !enforcedChecks) errors.push(`${stage} check ${JSON.stringify(c.name)} is "enforced", which only a project with approval.auto_merge may use`);
       else if (!isObject(c) || typeof c.name !== 'string' || !c.name.trim() || !counts(c) || !reference(c.reference)) errors.push(`${stage} check ${JSON.stringify(c?.name)} did not pass or has no https reference`);
     }
     for (const name of requiredChecks) if (!s.checks.some(c => c?.name === name && counts(c))) errors.push(`${stage}: required check ${name} did not pass`);

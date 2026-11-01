@@ -146,7 +146,7 @@ test('a theme dresses the page in the client\'s design system, and Arabic turns 
     assert.match(html, /<title>بُن الكيف: سير العمل<\/title>/);
     assert.match(html, /<h1>نعمل الآن على: <bdi>Online ordering<\/bdi>\.<\/h1>/, 'English record text keeps its direction in Arabic');
     assert.match(html, /<h3><bdi>Online ordering<\/bdi><\/h3>/);
-    assert.match(html, /آخر تحديث: \d{1,2} أكتوبر 2026\./, 'an Arabic date with Western digits');
+    assert.match(html, /آخر تحديث: \d{1,2} [\u0621-\u064A]+ \d{4}\./, 'an Arabic date with Western digits (the month is today\'s, so any Arabic month name)');
     assert.match(html, /المراحل المسلّمة: 1 من 3\./);
     assert.match(html, /الأجزاء المنجزة: 2 من 4، والمتوقفة: 1/);
     assert.match(html, /--brand: #174A7C;/); assert.match(html, /--page: #FBF8F4;/); assert.match(html, /--radius: 14px;/);

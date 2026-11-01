@@ -2,6 +2,21 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.16.0
+
+A fast lane per task, a full lane per milestone, owners merge only the plan and the acceptance, draft runs never fail (MAINT-0027, `docs/proposals/MAINT-0027-fast-lane.md`). Nothing is required to move the pin; the found-task rule takes effect only where `approval.defer_to_acceptance` and `acceptance_evidence: true` are both set.
+
+- **`wf precheck`** runs `checks.fast` (a list of shell commands in `docs/workflow/config.json`), or `checks.full` with `--full`, in the repository root, one command at a time, printing each command and its seconds and stopping at the first failure with its exit code. A missing key says what to add and exits 2. `wf doctor` warns, never fails, when `checks.fast` is missing. `loadConfig` rejects a `checks` that is not lists of shell command strings under `fast` and `full`.
+- **Lanes.** `wf paths --json` and `wf ci` report `lane`, and `wf lane --baseline B --candidate C` prints it: `full` when the candidate closes a milestone (a status moves to Verified, Accepted or Released versus the baseline), changes an enforcement path or changes `checks`; else `records` when `records_only`; else `fast`. An older pin leaves the field out, and the template reads that as `full`.
+- **A skipped required check counts only on the fast lane.** Delivery evidence may report a required check `skipped` only when `wf ci` recomputes `fast`; the evidence cannot name its own lane. On any other lane `required check X did not pass` stays.
+- **Found tasks are the acceptance's** (both keys set). A found task without `found_from`, or beyond `found_tasks`, passes readiness; `wf ci` adds a `deferred` line and the acceptance evidence lists it as it lists MAINT-0026's tasks. Scope and acceptance IDs outside the milestone still fail. The plan, the acceptance, the checkpoint, governing and enforcement paths, the milestone hold, uncarried blocking findings and Done-record changes stay the owner's merge. Without both keys every behaviour is unchanged.
+- **Procedures.** `execute.md` and `delivery.md`: `wf precheck` before the first push, a draft pull request, one push per task, the delivery evidence, then `gh pr ready` (which reruns `wf ci`) and the wait for that run, replacing push, fail on missing evidence, edit the description.
+- **`templates/github/wf-ci.yml`** also runs on `ready_for_review` and `converted_to_draft`; a draft's job is named `wf ci (draft)`, runs the same gate, writes the verdict to the step summary and exits 0. A green draft run is never the required `wf ci`, and GitHub refuses to merge a draft. A repository with no required `wf ci` check relies on its merge route to require `wf ci` by name.
+- **`templates/github/project-ci.yml`**: `scope` outputs `lane`; an `acceptance` job runs only on the full lane (a comment shows mapping its paths); skipped jobs still count as passed in `result`; no schedule.
+- **`CODEOWNERS`** at the root requests no default owner, so a pull request no longer mails the owner a review request.
+- Tests: `validator/test/maint-0027.test.js`.
+- Upgrade: set `checks.fast` (and `checks.full`) in `docs/workflow/config.json`; open task pull requests as drafts; re-copy `templates/github/wf-ci.yml` over `.github/workflows/wf-ci.yml` with `__TRUSTED_BRANCH__` replaced by the trusted branch, or let `bin/wf-upgrade` refresh an unchanged copy; a project that copied `project-ci.yml` adds the `lane` output and a full-lane job if it wants them; remove a default `* @owner` line from its `CODEOWNERS` if it wants no review requests. A project with a required check named `wf ci` needs no ruleset change.
+
 ## v2.15.1
 
 A patch: `templates/github/wf-ci.yml` failed on every pull request of a project that copied it at v2.14.0 or v2.15.0.

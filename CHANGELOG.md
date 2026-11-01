@@ -2,6 +2,14 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.16.2
+
+A patch: under `review.cadence: milestone`, a fix check run on a head that did not descend from the milestone review's revision failed the acceptance evidence, and had to be named through a later merge commit with the same code (MAINT-0029, `docs/proposals/MAINT-0029-fix-check-same-code.md`; backlog B44, found at headless-lightroom M-0006's acceptance). Nothing is required to move the pin.
+
+- **A fix check on a head with the reviewed code.** `review.fix_check.revision` passes as before when it descends from the review's revision. It also passes when it does not, if it is not the review's revision or an ancestor of it, the review's revision is the checked head or an ancestor of it, and no production or generated path (the classes MAINT-0028 reads) differs between its tree and the checked head's: records alone may differ. `covers()` still applies, so the revision is in the pull request's history and no code follows it. `wf ci` then prints `note: acceptance evidence: … it passes because its production code equals the checked head's (MAINT-0029)`; otherwise the failure names which of these is missing. `acceptanceEvidenceErrors` takes an optional `notes` list for that note.
+- Tests: `validator/test/maint-0029.test.js`.
+- Upgrade: only the pin moves.
+
 ## v2.16.1
 
 A patch: a task the milestone review read, whose record was marked Done only after the review, failed the acceptance evidence and so `wf ci` (MAINT-0028, `docs/proposals/MAINT-0028-record-lags-code.md`; found at headless-lightroom M-0006's acceptance). Nothing is required to move the pin.

@@ -217,7 +217,6 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records, 
   if (!isObject(fc)) return errors;
   const descends = !!at(fc.revision) && fc.revision !== r.revision && !!at(r.revision) && at(fc.revision).isAncestor(r.revision);
   const why = descends ? null : sameCodeAsHead({ r, fc, at, config, candidate });
-  if (why === null && !descends) notes?.push(`the milestone review's fix check revision ${fc.revision.slice(0, 12)} does not descend from the review's revision ${r.revision.slice(0, 12)}; it passes because its production code equals the checked head's (MAINT-0029)`);
   if (why !== null) errors.push(`the milestone review's fix check must come after the review's revision: one fix check of the fixes to its findings${why ? `; a fix check revision that does not descend from it passes only when its production code equals the checked head's (MAINT-0029), and ${why}` : ''}`);
   else {
     const reviewed = loadAll(at(r.revision), rd).tasks, checked = loadAll(at(fc.revision), rd);
@@ -238,7 +237,10 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records, 
     }
   }
   errors.push(...vendorErrors({ ...fc, implementer_vendor: r.implementer_vendor }, config, 'the milestone review\'s fix check', 'review.fix_check.fresh_session'));
-  return [...errors, ...covers(config, candidate, fc.revision, 'the milestone review\'s fix check revision', baseline)];
+  const after = covers(config, candidate, fc.revision, 'the milestone review\'s fix check revision', baseline);
+  // Which rule passed it, printed only when nothing after it fails covers (plan review F3).
+  if (why === null && !descends && !after.length) notes?.push(`the milestone review's fix check revision ${fc.revision.slice(0, 12)} does not descend from the review's revision ${r.revision.slice(0, 12)}; it passes because its production code equals the checked head's (MAINT-0029)`);
+  return [...errors, ...after];
 }
 
 export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candidate, records, baseline = null, notes = null }) {

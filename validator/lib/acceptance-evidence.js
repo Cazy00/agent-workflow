@@ -83,6 +83,23 @@ export function owedTasks({ config, trusted, candidate, milestone }) {
     return { error: `the trusted branch's history of ${path} cannot be read (${e.message})` };
   }
 }
+// MAINT-0027: the found tasks of the milestone that `wf ci` passed as the agent's merge and listed as deferred (readiness.js): begun
+// (beyond Draft), naming the milestone, not in its `tasks:` (the trusted branch's and the candidate's together), and either without
+// found_from or beyond the `found_tasks` allowance. Which of them were beyond it depends on the order they began in, which the records
+// do not keep, so when the allowance is exceeded every found task is listed: over-listing is harmless, under-listing is not.
+export function owedFoundTasks({ config, records, milestone }) {
+  if (!deferring(config)) return [];
+  const sets = [records].flat();
+  // A milestone with no `tasks:` field has no found task (readiness.js foundRoom); either side naming the field is enough, so dropping it hides nothing.
+  if (!sets.some(r => r.milestones?.get(milestone)?.data?.tasks != null)) return [];
+  const planned = new Set(sets.flatMap(r => list(r.milestones?.get(milestone)?.data?.tasks)));
+  const allowed = Number([...sets].reverse().map(r => r.milestones?.get(milestone)?.data?.found_tasks).find(v => v != null) ?? 0) || 0;
+  const found = new Map();
+  for (const r of sets) for (const { data: d } of r.tasks.values()) if (/^T-\d{4}$/.test(d?.id ?? '') && d.milestone === milestone && d.status !== 'Draft' && !planned.has(d.id)) found.set(d.id, d);
+  const all = [...found.values()];
+  const exceeded = all.filter(d => d.found_from).length > allowed;
+  return all.filter(d => exceeded || !d.found_from).map(d => d.id).sort();
+}
 // MAINT-0023 P6 (the owner approved it, 27 October 2026): a milestone diff larger than any reviewer model takes is reviewed in
 // parts. The base the review starts from comes at or before the trusted branch's authorisation of the milestone (above).
 const authorisationErrors = ({ base, milestone, recordsDir, candidate, baseline }) => {
@@ -252,5 +269,8 @@ export function acceptanceEvidenceErrors({ evidence: e, milestone, config, candi
     const unlisted = appended.ids.filter(id => !lines.some(d => d.includes(id)));
     if (unlisted.length) errors.push(`deferred must list the tasks added to ${milestone}'s tasks: since it was authorised (${appended.authorised.slice(0, 12)}), which the owner approves here: ${unlisted.join(', ')}`);
   }
+  // MAINT-0027: and the found tasks wf ci passed without found_from or beyond found_tasks, for the same approval here.
+  const foundUnlisted = owedFoundTasks({ config, records, milestone }).filter(id => !lines.some(d => d.includes(id)));
+  if (foundUnlisted.length) errors.push(`deferred must list the found tasks of ${milestone} that were merged without found_from or beyond its found_tasks allowance, which the owner approves here: ${foundUnlisted.join(', ')}`);
   return errors;
 }

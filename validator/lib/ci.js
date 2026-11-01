@@ -14,6 +14,7 @@ import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 import { ACCEPTED, prunable } from './prune.js';
 import { tasksOnlyChange } from './tasks-only.js';
+import { laneOf } from './lane.js';
 
 const within = (p, prefix) => p === prefix || p.startsWith(prefix.replace(/\/+$/, '') + '/');
 // The records the owner approves, whatever a project's config classifies them as (owner-merge's `merge`, MAINT-0010).
@@ -153,6 +154,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
+  // MAINT-0027: the lane (lib/lane.js), the one judge; a required check reported `skipped` counts only on the fast lane.
+  const lane = laneOf({ config, baseline, candidate, changed });
   // MAINT-0026: the milestone records this change only appends tasks to (lib/tasks-only.js, the one judge). Under
   // approval.defer_to_acceptance the owner approves those tasks at the milestone's acceptance, so the record is neither the plan
   // changing, a record the owner approves, nor a governing change waiting for the owner here.
@@ -167,6 +170,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (left.length) findings.push(`note: ${r.data.id} is ${r.data.status}, but the trusted branch still holds ${left.length} of its Done task records: wf prune --milestone ${r.data.id} removes them in one records-only commit`);
   }
   let readiness = null;
+  const foundDeferred = [];
   if (production.length && !selected.length) { findings.push('production paths changed but no task id was given (branch T-xxxx-… or --task)'); fail = true; }
   // The pull-request modes (enforced, owner-merge) hold the quality gates as manual mode does (MAINT-0010): a production
   // change needs the agent's delivery evidence for this exact candidate, checked like a receipt: the required checks
@@ -217,7 +221,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const r = deliveryEvidence.review;
       const waived = milestoneCadence && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, skippedChecks: lane === 'fast', carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
         ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
@@ -231,6 +235,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (!production.length) continue;
     const gate = evaluateReadiness({ baseline, candidate, task: id, trust, changed: paths, stage: 'integrate' });
     readiness = gate;
+    foundDeferred.push(...(gate.deferred ?? []));
     findings.push(`readiness ${id}: ${gate.outcome}`);
     for (const r of gate.reasons) findings.push(`  ${r}`);
     const baselineStatus = baselineRecords.tasks.get(id)?.data?.status;
@@ -362,6 +367,8 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // acceptance lifts the checkpoint's hold, so the agent must never merge it.
     const ownerRecords = classes.filter(c => ownerRecord(c.path, rd) && !['governing', 'enforcement'].includes(c.category) && !tasksOnlyOf.has(c.path)).map(c => c.path);
     if (ownerRecords.length) ownerReasons.push(`it changes records the owner approves: ${ownerRecords.join(', ')}`);
+    // MAINT-0027: a found task beyond its allowance or without found_from is the agent's merge too (readiness.js); the acceptance lists it.
+    deferred.push(...foundDeferred);
     // MAINT-0026: a tasks-only change to a milestone record is the agent's merge; the acceptance lists the tasks (acceptance-evidence.js).
     for (const [p, ids] of tasksOnlyOf) if (ids.length) deferred.push(`it adds tasks to ${p.split('/').pop().replace(/\.md$/, '')}'s tasks: list, for the owner to approve at the milestone's acceptance: ${ids.join(', ')}`);
     if (of('enforcement').length) ownerReasons.push(`it changes the workflow: ${of('enforcement').join(', ')}`);
@@ -453,5 +460,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
 
   // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).
   const workflow = config.workflow?.version || config.workflow?.revision ? { version: config.workflow.version ?? null, revision: config.workflow.revision ?? null } : null;
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), lane, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
 }

@@ -7,10 +7,11 @@ import { gitSource } from '../lib/index.js';
 import { acceptanceEvidenceErrors, owedFoundTasks } from '../lib/acceptance-evidence.js';
 import { evidenceErrors } from '../lib/delivery-evidence.js';
 import { runPrecheck, precheckCommands } from '../lib/precheck.js';
-import { cli, evidence, project, taskPath, check } from './helpers/maint-0018.js';
+import { cli, evidence, fixture as fixtureDir, project, taskPath, check } from './helpers/maint-0018.js';
 
 // MAINT-0027: a fast lane per task, a full lane per milestone, the owner's merge only at the plan and the acceptance.
 const milestonePath = 'docs/workflow/milestones/M-0001.md';
+const fixtureMilestone = path.join(fixtureDir, milestonePath);
 const governing = c => ({ ...c, paths: { ...c.paths, governing: [...c.paths.governing, 'docs/workflow/milestones/**'] } });
 const deferring = c => governing({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true } });
 const plan = (...ids) => q => q.edit(milestonePath, x => x.replace('status: Authorised\n', `status: Authorised\ntasks: [${ids.join(', ')}]\n`));
@@ -109,7 +110,7 @@ test('MAINT-0027: runPrecheck takes its spawn and clock, and a signal counts as 
 });
 
 test('MAINT-0027: checks must be lists of shell command strings under fast and full', t => {
-  for (const checks of [{ fast: 'npm test' }, { fast: [''] }, { fast: [1] }, { slow: [] }, []]) {
+  for (const checks of [{ fast: 'npm test' }, { fast: [''] }, { fast: [1] }, { slow: [] }, [], { full_lane: 'unit' }, { full_lane: [''] }, { full_lane: [3] }]) {
     const p = project(t, { configEdit: c => ({ ...c, checks }) });
     const r = p.run(['records', '--baseline', p.baseline]);
     assert.equal(r.status, 2, JSON.stringify(checks));
@@ -235,13 +236,18 @@ const acceptanceEvidence = rev => ({
   deferred: [], tests_changed: [],
 });
 
-test('MAINT-0027: an accepted milestone is the owner\'s merge (Accepted, and Released under review.cadence milestone)', t => {
+test('MAINT-0027: an accepted milestone is the owner\'s merge (Accepted, then Released)', t => {
   for (const configEdit of [deferring, c => ({ ...c, acceptance_evidence: true, approval: { ...c.approval, defer_to_acceptance: true } })]) {
     const p = project(t, { configEdit, baselineEdit: plan('T-0001') });
     p.edit(milestonePath, x => x.replace('status: Authorised', 'status: Accepted'));
-    const r = p.run(['ci', '--baseline', p.baseline, '--candidate', p.commit('Accept M-0001')], { evidence: acceptanceEvidence(p.baseline) });
+    const accepted = p.commit('Accept M-0001');
+    const r = p.run(['ci', '--baseline', p.baseline, '--candidate', accepted], { evidence: acceptanceEvidence(p.baseline) });
     ownerOnly(r, /docs\/workflow\/milestones\/M-0001\.md/);
     assert.equal(r.out.lane, 'full');
+    // Released after Accepted: no longer a move into a closing status, but still a change to the owner's record.
+    p.edit(milestonePath, x => x.replace('status: Accepted', 'status: Released'));
+    const released = p.run(['ci', '--baseline', accepted, '--candidate', p.commit('Release M-0001')], { evidence: acceptanceEvidence(accepted) });
+    ownerOnly(released, /docs\/workflow\/milestones\/M-0001\.md/);
   }
 });
 
@@ -253,7 +259,7 @@ test('MAINT-0027: new acceptance definitions are the owner\'s merge', t => {
   }
 });
 
-test('MAINT-0027: an enforcement path, the checkpoint and the milestone hold stay the owner\'s', t => {
+test('MAINT-0027: an enforcement path and the checkpoint stay the owner\'s', t => {
   const p = found(t);
   p.write('.github/workflows/ci.yml', 'name: ci\n');
   const e = ci(p, work(p));
@@ -266,6 +272,20 @@ test('MAINT-0027: an enforcement path, the checkpoint and the milestone hold sta
   every.write('docs/notes.md', 'a note\n');
   const r = every.run(['ci', '--baseline', every.baseline, '--candidate', every.commit('code')]);
   assert.equal(r.out?.merge, 'owner', r.stdout + r.stderr);
+});
+
+test('MAINT-0027: work in a milestone held behind an unaccepted one stays the owner\'s', t => {
+  const p = project(t, { configEdit: deferring, baselineEdit: s => { plan('T-0001')(s); s.write('docs/workflow/milestones/M-0002.md', fs.readFileSync(path.join(path.dirname(fixtureMilestone), 'M-0001.md'), 'utf8').replace('id: M-0001', 'id: M-0002').replace('status: Authorised', 'status: Authorised\ntasks: [T-0002]')); } });
+  taskLike(p, 'T-0002', 'src/b', x => x.replace('milestone: M-0001', 'milestone: M-0002'));
+  const base = p.commit('M-0002 and T-0002');
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Ready', 'status: Active'));
+  p.write('src/b/index.js', 'export const b = 1;\n');
+  const head = p.commit('T-0002: the work');
+  const e = evidence(head); e.tasks = ['T-0002']; e.review.tasks = ['T-0002'];
+  const r = p.run(['ci', '--baseline', base, '--candidate', head, '--task', 'T-0002'], { evidence: e });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.merge, 'owner');
+  assert.match(r.out.owner_reasons.join(' | '), /T-0002 belongs to M-0002, which waits for the owner's acceptance of M-0001/);
 });
 
 test('MAINT-0027: removing or changing a Done record of a milestone not yet accepted stays the owner\'s', t => {
@@ -314,8 +334,8 @@ test('MAINT-0027: acceptanceEvidenceErrors fails until deferred names the found 
 const skipped = e => { e.integration.checks = [{ ...check('unit'), result: 'skipped' }]; return e; };
 const base = { revision: 'a'.repeat(40), taskIds: ['T-0001'], owner: null, requiredChecks: ['unit'] };
 
-test('MAINT-0027: a required check reported skipped counts only when the recomputed lane is fast', t => {
-  const fast = project(t, { configEdit: deferring });
+test('MAINT-0027: a required check reported skipped counts only when checks.full_lane names it and the recomputed lane is fast', t => {
+  const fast = project(t, { configEdit: c => ({ ...deferring(c), checks: { full_lane: ['unit'] } }) });
   fast.write('src/a.js', 'export const a = 1;\n');
   const head = fast.commit('T-0001: the work');
   const ok = fast.run(['ci', '--baseline', fast.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: skipped(evidence(head)) });
@@ -324,7 +344,7 @@ test('MAINT-0027: a required check reported skipped counts only when the recompu
   assert.equal(ok.status, 0, ok.stdout);
 
   // The same evidence on a candidate that also closes a milestone: the lane is full, and the evidence's own word cannot change it.
-  const full = project(t, { configEdit: deferring });
+  const full = project(t, { configEdit: c => ({ ...deferring(c), checks: { full_lane: ['unit'] } }) });
   full.write('src/a.js', 'export const a = 1;\n');
   full.edit(milestonePath, x => x.replace('status: Authorised', 'status: Verified'));
   const fullHead = full.commit('T-0001: the work, and M-0001 Verified');
@@ -332,18 +352,207 @@ test('MAINT-0027: a required check reported skipped counts only when the recompu
   const bad = full.run(['ci', '--baseline', full.baseline, '--candidate', fullHead, '--task', 'T-0001'], { evidence: e });
   assert.equal(bad.out.lane, 'full');
   assert.equal(bad.status, 1, bad.stdout);
-  assert.ok(bad.out.findings.some(f => /delivery evidence: integration check "unit" is "skipped", which counts only on the fast lane/.test(f)), bad.out.findings.join(' | '));
+  assert.ok(bad.out.findings.some(f => /delivery evidence: integration check "unit" is "skipped", which counts only for a required check that checks\.full_lane names, and only on the fast lane/.test(f)), bad.out.findings.join(' | '));
   assert.ok(bad.out.findings.some(f => /delivery evidence has an unknown field lane/.test(f)));
 });
 
-test('MAINT-0027: evidenceErrors counts skipped only for a required check, and only when told the lane is fast', () => {
+test('MAINT-0027: evidenceErrors counts skipped only for a required check that skippedChecks names', () => {
   const e = candidate => { const x = evidence(candidate); x.tasks = ['T-0001']; return skipped(x); };
   const args = { ...base, evidence: e('a'.repeat(40)) };
   assert.ok(evidenceErrors(args).some(m => /is "skipped"/.test(m)));
-  assert.ok(!evidenceErrors({ ...args, skippedChecks: true }).some(m => /skipped|required check unit did not pass/.test(m)));
+  assert.ok(!evidenceErrors({ ...args, skippedChecks: ['unit'] }).some(m => /skipped|required check unit did not pass/.test(m)));
   // A skipped check the profile does not require never counts.
   const other = e('a'.repeat(40)); other.integration.checks = [{ ...check('unit'), result: 'passed' }, { ...check('e2e'), result: 'skipped' }];
-  assert.ok(evidenceErrors({ ...base, evidence: other, skippedChecks: true }).some(m => /check "e2e" did not pass/.test(m)));
+  assert.ok(evidenceErrors({ ...base, evidence: other, skippedChecks: ['unit', 'e2e'] }).some(m => /check "e2e" did not pass/.test(m)));
+});
+
+// Review B1: skipped must not stand in for any required check on the fast lane.
+test('MAINT-0027 B1: skipped counts for no required check that checks.full_lane does not name', () => {
+  const e = evidence('a'.repeat(40)); e.tasks = ['T-0001'];
+  e.verification.checks = [check('smoke'), { ...check('unit'), result: 'skipped' }];
+  e.integration.checks = [{ ...check('unit'), result: 'skipped' }];
+  const args = { evidence: e, revision: 'a'.repeat(40), taskIds: ['T-0001'], owner: null, requiredChecks: ['unit'] };
+  for (const skippedChecks of [true, [], ['smoke'], undefined]) {
+    assert.ok(evidenceErrors({ ...args, skippedChecks }).some(m => /required check unit did not pass/.test(m)), JSON.stringify(skippedChecks));
+  }
+  assert.ok(!evidenceErrors({ ...args, skippedChecks: ['unit'] }).some(m => /skipped|did not pass/.test(m)));
+  // Another required check still needs passed.
+  const two = { ...args, requiredChecks: ['unit', 'lint'], skippedChecks: ['unit'] };
+  e.verification.checks = [check('lint'), { ...check('unit'), result: 'skipped' }];
+  e.integration.checks = [{ ...check('lint'), result: 'skipped' }, { ...check('unit'), result: 'skipped' }];
+  assert.ok(evidenceErrors(two).some(m => /integration: required check lint did not pass/.test(m)), evidenceErrors(two).join(' | '));
+});
+
+test('MAINT-0027 B1: wf ci on the fast lane gives the agent\'s merge to skipped only for the checks.full_lane names', t => {
+  const attack = head => { const e = evidence(head); e.verification.checks = [check('smoke'), { ...check('unit'), result: 'skipped' }]; e.integration.checks = [{ ...check('unit'), result: 'skipped' }]; return e; };
+  const go = (checks) => {
+    const p = project(t, { configEdit: c => ({ ...deferring(c), ...(checks ? { checks } : {}) }) });
+    p.write('src/a.js', 'export const a = 1;\n');
+    const head = p.commit('T-0001: the work');
+    return p.run(['ci', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: attack(head) });
+  };
+  for (const checks of [undefined, { full_lane: [] }, { full_lane: ['smoke'] }, { fast: ['true'] }]) {
+    const r = go(checks);
+    assert.equal(r.out.lane, 'fast');
+    assert.equal(r.status, 1, JSON.stringify(checks) + r.stdout);
+    assert.equal(r.out.merge, undefined);
+    assert.ok(r.out.findings.some(f => /required check unit did not pass|check "unit" is "skipped"/.test(f)), r.out.findings.join(' | '));
+  }
+  const ok = go({ full_lane: ['unit'] });
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.equal(ok.out.merge, 'agent');
+});
+
+test('MAINT-0027 B1: the candidate cannot add checks.full_lane to its own config', t => {
+  const p = project(t, { configEdit: deferring });
+  p.write('src/a.js', 'export const a = 1;\n');
+  p.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), checks: { full_lane: ['unit'] } }));
+  const head = p.commit('T-0001: the work, and the list');
+  const e = evidence(head); e.verification.checks = [check('smoke'), { ...check('unit'), result: 'skipped' }]; e.integration.checks = [{ ...check('unit'), result: 'skipped' }];
+  const r = p.run(['ci', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: e });
+  assert.equal(r.out.lane, 'full', 'a change to checks is the full lane');
+  assert.equal(r.status, 1, r.stdout);
+});
+
+test('MAINT-0027 B1: a project with two required checks may skip only the one it names', t => {
+  const p = project(t, { configEdit: c => ({ ...deferring(c), checks: { full_lane: ['e2e'] } }), baselineEdit: s => s.edit('docs/workflow/profile.md', x => x.replace('required_checks: [unit]', 'required_checks: [unit, e2e]')) });
+  p.write('src/a.js', 'export const a = 1;\n');
+  const head = p.commit('T-0001: the work');
+  const run = (verification, integration) => { const e = evidence(head); e.verification.checks = verification; e.integration.checks = integration; return p.run(['ci', '--baseline', p.baseline, '--candidate', head, '--task', 'T-0001'], { evidence: e }); };
+  const skip = n => ({ ...check(n), result: 'skipped' });
+  const good = run([check('unit'), skip('e2e')], [check('unit'), skip('e2e')]);
+  assert.equal(good.status, 0, good.stdout);
+  const bad = run([check('unit'), skip('e2e')], [skip('unit'), skip('e2e')]);
+  assert.equal(bad.status, 1, bad.stdout);
+  assert.ok(bad.out.findings.some(f => /unit/.test(f) && /skipped|did not pass/.test(f)), bad.out.findings.join(' | '));
+});
+
+// Review B3: a found task the acceptance lists cannot be taken off its list by an agent's merge.
+const merged = (t, { task, second = false } = {}) => {
+  const p = project(t, { configEdit: deferring, baselineEdit: s => {
+    plan('T-0001')(s);
+    if (second) s.write('docs/workflow/milestones/M-0002.md', fs.readFileSync(path.join(fixtureDir, milestonePath), 'utf8').replace('id: M-0001', 'id: M-0002').replace('status: Authorised', 'status: Authorised\ntasks: [T-0003]'));
+  } });
+  taskLike(p, 'T-0002', 'src/b', x => (task ?? (y => y))(x.replace('status: Ready', 'status: Draft')));
+  p.base = p.commit('records: T-0002, a found Draft');
+  const head = work(p);
+  p.base = head; // the trusted branch now holds the merged work: T-0002 Active, deferred
+  return p;
+};
+const change = (p, edit, message = 'records') => { edit(p); return p.commit(message); };
+const only = (p, head) => p.run(['ci', '--baseline', p.base, '--candidate', head]);
+const takenOff = /it takes found tasks that the acceptance of a milestone not yet accepted lists off that list, which only the owner may do: T-0002 \(/;
+
+test('MAINT-0027 B3: setting a deferred found task back to Draft is the owner\'s merge', t => {
+  const p = merged(t);
+  const r = only(p, change(p, q => q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Draft'))));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.merge, 'owner');
+  assert.match(r.out.owner_reasons.join(' | '), /T-0002 \(status back to Draft\)/);
+  assert.match(r.out.owner_reasons.join(' | '), takenOff);
+});
+
+test('MAINT-0027 B3: adding or changing found_from of a deferred found task is the owner\'s merge', t => {
+  const p = merged(t);
+  const add = only(p, change(p, q => q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Active\nfound_from: R-0001/F1'))));
+  assert.equal(add.out.merge, 'owner', add.stdout);
+  assert.match(add.out.owner_reasons.join(' | '), /T-0002 \(found_from\)/);
+  const q = merged(t, { task: withFrom });
+  const moved = only(q, change(q, r => r.edit('docs/workflow/tasks/T-0002.md', x => x.replace('found_from: R-0001/F1', 'found_from: R-0001/F2'))));
+  assert.equal(moved.out.merge, 'owner', moved.stdout);
+  assert.match(moved.out.owner_reasons.join(' | '), /T-0002 \(found_from\)/);
+});
+
+test('MAINT-0027 B3: moving a deferred found task to another milestone is the owner\'s merge', t => {
+  const p = merged(t, { second: true });
+  const r = only(p, change(p, q => q.edit('docs/workflow/tasks/T-0002.md', x => x.replace('milestone: M-0001', 'milestone: M-0002'))));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.merge, 'owner');
+  assert.match(r.out.owner_reasons.join(' | '), /T-0002 \(milestone\)/);
+});
+
+test('MAINT-0027 B3: removing a deferred found task\'s record is the owner\'s merge', t => {
+  const p = merged(t);
+  const r = only(p, change(p, q => fs.rmSync(path.join(q.repo, 'docs/workflow/tasks/T-0002.md'))));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.out.merge, 'owner');
+  assert.match(r.out.owner_reasons.join(' | '), /T-0002 \(removed\)/);
+});
+
+test('MAINT-0027 B3: a note on the record, or its Done commit, stays the agent\'s merge; so does a task nothing defers', t => {
+  const p = merged(t);
+  const note = only(p, change(p, q => q.edit('docs/workflow/tasks/T-0002.md', x => `${x}\nA note.\n`)));
+  assert.equal(note.out.merge, 'agent', note.stdout);
+  // Without the keys nothing is deferred, so nothing is guarded.
+  const q = project(t, { configEdit: governing, baselineEdit: s => { plan('T-0001')(s); } });
+  taskLike(q, 'T-0002', 'src/b', x => x.replace('status: Ready', 'status: Active'));
+  q.base = q.commit('records');
+  const r = only(q, change(q, s => s.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Draft'))));
+  assert.doesNotMatch((r.out.owner_reasons ?? []).join(' | '), takenOff);
+});
+
+test('MAINT-0027 B3: the reviewer\'s scenario end to end: the work merges deferred, the regression is the owner\'s, the acceptance names the task', t => {
+  const p = found(t);
+  // 2. T-0002's code merges with the record left Active: the agent's merge, with the deferred line.
+  const work2 = ci(p, work(p));
+  assert.equal(work2.out.merge, 'agent');
+  assert.deepEqual(work2.out.deferred, [noFrom]);
+  const merged2 = p.git('rev-parse', 'HEAD');
+  p.base = merged2;
+  // 3. A records-only pull request sets it back to Draft: no longer the agent's.
+  p.edit('docs/workflow/tasks/T-0002.md', x => x.replace('status: Active', 'status: Draft'));
+  const regress = only(p, p.commit('T-0002 back to Draft'));
+  assert.equal(regress.out.merge, 'owner');
+  assert.match(regress.out.owner_reasons.join(' | '), takenOff);
+  // 4. Where it was not regressed, the acceptance with deferred [] is refused until it names T-0002.
+  p.git('reset', '-q', '--hard', merged2);
+  p.edit(milestonePath, x => x.replace('status: Authorised', 'status: Accepted'));
+  const accept = p.commit('Accept M-0001');
+  const refused = p.run(['ci', '--baseline', merged2, '--candidate', accept], { evidence: acceptanceEvidence(merged2) });
+  assert.ok(refused.out.findings.some(f => /deferred must list the found tasks of M-0001/.test(f) && /T-0002/.test(f)), refused.stdout);
+});
+
+// Review S1: the acceptance's own pull request cannot raise the allowance that decides which found tasks it must list.
+test('MAINT-0027 S1: the allowance is the trusted branch\'s found_tasks, never the candidate\'s', () => {
+  const trusted = records(null, { id: 'M-0001', tasks: ['T-0001'], found_tasks: 0 }, [task('T-0002', { found_from: 'R-0001/F1' }), task('T-0003', { found_from: 'R-0001/F2' })]);
+  const raised = records(null, { id: 'M-0001', tasks: ['T-0001'], found_tasks: 3 }, [task('T-0002', { found_from: 'R-0001/F1' }), task('T-0003', { found_from: 'R-0001/F2' })]);
+  assert.deepEqual(owedFoundTasks({ config: cfg, records: [trusted, raised], milestone: 'M-0001' }), ['T-0002', 'T-0003']);
+  assert.deepEqual(owedFoundTasks({ config: cfg, records: [raised, trusted], milestone: 'M-0001' }), [], 'the first set is the trusted one');
+  // A trusted milestone without found_tasks allows none, whatever the candidate writes.
+  const bare = records(null, { id: 'M-0001', tasks: ['T-0001'] }, [task('T-0002', { found_from: 'R-0001/F1' })]);
+  const alone = records(null, { id: 'M-0001', tasks: ['T-0001'], found_tasks: 3 }, [task('T-0002', { found_from: 'R-0001/F1' })]);
+  assert.deepEqual(owedFoundTasks({ config: cfg, records: [bare, alone], milestone: 'M-0001' }), ['T-0002']);
+});
+
+// Review S2: the tests that judge a milestone, and the map that names them, are the full lane.
+test('MAINT-0027 S2: a change to an acceptance test or the acceptance map is the full lane', t => {
+  const configEdit = c => ({ ...deferring(c), paths: { ...deferring(c).paths, acceptance_tests: ['tests/acceptance/**'] } });
+  const p = project(t, { configEdit });
+  p.write('src/a.js', 'export const a = 1;\n');
+  const code = p.commit('code');
+  assert.equal(lane(p, p.baseline, code), 'fast');
+  p.write('tests/acceptance/a.test.js', 'export {};\n');
+  const both = p.commit('code with an acceptance test');
+  assert.equal(lane(p, code, both), 'full');
+  p.write('tests/acceptance-map.json', '[ ]\n');
+  const map = p.commit('the map');
+  assert.equal(lane(p, both, map), 'full');
+  p.write('src/b.js', 'export const b = 1;\n');
+  p.write('tests/acceptance-map.json', '[  ]\n');
+  const mapAndCode = p.commit('code and the map');
+  assert.equal(lane(p, map, mapAndCode), 'full');
+  p.write('src/c.js', 'export const c = 1;\n');
+  assert.equal(lane(p, mapAndCode, p.commit('code only')), 'fast');
+});
+
+// Review N1: precheck runs with the environment doctor's preflight gets.
+test('MAINT-0027 N1: wf precheck withholds the signing and WF_ variables as wf doctor does', t => {
+  const p = project(t, { configEdit: c => ({ ...c, checks: { fast: ['env > env.txt'] } }) });
+  const r = p.run(['precheck'], { env: { OWNER_SIGNING_KEY: 'k', WF_TOKEN: 't', GPG_TTY: 'g', KEPT_VARIABLE: 'yes' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const seen = fs.readFileSync(path.join(p.repo, 'env.txt'), 'utf8');
+  assert.doesNotMatch(seen, /^(OWNER_SIGNING_KEY|WF_TOKEN|GPG_TTY)=/m);
+  assert.match(seen, /^KEPT_VARIABLE=yes$/m);
 });
 
 // ---- the template ----
@@ -357,8 +566,7 @@ test('MAINT-0027: wf-ci.yml names a draft run apart and the project template run
   assert.match(ci, /relies on its merge route to require `wf ci` by name/);
   const project = fs.readFileSync(new URL('../../templates/github/project-ci.yml', import.meta.url), 'utf8');
   assert.match(project, /lane: \$\{\{ steps\.decide\.outputs\.lane \}\}/);
-  assert.match(project, /if: needs\.scope\.outputs\.product == 'true' && needs\.scope\.outputs\.lane == 'full'/);
+  assert.match(project, /\n    if: needs\.scope\.outputs\.lane == 'full'\n/, 'the slow job runs on the lane alone, whatever product says');
   assert.match(project, /needs: \[scope, lint, unit, database, acceptance\]/);
   assert.doesNotMatch(project, /schedule:|cron:/);
-  assert.equal(fs.readFileSync(new URL('../../CODEOWNERS', import.meta.url), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).length, 0, 'CODEOWNERS requests no default owner');
 });

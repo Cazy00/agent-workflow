@@ -3,11 +3,13 @@
 // from the evidence itself.
 //   records  every path is a record (lib/paths.js recordsOnly): a project's CI skips its product jobs.
 //   full     the candidate closes a milestone (a milestone record whose status moves to Verified, Accepted or Released versus the
-//            baseline), changes an enforcement path or changes the config's `checks`: the slow checks run once, here.
+//            baseline), changes an enforcement path, an owner-approved acceptance test or the acceptance map, or changes the config's
+//            `checks`: the slow checks run once, here.
 //   fast     anything else: the project's fast lane (`checks.fast`, `wf precheck`) is enough.
 // A change that closes a milestone is `full` even when it is records only, so the slow checks run once when the milestone is ready.
 import { loadAll, loadConfig } from './records.js';
 import { classifyPaths, recordsOnly } from './paths.js';
+import { ACCEPTANCE_MAP } from './acceptance-files.js';
 
 export const LANES = ['records', 'fast', 'full'];
 const CLOSING = ['Verified', 'Accepted', 'Released'];
@@ -27,7 +29,8 @@ const checksOf = source => { try { return loadConfig(source).checks ?? null; } c
 export function laneOf({ config, baseline, candidate, changed }) {
   const rd = config.records_dir ?? 'docs/workflow';
   try {
-    if (classifyPaths(config, changed).some(c => c.category === 'enforcement')) return 'full';
+    // A change to the tests that judge a milestone (or the map that names them) is exactly when the slow suite must run.
+    if (classifyPaths(config, changed).some(c => c.category === 'enforcement' || c.acceptance_test || c.path === ACCEPTANCE_MAP)) return 'full';
     const [then, now] = [checksOf(baseline), checksOf(candidate)];
     if (now === undefined || JSON.stringify(then ?? null) !== JSON.stringify(now)) return 'full';
     if (closesMilestone(loadAll(baseline, rd), loadAll(candidate, rd))) return 'full';

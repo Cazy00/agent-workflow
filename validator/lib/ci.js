@@ -9,7 +9,7 @@ import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js
 import { evaluateAcceptance, expandExecution, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, fixedAfterError, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
 import { carriedFrom } from './carry.js';
-import { acceptanceEvidenceErrors } from './acceptance-evidence.js';
+import { acceptanceEvidenceErrors, owedFoundTasks } from './acceptance-evidence.js';
 import { agentMerges, checkpointOf, milestoneHold } from './checkpoint.js';
 import { evaluateLifecycle } from './lifecycle.js';
 import { ACCEPTED, prunable } from './prune.js';
@@ -154,7 +154,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const selected = task ? [task] : []; // one pull request carries one task
   const candidateRecords = loadAll(candidate, rd);
   const baselineRecords = loadAll(baseline, rd);
-  // MAINT-0027: the lane (lib/lane.js), the one judge; a required check reported `skipped` counts only on the fast lane.
+  // MAINT-0027: the lane (lib/lane.js), the one judge; a required check reported `skipped` counts only when checks.full_lane names it and the lane is fast.
   const lane = laneOf({ config, baseline, candidate, changed });
   // MAINT-0026: the milestone records this change only appends tasks to (lib/tasks-only.js, the one judge). Under
   // approval.defer_to_acceptance the owner approves those tasks at the milestone's acceptance, so the record is neither the plan
@@ -221,7 +221,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const r = deliveryEvidence.review;
       const waived = milestoneCadence && (r == null || r?.level === 'none');
       const errors = [
-        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, skippedChecks: lane === 'fast', carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
+        ...evidenceErrors({ evidence: deliveryEvidence, revision: candidate.name, taskIds: selected, owner: owners.length === 1 ? owners[0] : null, requiredChecks, enforcedChecks: config.approval?.auto_merge === true, skippedChecks: lane === 'fast' ? list(config.checks?.full_lane) : [], carried, reviewOptional: testOnly || milestoneCadence, sameVendor: config.review?.same_vendor }),
         ...(waived ? [] : reviewLevelErrors({ review: r, deep, secondModel: config.review?.second_model ?? null, command: !!config.review?.reviewer_command })),
       ];
       for (const e of errors) findings.push(`delivery evidence: ${e}`);
@@ -436,6 +436,21 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const gone = list(d.accepted_findings).filter(e => now?.milestone !== d.milestone || !list(now.accepted_findings).includes(e));
       if (gone.length) dropped.push(`${d.id} (${gone.join(', ')})`);
     }
+    // MAINT-0027 review B3: the acceptance lists the found tasks the trusted branch defers (owedFoundTasks: begun, no found_from or beyond
+    // found_tasks) from the records as they stand then, so a later agent merge must not take one off that list: setting it back to
+    // Draft, adding or changing its found_from, changing its milestone or removing its record is the owner's merge. Judged by the
+    // trusted branch's records, never the candidate's, which the change writes; a Done record is judged above.
+    const unlisted = [];
+    for (const { data: m } of baselineRecords.milestones.values()) {
+      if (!m?.id || ACCEPTED.includes(m.status)) continue;
+      for (const id of owedFoundTasks({ config, records: baselineRecords, milestone: m.id })) {
+        const was = baselineRecords.tasks.get(id)?.data, now = candidateRecords.tasks.get(id)?.data;
+        if (was?.status === 'Done') continue;
+        const moved = !now ? ['removed'] : [...(now.status === 'Draft' ? ['status back to Draft'] : []), ...['found_from', 'milestone'].filter(k => now[k] !== was[k])];
+        if (moved.length) unlisted.push(`${id} (${moved.join(', ')})`);
+      }
+    }
+    if (unlisted.length) ownerReasons.push(`it takes found tasks that the acceptance of a milestone not yet accepted lists off that list, which only the owner may do: ${unlisted.join(', ')}`);
     if (dropped.length) ownerReasons.push(`it removes accepted findings that the acceptance of a milestone not yet accepted lists: ${dropped.join(', ')}`);
     if (removedDone.length) ownerReasons.push(`it removes Done task records of a milestone not yet accepted, which its acceptance reads: ${removedDone.join(', ')}`);
     if (changedDone.length) ownerReasons.push(`it changes Done task records of a milestone not yet accepted, which its acceptance reads: ${changedDone.join(', ')}`);

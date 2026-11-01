@@ -3,6 +3,7 @@
 // another in the repository root, and stops at the first failure with that command's exit code. It grants nothing and no gate reads it.
 import { spawnSync } from 'node:child_process';
 import { WfError } from './records.js';
+import { quiet } from './doctor.js';
 
 export const CHECK_LISTS = ['fast', 'full'];
 
@@ -15,14 +16,15 @@ export function precheckCommands(config, full = false) {
   return { key, commands };
 }
 
-// Runs them, printing each command and its seconds through `write`. { ok, code, ran } with the failing command's exit code.
-export function runPrecheck({ config, root, full = false, write = s => process.stdout.write(s), spawn = spawnSync, clock = () => Date.now() }) {
+// Runs them, printing each command and its seconds through `write`, with the environment `wf doctor`'s preflight gets: the owner's signing
+// variables and WF_* are withheld (doctor.js quiet). { ok, code, ran } with the failing command's exit code.
+export function runPrecheck({ config, root, full = false, write = s => process.stdout.write(s), spawn = spawnSync, clock = () => Date.now(), env = quiet() }) {
   const { key, commands } = precheckCommands(config, full);
   let ran = 0;
   for (const [i, command] of commands.entries()) {
     write(`wf precheck (checks.${key} ${i + 1}/${commands.length}): ${command}\n`);
     const started = clock();
-    const r = spawn('sh', ['-c', command], { cwd: root, stdio: 'inherit' });
+    const r = spawn('sh', ['-c', command], { cwd: root, stdio: 'inherit', env });
     const seconds = ((clock() - started) / 1000).toFixed(1);
     ran++;
     const code = typeof r.status === 'number' ? r.status : 1; // a signal or a command that could not start

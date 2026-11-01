@@ -86,14 +86,16 @@ export function owedTasks({ config, trusted, candidate, milestone }) {
 // MAINT-0027: the found tasks of the milestone that `wf ci` passed as the agent's merge and listed as deferred (readiness.js): begun
 // (beyond Draft), naming the milestone, not in its `tasks:` (the trusted branch's and the candidate's together), and either without
 // found_from or beyond the `found_tasks` allowance. Which of them were beyond it depends on the order they began in, which the records
-// do not keep, so when the allowance is exceeded every found task is listed: over-listing is harmless, under-listing is not.
+// do not keep, so when the allowance is exceeded every found task is listed: over-listing is harmless, under-listing is not. `records` is
+// the trusted branch's records first, then the candidate's (a single set is read as the trusted one).
 export function owedFoundTasks({ config, records, milestone }) {
   if (!deferring(config)) return [];
   const sets = [records].flat();
   // A milestone with no `tasks:` field has no found task (readiness.js foundRoom); either side naming the field is enough, so dropping it hides nothing.
   if (!sets.some(r => r.milestones?.get(milestone)?.data?.tasks != null)) return [];
   const planned = new Set(sets.flatMap(r => list(r.milestones?.get(milestone)?.data?.tasks)));
-  const allowed = Number([...sets].reverse().map(r => r.milestones?.get(milestone)?.data?.found_tasks).find(v => v != null) ?? 0) || 0;
+  // MAINT-0027 review S1: the allowance is the trusted branch's (the first set), never the candidate's, which the acceptance pull request writes.
+  const allowed = Number(sets[0].milestones?.get(milestone)?.data?.found_tasks ?? 0) || 0;
   const found = new Map();
   for (const r of sets) for (const { data: d } of r.tasks.values()) if (/^T-\d{4}$/.test(d?.id ?? '') && d.milestone === milestone && d.status !== 'Draft' && !planned.has(d.id)) found.set(d.id, d);
   const all = [...found.values()];

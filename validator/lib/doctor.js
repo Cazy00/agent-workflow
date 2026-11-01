@@ -15,7 +15,7 @@ import { lintWorkflow } from './ci-lint.js';
 // (cli.js), and still no sandbox (review S5 of MAINT-0018 Part B). The ssh agent stays: a preflight's usual job is to try
 // ssh to the staging host, which `wf attest`, running candidate code, has no reason to do.
 const WITHHELD = /^(OWNER_SIGNING_|WF_|GPG_)/;
-const quiet = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !WITHHELD.test(k)));
+export const quiet = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !WITHHELD.test(k)));
 const run = (cmd, args, timeout = 20000, env = process.env) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
   return { ok: r.status === 0 && !r.error, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim(), missing: r.error?.code === 'ENOENT' };

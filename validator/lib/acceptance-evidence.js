@@ -172,8 +172,10 @@ function deliveredBeforeReview({ r, fc, base, at, config, reviewed, fixScopes })
 // MAINT-0023 P6: `parts` may stand for `base`: the deep paths are read over the union of the parts, and the fix check follows the last.
 // MAINT-0029 (B44): a fix check run on a head that does not descend from the review's revision, as at M-0006, where the fixes were
 // branched before a records-only review revision. Returns null when it stands for the code being accepted: it is not the review's
-// revision or an earlier one, the review's revision is in this pull request's history, and no production or generated path (the
-// classes MAINT-0028 reads for code after the review) differs between its tree and the checked head's, so records alone differ.
+// revision or an earlier one, the review's revision is in this pull request's history, no production or generated path (the
+// classes MAINT-0028 reads for code after the review) differs between its tree and the checked head's, so records alone differ,
+// and none differs between the review's revision and where the two lines forked (deep review S1): the review's line after the
+// fork holds records only, so no code the review read is dropped at the merge outside the diff the fix check was given.
 // Otherwise why not, or '' when either revision is unknown or they are the same. covers() still judges the fix check's revision
 // after this: in this history, and no code after it. The checks after this one read tree diffs, which need no ancestry.
 function sameCodeAsHead({ r, fc, at, config, candidate }) {
@@ -183,8 +185,15 @@ function sameCodeAsHead({ r, fc, at, config, candidate }) {
   if (r.revision !== candidate.name && !candidate.isAncestor(r.revision)) return `the review's revision ${r.revision.slice(0, 12)} is not in this pull request's history`;
   let paths;
   try { paths = candidate.changedPaths(fc.revision); } catch { return `its revision ${fc.revision.slice(0, 12)} cannot be compared with the checked head`; }
-  const code = classifyPaths(config, paths).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
-  return code.length ? `its production code differs from the checked head's: ${code.slice(0, 5).join(', ')}${code.length > 5 ? ', …' : ''}` : null;
+  const codeOf = list => classifyPaths(config, list).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
+  const some = list => `${list.slice(0, 5).join(', ')}${list.length > 5 ? ', …' : ''}`;
+  const code = codeOf(paths);
+  if (code.length) return `its production code differs from the checked head's: ${some(code)}`;
+  const fork = rev.mergeBase(fc.revision);
+  let side;
+  try { side = SHA.test(fork ?? '') ? codeOf(rev.changedPaths(fork)) : null; } catch { side = null; }
+  if (!side) return `its revision ${fc.revision.slice(0, 12)} shares no history with the review's`;
+  return side.length ? `the review's line changed code after the two forked at ${fork.slice(0, 12)}, which the fix check's head does not hold: ${some(side)}` : null;
 }
 
 function onlyReviewErrors({ r, milestone, config, candidate, baseline, records, notes }) {
@@ -232,14 +241,14 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records, 
     for (const id of ids) {
       const mine = versions.filter(d => d.id === id);
       if (doneAtReview(id) || fixes(id)) continue;
-      const why = delivered(id, mine);
-      if (why) errors.push(`${id} was not Done at the milestone review's revision ${r.revision.slice(0, 12)} and fixes none of its findings (found_from): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check; nor does its record show its code was delivered before the review: ${why}`);
+      const undelivered = delivered(id, mine);
+      if (undelivered) errors.push(`${id} was not Done at the milestone review's revision ${r.revision.slice(0, 12)} and fixes none of its findings (found_from): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check; nor does its record show its code was delivered before the review: ${undelivered}`);
     }
   }
   errors.push(...vendorErrors({ ...fc, implementer_vendor: r.implementer_vendor }, config, 'the milestone review\'s fix check', 'review.fix_check.fresh_session'));
   const after = covers(config, candidate, fc.revision, 'the milestone review\'s fix check revision', baseline);
-  // Which rule passed it, printed only when nothing after it fails covers (plan review F3).
-  if (why === null && !descends && !after.length) notes?.push(`the milestone review's fix check revision ${fc.revision.slice(0, 12)} does not descend from the review's revision ${r.revision.slice(0, 12)}; it passes because its production code equals the checked head's (MAINT-0029)`);
+  // Which rule passed it, printed only when the milestone review and its fix check pass (plan review F3, deep review N2).
+  if (why === null && !descends && !errors.length && !after.length) notes?.push(`the milestone review's fix check revision ${fc.revision.slice(0, 12)} does not descend from the review's revision ${r.revision.slice(0, 12)}; it passes because its production code equals the checked head's (MAINT-0029)`);
   return [...errors, ...after];
 }
 

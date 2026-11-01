@@ -200,7 +200,7 @@
   },
   "v2.16.2": {
     "notes": [
-      "Nothing is required: only the pin moves. Under review.cadence milestone, a fix check whose revision does not descend from the milestone review's now passes when that revision is not the review's or an earlier one, the review's revision is in the pull request's history and its production code equals the checked head's; wf ci notes the rule (MAINT-0029)."
+      "Nothing is required: only the pin moves. Under review.cadence milestone, a fix check whose revision does not descend from the milestone review's now passes when that revision is not the review's or an earlier one, the review's revision is in the pull request's history, its production code equals the checked head's and the review's line changed no code after the two forked; wf ci notes the rule (MAINT-0029)."
     ]
   }
 }

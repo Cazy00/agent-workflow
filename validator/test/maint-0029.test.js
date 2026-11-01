@@ -19,7 +19,7 @@ const FIX = task('T-0004', 'Done', 'found_from: R-0009/F1\nscope: [src/c/]\n');
 
 // The milestone: T-0001's code merged (`coded`), then the review at `reviewed`, a records-only commit marking T-0001 Done, so a
 // head branched from `coded` holds T-0001 Active (plan review F1).
-function repo(t) {
+function repo(t, { reviewedCode = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-maint-0029-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
@@ -32,16 +32,18 @@ function repo(t) {
   const authorised = commit('M-0001 authorised');
   write('src/a.js', 'a, T-0001\n'); const coded = commit('T-0001 merged');
   write(`${RD}/tasks/T-0001.md`, task('T-0001', 'Done', 'scope: [src/a.js]\n')); write('docs/notes.md', 'the review ran here\n');
+  if (reviewedCode) write('src/b.js', 'code the review read\n');
   const reviewed = commit('T-0001 Done; the review ran here');
   return { dir, git, write, commit, authorised, coded, reviewed, at: rev => gitSource(dir, rev) };
 }
 // The fix of F1 on a branch from `coded`, before the review's revision: the head the fix check read. Then merged into main
-// (`extra` writes files in the merge itself) and the milestone accepted.
-function sideFix(r, { extra = {} } = {}) {
+// (`extra` writes files in the merge itself, `drop` removes them) and the milestone accepted.
+function sideFix(r, { extra = {}, drop = [] } = {}) {
   r.git('checkout', '-q', '-b', 'fix', r.coded);
   r.write('src/c/fix.js', 'fixed\n'); r.write(`${RD}/tasks/T-0004.md`, FIX); const fixed = r.commit('T-0004, the fix of F1');
   r.git('checkout', '-q', 'main'); r.git('merge', '-q', '--no-ff', '--no-commit', 'fix');
   for (const [p, text] of Object.entries(extra)) r.write(p, text);
+  for (const p of drop) r.git('rm', '-q', p);
   const merged = r.commit('Merge the fix of F1');
   r.write(`${RD}/milestones/M-0001.md`, milestone('Accepted'));
   return { fixed, merged, head: r.commit('Accept M-0001') };
@@ -85,6 +87,26 @@ test('MAINT-0029: a non-descending fix check with one changed code line after it
   assert.doesNotMatch(st.errors, AFTER);
   assert.match(st.errors, new RegExp(`fix check revision ${ss.fixed.slice(0, 12)} is followed by changes to test/a\\.test\\.js`));
   assert.equal(st.notes, '');
+});
+
+test('MAINT-0029: code the review read on its own line, dropped at the merge, fails (deep review S1)', t => {
+  // The review's revision adds src/b.js; the merge resolves toward the fix's side and drops it, so the head's code equals the
+  // fix check's head while the review's line changed code after the fork.
+  const r = repo(t, { reviewedCode: true }); const { fixed, merged, head } = sideFix(r, { drop: ['src/b.js'] });
+  const { errors, notes } = run(r, head, fixed);
+  assert.match(errors, AFTER);
+  assert.match(errors, new RegExp(`and the review's line changed code after the two forked at ${r.coded.slice(0, 12)}, which the fix check's head does not hold: src/b\\.js`));
+  assert.equal(notes, '');
+  // Named through the merge, the drop is inside R..F, the fix check's diff: the old rule, unchanged.
+  assert.deepEqual(run(r, head, merged), { errors: '', notes: '' });
+});
+
+test('MAINT-0029: the note is printed only when the fix check passes (deep review N2)', t => {
+  const r = repo(t); const { fixed, head } = sideFix(r);
+  const notes = [], e = evidence(r, head, fixed); e.review.fix_check.report = 'http://example.invalid/r';
+  const errors = acceptanceEvidenceErrors({ evidence: e, milestone: 'M-0001', config, candidate: r.at(head), baseline: r.at(head), records: [loadAll(r.at(head), RD)], notes });
+  assert.match(errors.join(' | '), /needs its reviewer, model and an https report/);
+  assert.deepEqual(notes, []);
 });
 
 test('MAINT-0029: the descending fix check still passes; one before the review still fails', t => {

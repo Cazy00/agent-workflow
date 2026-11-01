@@ -885,9 +885,11 @@ esac
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])
         self.assertIn("systemd-run --wait --pipe /snap/bin/lxc list", self.text("README.md"))
 
-    def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
+    def _rotate(self, aliases):
+        """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases; its calls."""
         t = self.text("ci-pool-image")
         tail = t[t.index("# Publish under a new alias"):]
+        listing = "\n".join(f"{a},x,CONTAINER,x" for a in aliases)
         with tempfile.TemporaryDirectory() as d:
             fake = os.path.join(d, "lxc")
             log = os.path.join(d, "log")
@@ -895,21 +897,39 @@ esac
                 f.write('''#!/usr/bin/env bash
 echo "$*" >> "$LOG"
 case "$*" in
-  "image alias list --format csv") echo "ci-pool-gate,aaaaaaaaaaaa,CONTAINER,x" ;;
+  "image alias list --format csv") printf '%s\\n' "$LISTING" ;;
   "image info ci-pool-gate-prev") echo "Fingerprint: prevfp" ;;
   "image info ci-pool-gate") echo "Fingerprint: curfp" ;;
+  "image info ci-pool-gate-new") echo "Fingerprint: newfp" ;;
 esac
 ''')
             os.chmod(fake, 0o755)
             r = subprocess.run(["bash", "-c", 'set -euo pipefail\nalias=ci-pool-gate kind=gate work=w\n' + tail], capture_output=True,
-                               text=True, env={**os.environ, "LXC": fake, "LOG": log})
+                               text=True, env={**os.environ, "LXC": fake, "LOG": log, "LISTING": listing})
             self.assertEqual(r.returncode, 0, r.stderr)
             with open(log) as f:
-                calls = f.read().splitlines()
+                return f.read().splitlines()
+
+    def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
+        calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
         self.assertIn("image delete prevfp", calls)
-        self.assertLess(calls.index("image delete prevfp"), calls.index("image alias rename ci-pool-gate ci-pool-gate-prev"))
+        self.assertLess(calls.index("image delete prevfp"), calls.index("image alias create ci-pool-gate-prev curfp"))
         self.assertNotIn("image delete curfp", calls)
 
+    def test_the_live_alias_is_repointed_in_one_call(self):  # B41 item 21
+        calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        patch = 'query -X PATCH /1.0/images/aliases/ci-pool-gate --data {"target": "newfp"}'
+        self.assertIn(patch, calls)
+        # the live alias is never deleted or renamed, so a launch between two calls still finds an image
+        self.assertFalse([c for c in calls if c.startswith(("image alias rename ci-pool-gate ", "image alias delete ci-pool-gate "))
+                          and c.split()[3] == "ci-pool-gate"])
+        self.assertLess(calls.index("image alias create ci-pool-gate-prev curfp"), calls.index(patch))
+        self.assertEqual(calls[-1], "image alias delete ci-pool-gate-new")  # dropped only after the repoint
+
+    def test_a_first_image_takes_the_alias_by_rename(self):
+        calls = self._rotate([])
+        self.assertIn("image alias rename ci-pool-gate-new ci-pool-gate", calls)
+        self.assertFalse([c for c in calls if c.startswith("query")])
 
 if __name__ == "__main__":
     unittest.main()

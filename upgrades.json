@@ -192,5 +192,10 @@
       "A project that copied templates/github/project-ci.yml adds the lane output and a full-lane job if it wants them (the job runs on lane == full whatever product says, and scope reads wf paths --json once with a fallback to full); a missing lane field is read as full.",
       "A project whose CODEOWNERS has a default owner (* @owner) removes it if it wants no review requests on every pull request. A ruleset that requires code-owner review then requires nothing."
     ]
+  },
+  "v2.16.1": {
+    "notes": [
+      "Nothing is required: only the pin moves. Under review.cadence milestone with a fix check, a task whose record was marked Done after the milestone review now passes when its implemented is a revision the review read and none of its scope's code changed after the review (MAINT-0028)."
+    ]
   }
 }

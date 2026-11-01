@@ -133,6 +133,35 @@ export function reviewPartsErrors({ parts, revision, milestone, recordsDir = 'do
 // The paths each part changed, together: a path a later part changed back still belongs to what a reviewer was asked to read.
 const partsPaths = (parts, at) => parts.flatMap(p => at(p.revision).changedPaths(p.base));
 
+// MAINT-0028 (B42): a task the review read whose record was marked Done only after it. Returns, for a task id and the versions of
+// its record the fix-check rule reads, why its code is not shown delivered before the review, or null when it is: it was planned
+// (past Draft) at the review's revision; every Done version names the same `implemented`, the candidate it was delivered at; that
+// revision is the review's or an earlier one, and after the review's base, so base..revision holds it; and no production path
+// changed between the review and the fix check lies in its scope (as at the review, the fix check and the change), unless a task
+// fixing a finding has it in scope: readiness keeps a task's changed production paths inside its scope (readiness.js), so code a
+// record dates to an early commit while it landed after the review shows here. The records' truth is not checked, as above.
+const inScope = (p, scopes) => scopes.some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'));
+function deliveredBeforeReview({ r, fc, base, at, config, milestone, reviewed, checked }) {
+  let late = null;
+  const latePaths = () => late ??= classifyPaths(config, at(fc.revision).changedPaths(r.revision)).filter(c => ['production', 'generated'].includes(c.category)).map(c => c.path);
+  const fixScopes = [...checked.tasks.values()].map(x => x.data).filter(d => d?.milestone === milestone && typeof d.found_from === 'string' && FINDING.test(d.found_from)).flatMap(d => list(d.scope));
+  return (id, mine) => {
+    const then = reviewed.get(id)?.data;
+    if (!then || then.status === 'Draft') return `it was Draft or absent at the review's revision`;
+    const done = mine.filter(d => d.status === 'Done');
+    const named = [...new Set(done.map(d => d.implemented))];
+    if (!done.length || named.some(x => !SHA.test(x ?? ''))) return 'its record names no implemented, the full commit hash it was delivered at';
+    if (named.length > 1) return `its records name different implemented revisions: ${named.map(x => x.slice(0, 12)).join(', ')}`;
+    const [rev] = named, short = rev.slice(0, 12);
+    if (!at(r.revision)?.isAncestor(rev)) return `its implemented ${short} is not the review's revision or an earlier one in this history (its code came after the review, or a squash or rebase merge left that commit out): that code needs the review, or must fix one of its findings`;
+    if (!SHA.test(base ?? '') || at(base)?.isAncestor(rev) !== false) return `its implemented ${short} is the review's base or comes before it`;
+    const scopes = [...new Set([then, ...mine].flatMap(d => list(d.scope)).filter(text))];
+    if (!scopes.length) return 'it has no scope to show none of its code came after the review';
+    const its = latePaths().filter(p => inScope(p, scopes) && !inScope(p, fixScopes));
+    return its.length ? `its scope's code changed after the review: ${its.slice(0, 5).join(', ')}${its.length > 5 ? ', …' : ''}` : null;
+  };
+}
+
 // MAINT-0022 (the owner's review diet, 22 October 2026): under review.cadence milestone the milestone review is the only review of
 // its tasks' code (ci.js). Its `base` comes at or before the trusted branch's authorisation of the milestone, read from that branch's
 // own history, never from records a later change can edit (v2.11.0 review B2), so base..revision holds every task's code. It lists
@@ -170,11 +199,15 @@ function onlyReviewErrors({ r, milestone, config, candidate, baseline, records }
   if (!isObject(fc)) return errors;
   if (!at(fc.revision) || fc.revision === r.revision || !at(r.revision) || !at(fc.revision).isAncestor(r.revision)) errors.push('the milestone review\'s fix check must come after the review\'s revision: one fix check of the fixes to its findings');
   else {
-    const reviewed = loadAll(at(r.revision), rd).tasks;
-    const versions = [loadAll(at(fc.revision), rd), records].flat().flatMap(x => [...x.tasks.values()]).map(x => x.data).filter(d => d?.id && d.milestone === milestone && d.status !== 'Draft');
+    const reviewed = loadAll(at(r.revision), rd).tasks, checked = loadAll(at(fc.revision), rd);
+    const versions = [checked, records].flat().flatMap(x => [...x.tasks.values()]).map(x => x.data).filter(d => d?.id && d.milestone === milestone && d.status !== 'Draft');
+    const delivered = deliveredBeforeReview({ r, fc, base: split ? r.parts?.[0]?.base : r.base, at, config, milestone, reviewed, checked });
     for (const id of new Set(versions.map(d => d.id))) {
-      const fixes = versions.filter(d => d.id === id).every(d => typeof d.found_from === 'string' && FINDING.test(d.found_from));
-      if (reviewed.get(id)?.data?.status !== 'Done' && !fixes) errors.push(`${id} was not Done at the milestone review's revision ${r.revision.slice(0, 12)} and fixes none of its findings (found_from): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check`);
+      const mine = versions.filter(d => d.id === id);
+      const fixes = mine.every(d => typeof d.found_from === 'string' && FINDING.test(d.found_from));
+      if (reviewed.get(id)?.data?.status === 'Done' || fixes) continue;
+      const why = delivered(id, mine);
+      if (why) errors.push(`${id} was not Done at the milestone review's revision ${r.revision.slice(0, 12)} and fixes none of its findings (found_from): the milestone review covers every task's code; only fixes of its findings follow it, under its one fix check; nor does its record show its code was delivered before the review: ${why}`);
     }
   }
   errors.push(...vendorErrors({ ...fc, implementer_vendor: r.implementer_vendor }, config, 'the milestone review\'s fix check', 'review.fix_check.fresh_session'));

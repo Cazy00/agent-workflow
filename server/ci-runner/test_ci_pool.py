@@ -91,6 +91,7 @@ class Env:
         self.cfg.update(over)
         self.lxc, self.now, self.host = FakeLxc(), 1000.0, dict(GOOD)
         self.queued, self.running, self.private, self.source_fails = [], set(), True, False
+        self.api_calls = None  # what each source answer reports as `api_calls`; None leaves the field out
         self.commands, self.removed, self.remove_fails = [], [], False
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
                               host=lambda: self.host, clock=lambda: self.now)
@@ -100,9 +101,10 @@ class Env:
         if argv[0] == "src":
             if self.source_fails:
                 raise pool.PoolError("source down")
+            extra = {} if self.api_calls is None else {"api_calls": self.api_calls}
             if argv[1] == "queued":
-                return json.dumps({"version": 1, "repo": argv[2], "private": self.private, "jobs": self.queued})
-            return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running]})
+                return json.dumps({"version": 1, "repo": argv[2], "private": self.private, "jobs": self.queued, **extra})
+            return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running], **extra})
         if argv[1] == "create":
             return json.dumps({"version": 1, "runner_id": "77", "encoded_jit_config": "SECRET-JIT"})
         if self.remove_fails:
@@ -402,6 +404,34 @@ class ReaperFixTests(unittest.TestCase):
         self.assertEqual(Env(self).pool.poll_seconds(), 15)
         self.assertEqual(Env(self, repos=["o/%d" % i for i in range(5)]).pool.poll_seconds(), 72)
         self.assertEqual(Env(self, repos=["o/r"], poll_seconds=60).pool.poll_seconds(), 60)
+
+    def test_the_poll_pause_counts_the_calls_the_source_reported(self):  # B41 item 26
+        e = Env(self, repos=["o/a", "o/b"])
+        self.assertEqual(e.pool.poll_seconds(), 29)  # the fixed estimate: 2 × 6 calls
+        e.api_calls = 8  # one queued answer per repository, no containers: 16 calls in the pass
+        e.tick()
+        self.assertEqual(e.pool.last_calls, 16)
+        self.assertEqual(e.pool.poll_seconds(), 39)  # ceil(16 × 3600 / 1500)
+        e.api_calls = 1  # a cheap pass never polls faster than the fixed estimate
+        e.tick()
+        self.assertEqual(e.pool.poll_seconds(), 29)
+
+    def test_a_reported_call_count_is_checked_and_capped(self):  # B41 item 26
+        e = Env(self)
+        for bad in (-5, True, "40", 1.5):
+            e.api_calls = bad
+            e.tick()
+            self.assertEqual(e.pool.last_calls, 0, bad)
+        e.api_calls = 10 ** 9
+        e.tick()
+        self.assertEqual(e.pool.poll_seconds(), pool.MAX_REPORTED_PAUSE)
+
+    def test_a_pass_whose_source_fails_counts_only_what_answered(self):
+        e = Env(self, repos=["o/a"])
+        e.api_calls, e.source_fails = 50, True
+        e.tick()
+        self.assertEqual(e.pool.last_calls, 0)
+        self.assertEqual(e.pool.poll_seconds(), 15)
 
 
 class SpareTests(unittest.TestCase):
@@ -771,7 +801,8 @@ class GithubSourceTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), {"version": 1, "repo": "o/r", "private": True,
                                                 "jobs": [{"id": "11", "labels": ["wf-build"], "created_at": "t"},
                                                          {"id": "14", "labels": ["wf-build"], "created_at": "t2"},
-                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}]})
+                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}],
+                                                "api_calls": 7})  # the repository, 3 run listings, 3 jobs listings
         self.assertTrue(all(c[2] == "Bearer tok123" for c in self.calls if c[0] == "GET"))
 
     def test_queued_includes_queued_jobs_of_runs_already_in_progress_or_waiting(self):  # F1
@@ -788,6 +819,7 @@ class GithubSourceTests(unittest.TestCase):
     def test_running_names_the_runner(self):
         r = self.run_cli("source", "running", "o/r")
         self.assertEqual(json.loads(r.stdout)["jobs"], [{"id": "13", "runner_name": "ci-pool-wf-gate-1"}])
+        self.assertEqual(json.loads(r.stdout)["api_calls"], 2)  # B41 item 26: the run listing and its one jobs listing
 
     def test_jit_create_asks_for_one_label_no_defaults_group_1(self):
         r = self.run_cli("jit", "create", "o/r", "wf-build", "ci-pool-wf-build-123")

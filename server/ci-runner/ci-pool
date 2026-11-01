@@ -30,6 +30,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ID_RE = re.compile(r"^[0-9]{1,20}$")
 MEM_RE = re.compile(r"^([0-9]+)(MiB|GiB|MB|GB)$")
 MIN_POLL_SECONDS = 15
+MAX_REPORTED_PAUSE = 300  # a source that reports absurd call counts slows the pool to this, never stops it
 YOUNG_SECONDS = 60  # a container this young has not used its memory yet
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 ADMISSION_KEYS = ("min_mem_available_mib", "max_cpu_psi_avg60", "max_mem_psi_avg60")
@@ -278,6 +279,8 @@ class Pool:
     def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time):
         self.cfg, self.lxc, self.state, self.host, self.clock = cfg, lxc, state, host, clock
         self.run_cmd = run_cmd or self._run_cmd
+        self.pass_calls = 0   # API calls the source reported for the pass under way (ci-pool.contract.md, `api_calls`)
+        self.last_calls = 0   # ... and for the last whole pass; the poll pause is stretched to keep it within the budget
 
     # job source and JIT source: commands from the config (ci-pool.contract.md)
     def _run_cmd(self, argv):
@@ -296,6 +299,9 @@ class Pool:
             raise PoolError(f"{argv[0]}: not JSON") from e
         if not isinstance(doc, dict) or doc.get("version") != CONTRACT_VERSION:
             raise PoolError(f"{argv[0]}: contract version {doc.get('version') if isinstance(doc, dict) else '?'}, want {CONTRACT_VERSION}")
+        calls = doc.get("api_calls")
+        if isinstance(calls, int) and not isinstance(calls, bool) and calls >= 0:
+            self.pass_calls += calls
         return doc
 
     def queued(self, repo):
@@ -343,13 +349,18 @@ class Pool:
 
     # one pass
     def poll_seconds(self):
-        """The pause between passes: poll_seconds, but not below what keeps the source within its API budget."""
+        """The pause between passes: poll_seconds, but not below what keeps the source within its API budget. A pass costs
+        the calls the source reported for the last one (each unfinished run adds a jobs listing), or the fixed estimate
+        repositories × api_calls_per_repo_poll when that is more (a source that reports nothing). The reported part is capped
+        at MAX_REPORTED_PAUSE."""
         cfg = self.cfg
-        scaled = -(-len(cfg["repos"]) * cfg["api_calls_per_repo_poll"] * 3600 // cfg["api_calls_per_hour"])
-        return max(int(cfg["poll_seconds"]), MIN_POLL_SECONDS, scaled)
+        fixed = -(-len(cfg["repos"]) * cfg["api_calls_per_repo_poll"] * 3600 // cfg["api_calls_per_hour"])
+        reported = min(-(-self.last_calls * 3600 // cfg["api_calls_per_hour"]), MAX_REPORTED_PAUSE)
+        return max(int(cfg["poll_seconds"]), MIN_POLL_SECONDS, fixed, reported)
 
     def tick(self):
         now = self.clock()
+        self.pass_calls = 0
         try:
             instances = self.lxc.list()
         except PoolError as e:
@@ -365,6 +376,7 @@ class Pool:
             self.prune(now, pool)
         finally:
             self.state.save()  # what the reap learned must survive a pass that stops half way
+            self.last_calls = self.pass_calls
 
     def reap(self, pool, now):
         cfg = self.cfg

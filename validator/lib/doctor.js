@@ -100,6 +100,8 @@ export function evaluateDoctor({ config, repo, cwd = process.cwd() }) {
   }
   // v2.14.0: where CI waits for no reason. Warnings: no gate reads them and they never change `ok`.
   if (repo) warnings.push(...workflowWarnings({ repo, trustedBranch: config.trusted_branch ?? 'main', privateRepo }));
+  // MAINT-0027: the fast lane `wf precheck` runs before a task's first push. A warning: a project without one still works, and pays for each CI round trip.
+  if (!Array.isArray(config.checks?.fast) || !config.checks.fast.length) warnings.push({ name: 'checks.fast', detail: 'docs/workflow/config.json has no checks.fast, so `wf precheck` has nothing to run before the first push: add "checks": { "fast": [ …the project\'s lint, type and unit test commands… ] }', needed_for: 'the fast lane (procedures/execute.md)' });
   const second = config.review?.second_model;
   if (second?.tool) {
     const tool = run(second.tool, ['--version']);

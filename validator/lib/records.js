@@ -178,6 +178,11 @@ export function loadConfig(source) {
     // MAINT-0018 B5: the project's own start-of-session checks for `wf doctor`, each a shell command that succeeds when the
     // access or tool it names is there (for example ssh to the staging host). No gate runs them.
     if (config.preflight !== undefined && (!Array.isArray(config.preflight) || config.preflight.some(c => !plainObject(c) || typeof c.name !== 'string' || !c.name.trim() || typeof c.run !== 'string' || !c.run.trim() || Object.keys(c).some(k => !['name', 'run', 'why'].includes(k))))) throw new Error('preflight entries need a name and a run command (and optionally why)');
+    // MAINT-0027: the project's own lanes for `wf precheck`: shell commands, `fast` before a task's first push, `full` for the slow ones.
+    if (config.checks !== undefined) {
+      only(config.checks, ['fast', 'full'], 'checks');
+      for (const [k, v] of Object.entries(config.checks)) if (!Array.isArray(v) || v.some(c => typeof c !== 'string' || !c.trim() || c.includes('\0'))) throw new Error(`checks.${k} must be an array of shell command strings`);
+    }
     if (config.acceptance_evidence !== undefined && typeof config.acceptance_evidence !== 'boolean') throw new Error('acceptance_evidence must be true or false');
     // Removed in v2.0.0 (MAINT-0011). Their disabled defaults, which every scaffold since v1.8.0 wrote, are ignored until
     // bin/wf-upgrade removes them; an enabled one is refused, since it would otherwise stop applying without a word.

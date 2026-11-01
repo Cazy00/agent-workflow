@@ -239,7 +239,7 @@ test('MAINT-0018 B6: wf evidence --json prints the evidence alone', t => {
 // MAINT-0023 P10: with approval.auto_merge, `wf doctor` reads the trusted branch's rules and warns about one the agent's account
 // cannot satisfy. A warning never fails the exit code, and the bypass lists the account cannot see are not used.
 function rulesProject(t, { autoMerge = true, trusted } = {}) {
-  const p = project(t, { configEdit: c => ({ ...c, ...(trusted ? { trusted_branch: trusted } : {}), approval: { ...c.approval, auto_merge: autoMerge } }) });
+  const p = project(t, { configEdit: c => ({ ...c, checks: { fast: ['true'] }, ...(trusted ? { trusted_branch: trusted } : {}), approval: { ...c.approval, auto_merge: autoMerge } }) });
   const bin = path.join(p.temp, 'bin'); fs.mkdirSync(bin);
   const log = path.join(p.temp, 'gh.log');
   fakeExecutable(path.join(bin, 'gh'), `const fs = require('fs');

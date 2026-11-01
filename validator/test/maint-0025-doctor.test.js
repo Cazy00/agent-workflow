@@ -145,7 +145,7 @@ test('the template\'s shape: parallel jobs on one scope, a RAM database, one run
 });
 
 test('wf doctor puts the workflow findings in warnings, never in the exit code, and skips the installed wf-* files', t => {
-  const p = project(t, { configEdit: c => ({ ...c, repository: 'fixture/project' }) });
+  const p = project(t, { configEdit: c => ({ ...c, repository: 'fixture/project', checks: { fast: ['true'] } }) });
   const bin = path.join(p.temp, 'bin'); fs.mkdirSync(bin);
   fakeExecutable(path.join(bin, 'gh'), `const a = process.argv.slice(2).join(' ');
 if (a === '--version') console.log('gh version 2.40.0 (2023-12-01)');

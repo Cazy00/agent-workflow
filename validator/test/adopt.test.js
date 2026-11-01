@@ -65,11 +65,11 @@ test('wf-adopt scaffolds an adoption pinned to a full hash, and the result valid
   assert.equal(fs.readFileSync(path.join(dir, '.github/CODEOWNERS'), 'utf8').split('\n').filter(l => l && !l.startsWith('#')).join('\n'), '/docs/workflow/tasks/\n/docs/workflow/feedback/', 'a single owner in owner-merge mode gets the records carve-out and no active owner line');
   if (spawnSync('git', ['-C', root, 'cat-file', '-e', 'HEAD:templates/github/wf-ci.yml']).status === 0) {
     const ci = fs.readFileSync(path.join(dir, '.github/workflows/wf-ci.yml'), 'utf8');
-    assert.match(ci, /name: wf ci/);
+    assert.match(ci, /name: \$\{\{ github\.event\.pull_request\.draft && 'wf ci \(draft\)' \|\| 'wf ci' \}\}/, 'the job is the required check wf ci, and wf ci (draft) on a draft');
     assert.match(ci, /base\.ref == 'main' && vars\.WF_GATE == 'on' && 'wf-gate'/); assert.doesNotMatch(ci, /__TRUSTED_BRANCH__/); // v2.5.1 review C1
     // MAINT-0010: the gate reads the delivery evidence from the description, reruns when it is edited, and never
     // places the description's text in the script itself.
-    assert.match(ci, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
+    assert.match(ci, /types: \[opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, auto_merge_enabled, auto_merge_disabled\]/);
     assert.match(ci, /^\s+DESCRIPTION: \$\{\{ github\.event\.pull_request\.body \}\}$/m);
     assert.equal(ci.match(/github\.event\.pull_request\.body/g).length, 1, 'the description reaches the run only through the environment');
     assert.match(ci, /--delivery-evidence "\$RUNNER_TEMP\/pr-description\.md"/);

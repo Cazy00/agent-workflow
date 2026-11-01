@@ -39,7 +39,8 @@ printf '%s' "$json" | jq -r "$filter"
   const run = (script, env) => {
     fs.rmSync(out, { force: true });
     const r = spawnSync('bash', ['-c', script], { cwd: p.repo, encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}`, HOME: p.temp, GITHUB_OUTPUT: out, GITHUB_REPOSITORY: 'fixture/project', GH_TOKEN: 'x', FAKE_POSTS: posts, ...env } });
-    return { ...r, product: fs.existsSync(out) ? /product=(\w+)/.exec(fs.readFileSync(out, 'utf8'))?.[1] : null };
+    const written = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
+    return { ...r, product: /^product=(\w+)$/m.exec(written)?.[1] ?? null, lane: /^lane=(\w+)$/m.exec(written)?.[1] ?? null, written };
   };
   const status = (description, state = 'success', extra = {}) => JSON.stringify([{ context: 'wf-tested-tree', state, description, creator: { login: 'github-actions[bot]' }, target_url: RUN_URL, ...extra }, { context: 'ci/other', state: 'success', description: 'x', creator: { login: 'someone' } }]);
   const pulls = head => JSON.stringify([{ head: { sha: head } }]);
@@ -189,4 +190,58 @@ test('the marker names the run that wrote it (F1)', skip, t => {
   const r = run(result, { GITHUB_EVENT_NAME: 'pull_request', PRODUCT: 'true', HEAD_SHA: m.head, GITHUB_SHA: m.testMerge, GITHUB_RUN_ID: '123', FAKE_TREE: tree, RESULTS: 'success success success success' });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(fs.readFileSync(posts, 'utf8').includes(`target_url=${RUN_URL}`), fs.readFileSync(posts, 'utf8'));
+});
+
+// MAINT-0027 (review B2, S4): the lane `scope` writes, and the slow job that reads it.
+const acceptance = workflow.jobs.acceptance;
+const slowJobRuns = (product, lane) => new RegExp(`^needs\\.scope\\.outputs\\.lane == '${lane}'$`).test(acceptance.if.trim()) && !/product/.test(acceptance.if) && (product === 'true' || product === 'false');
+const wfPaths = (p, base, head) => spawnSync(process.execPath, [cli, 'paths', '--baseline', base, '--candidate', head, '--repo', p.repo, '--json'], { encoding: 'utf8' });
+
+test('a records-only change that closes a milestone is the full lane, so the slow job runs although the product jobs are skipped', skip, t => {
+  const { p, run } = bench(t);
+  const before = p.git('rev-parse', 'HEAD');
+  p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Verified'));
+  const close = p.commit('M-0001 Verified');
+  const paths = JSON.parse(wfPaths(p, before, close).stdout);
+  assert.deepEqual([paths.records_only, paths.lane], [true, 'full']);
+  const r = run(scope, { EVENT: 'pull_request', BASE: before, CANDIDATE: close, GITHUB_SHA: 'unused', FAKE_PULLS: '[]', FAKE_STATUSES: '[]' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual([r.product, r.lane], ['false', 'full'], r.written);
+  assert.ok(slowJobRuns(r.product, r.lane), `the job's if is: ${acceptance.if}`);
+  // An ordinary records change and a task's code change are not the full lane.
+  p.edit('docs/workflow/milestones/M-0001.md', x => `${x}\nA note.\n`);
+  const note = p.commit('a note');
+  assert.deepEqual([run(scope, { EVENT: 'pull_request', BASE: close, CANDIDATE: note, GITHUB_SHA: 'unused', FAKE_PULLS: '[]', FAKE_STATUSES: '[]' }).lane], ['records']);
+  p.write('src/a.js', 'export const a = 1;\n');
+  const code = p.commit('code');
+  const fast = run(scope, { EVENT: 'pull_request', BASE: note, CANDIDATE: code, GITHUB_SHA: 'unused', FAKE_PULLS: '[]', FAKE_STATUSES: '[]' });
+  assert.deepEqual([fast.product, fast.lane], ['true', 'fast']);
+  assert.ok(!slowJobRuns(fast.product, fast.lane));
+});
+
+test('scope writes exactly one validated word per output, whatever wf paths does', skip, t => {
+  const { p, run } = bench(t);
+  const before = p.git('rev-parse', 'HEAD');
+  p.write('weird.xyz', 'x\n');
+  const odd = p.commit('an unclassified path');
+  assert.equal(wfPaths(p, before, odd).status, 1, 'wf paths exits 1 for an unclassified path, yet prints its JSON');
+  const env = { EVENT: 'pull_request', BASE: before, CANDIDATE: odd, GITHUB_SHA: 'unused', FAKE_PULLS: '[]', FAKE_STATUSES: '[]' };
+  const word = r => {
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.written.trim().split('\n').map(l => l.split('=')[0]).sort(), ['lane', 'product'], r.written);
+    assert.match(r.written, /^product=(true|false)$/m);
+    assert.match(r.written, /^lane=(records|fast|full)$/m);
+    return r;
+  };
+  assert.equal(word(run(scope, env)).product, 'true');
+  // A pin whose wf paths prints no JSON, prints garbage, or prints an unknown lane: the slowest lane, and still one line each.
+  for (const body of ['exit 1', 'echo "not json"; exit 1', 'echo \'{"records_only":false,"lane":"banana"}\'; exit 1', 'echo \'{"records_only":"yes"}\'; exit 0']) {
+    fs.writeFileSync(path.join(p.repo, 'scripts', 'wf'), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    const r = word(run(scope, env));
+    assert.deepEqual([r.product, r.lane], ['true', 'full'], body);
+  }
+  // An older pin: a record of fields without lane is read as full.
+  fs.writeFileSync(path.join(p.repo, 'scripts', 'wf'), `#!/bin/sh\necho '{"records_only":true}'\n`, { mode: 0o755 });
+  const old = word(run(scope, env));
+  assert.deepEqual([old.product, old.lane], ['false', 'full']);
 });

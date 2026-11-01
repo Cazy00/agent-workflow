@@ -182,5 +182,15 @@
     "notes": [
       "A project that copied templates/github/wf-ci.yml at v2.14.0 or v2.15.0, or kept an older copy because of this bug, re-copies it over .github/workflows/wf-ci.yml with __TRUSTED_BRANCH__ replaced by the trusted branch, or lets bin/wf-upgrade refresh an unchanged copy (a customised copy: change the one summary line that says \"Records only\" so its apostrophe is ’, not '). At those versions the \"Run the gate\" step fails with a shell syntax error on every pull request. Otherwise only the pin moves."
     ]
+  },
+  "v2.16.0": {
+    "notes": [
+      "Set checks.fast (and checks.full) in docs/workflow/config.json as lists of shell commands, so wf precheck has something to run; wf doctor warns while checks.fast is missing.",
+      "Set checks.full_lane in docs/workflow/config.json to the names of the required checks that only the full lane runs (the slow job). Delivery evidence may report only those skipped, and only on the fast lane; without the list a skipped required check does not count.",
+      "Open task pull requests as drafts, push once, write the delivery evidence, then gh pr ready (procedures/execute.md).",
+      "Re-copy templates/github/wf-ci.yml over .github/workflows/wf-ci.yml with __TRUSTED_BRANCH__ replaced by the trusted branch, or let bin/wf-upgrade refresh an unchanged copy: a draft run is then named \"wf ci (draft)\" and never fails. A repository with no required \"wf ci\" check relies on its merge route to require wf ci by name.",
+      "A project that copied templates/github/project-ci.yml adds the lane output and a full-lane job if it wants them (the job runs on lane == full whatever product says, and scope reads wf paths --json once with a fallback to full); a missing lane field is read as full.",
+      "A project whose CODEOWNERS has a default owner (* @owner) removes it if it wants no review requests on every pull request. A ruleset that requires code-owner review then requires nothing."
+    ]
   }
 }

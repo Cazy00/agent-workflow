@@ -770,7 +770,7 @@ test('MAINT-0016: auto-merge on a pull request the owner merges, or in a project
 
 test('MAINT-0016: the wf ci workflow runs when auto-merge is turned on or off, and passes it to the gate as an environment value', () => {
   const template = fs.readFileSync(fileURLToPath(new URL('../../templates/github/wf-ci.yml', import.meta.url)), 'utf8');
-  assert.match(template, /types: \[opened, synchronize, reopened, edited, auto_merge_enabled, auto_merge_disabled\]/);
+  assert.match(template, /types: \[opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, auto_merge_enabled, auto_merge_disabled\]/);
   assert.match(template, /WF_PR_AUTO_MERGE: \$\{\{ github\.event\.pull_request\.auto_merge && 'on' \|\| 'off' \}\}/);
   assert.doesNotMatch(template, /--auto-merge/, 'an older pinned validator would refuse an unknown option');
 });

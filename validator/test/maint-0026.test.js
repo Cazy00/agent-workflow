@@ -93,10 +93,11 @@ for (const [name, edit] of Object.entries(staysOwner)) {
     const r = p.run(['ci', '--baseline', p.base, '--candidate', head, '--task', 'T-0002'], { evidence: e });
     assert.ok(!(r.out?.deferred ?? []).some(d => entry.test(d)), JSON.stringify(r.out?.deferred));
     if (unparsed.includes(name)) {
-      // The list does not parse as ids, so M-0001 names no task: readiness refuses T-0002 as a found task without found_from, and
-      // wf ci fails on it, whatever the owner would have said.
-      assert.equal(r.status, 1, r.stdout);
-      assert.ok(r.out.readiness.reasons.some(x => /T-0002 is a found task of M-0001 \(its tasks: list does not name it\) without found_from/.test(x)), JSON.stringify(r.out.readiness.reasons));
+      // The list does not parse as ids, so M-0001 names no task: T-0002 is a found task without found_from. Under MAINT-0027 that
+      // passes readiness as a deferred line for the acceptance, and the milestone record stays the owner's merge.
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.equal(r.out.merge, 'owner');
+      assert.deepEqual(r.out.deferred, ['found task T-0002 of M-0001 without found_from, for the owner at the acceptance']);
     } else {
       assert.equal(r.status, 0, r.stdout + r.stderr);
       assert.equal(r.out.merge, 'owner');

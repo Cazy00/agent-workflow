@@ -3,7 +3,7 @@ import { DEFERRED_RE, list, loadAll, loadConfig, loadRecord } from './records.js
 import { governingChanged } from './freshness.js';
 import { overlaps } from './scope.js';
 import { classifyPaths } from './paths.js';
-import { milestonePathOf, tasksOnlyChange } from './tasks-only.js';
+import { deferring, milestonePathOf, tasksOnlyChange } from './tasks-only.js';
 export { overlaps } from './scope.js';
 
 export const STAGES = ['implement', 'verify', 'integrate', 'accept', 'release'];
@@ -77,6 +77,7 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   const rd = config.records_dir ?? 'docs/workflow';
   const reasons = [];
   const pending = [];
+  const deferred = []; // MAINT-0027: for the owner at the milestone's acceptance
   const blocks = []; // { id, scopes }
   let structural = false; // a failure no subset can route around
   const fail = (msg) => { reasons.push(msg); structural = true; };
@@ -122,8 +123,11 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   if (added) pending.push(added);
   else if (room) {
     const ask = `ask the owner, who adds it to ${t.milestone}'s tasks: or moves the work to a later milestone`;
-    if (!t.found_from) fail(`${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
-    else if (!room.within) fail(`${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
+    // MAINT-0027: where the owner approves at the acceptance (approval.defer_to_acceptance with acceptance_evidence, owner-merge), a found
+    // task without found_from or beyond the allowance passes and is listed as deferred; its scope and acceptance IDs were checked above.
+    const defer = (why, text) => (deferring(config) ? deferred.push(`found task ${taskId} of ${t.milestone} ${why}, for the owner at the acceptance`) : fail(text));
+    if (!t.found_from) defer('without found_from', `${taskId} is a found task of ${t.milestone} (its tasks: list does not name it) without found_from: name the review finding (R-NNNN/F1) or trial it fixes, or ${ask}`);
+    else if (!room.within) defer('beyond its found_tasks allowance', `${taskId} would be found task ${room.begun.length + 1} of ${t.milestone}, beyond its found_tasks allowance of ${room.allowed}${room.begun.length ? ` (begun: ${room.begun.join(', ')})` : ''}: ${ask}`);
   }
   for (const p of changed) if (!list(t.scope).some(s => p === s || p.startsWith(s.replace(/\/$/, '') + '/'))) fail(`changed production path ${p} is outside task scope`);
   if (t.feature_readiness && !baseline.exists(t.feature_readiness)) fail(`feature_readiness ${t.feature_readiness} is not on the baseline`);
@@ -215,10 +219,10 @@ export function evaluateReadiness({ baseline, candidate = baseline, task: taskId
   if (!t.baseline_result) fail('baseline_result is not recorded (pass, or fail: <summary> for a known failing baseline)');
   else if (stageIdx > 0 && baselinePending(t)) fail(baselinePending(t));
 
-  return finish({ taskId, status: t.status, stage, reasons, pending, structural, blocks, subset: list(t.subset).map(trim), baseline: baseline.name });
+  return finish({ taskId, status: t.status, stage, reasons, pending, deferred, structural, blocks, subset: list(t.subset).map(trim), baseline: baseline.name });
 }
 
-function finish({ taskId, status, stage, reasons, pending = [], structural, blocks = [], subset = [], baseline = null }) {
+function finish({ taskId, status, stage, reasons, pending = [], deferred = [], structural, blocks = [], subset = [], baseline = null }) {
   let outcome = OUTCOMES.needs;
   let readySubset = [];
   if (reasons.length === 0) outcome = OUTCOMES.ready;
@@ -226,5 +230,5 @@ function finish({ taskId, status, stage, reasons, pending = [], structural, bloc
     outcome = OUTCOMES.subset;
     readySubset = subset;
   }
-  return { task: taskId, status, stage, outcome, reasons, pending, subset: readySubset, baseline };
+  return { task: taskId, status, stage, outcome, reasons, pending, ...(deferred.length ? { deferred } : {}), subset: readySubset, baseline };
 }

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TASK_BRANCH, WfError, listedOwners, classifyPaths, dirSource, evaluateCi, evaluateReadiness, gitSource, loadConfig, loadAll, list, validateRecords } from './lib/index.js';
-import { cloneFilters, gitRunner, unsafePath, verifiedMirror } from './lib/git.js';
+import { cloneFilters, gitRunner, unsafePath, verifiedMirror, workTreeRoot } from './lib/git.js';
 import { isAcceptanceTest, recordsOnly } from './lib/paths.js';
 import { createEnforcedTrust, createTrust } from './lib/trust.js';
 import { evaluateAcceptance, ownerTests, pendingChange, pendingIn, pendingNote, testedIds } from './lib/acceptance.js';
@@ -27,12 +27,14 @@ import { renderAcceptanceBrief } from './lib/acceptance-brief.js';
 import { resolveRoles, reviewLevel } from './lib/roles.js';
 import { evaluateDoctor } from './lib/doctor.js';
 import { decideReuse, formatMarker } from './lib/ci-reuse.js';
+import { laneOf } from './lib/lane.js';
+import { runPrecheck } from './lib/precheck.js';
 import { prune } from './lib/prune.js';
 import { waitForCommit, waitForPullRequest, workflowRuns, WAIT_CEILING_SECONDS, CHECK_RUNS_SECONDS } from './lib/wait.js';
 import { evaluateClient, renderClient } from './lib/client.js';
 import { gitHistory } from './lib/client-history.js';
 import { readBranches } from './lib/client-live.js';
-const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage', 'reuse'];
+const COMMANDS = ['records', 'readiness', 'paths', 'ci', 'pending', 'acceptance', 'lifecycle', 'session', 'status', 'next', 'closeout', 'brief', 'attest', 'delivery-check', 'review-packet', 'evidence', 'doctor', 'wait', 'done', 'prune', 'usage', 'reuse', 'precheck', 'lane'];
 const OPTIONS = ['repo', 'baseline', 'candidate', 'task', 'branch', 'changed', 'base', 'head', 'trust-key', 'receipts', 'repository', 'stage', 'record', 'expires-at', 'pull-requests', 'runs', 'workflow-file', 'event', 'required-check', 'evidence', 'delivery-evidence', 'unsigned-receipts', 'payloads', 'out', 'sandbox', 'protect', 'from', 'pr', 'implemented', 'timeout', 'commit', 'milestone', 'acceptance-evidence', 'claude-session', 'codex-dir', 'since', 'until', 'marker'];
 const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--candidate REV]
   [--task T-0001] [--stage implement|verify|integrate|accept|release] [--trust-key FILE --receipts FILE --repository OWNER/REPO [--unsigned-receipts FILE]] [--json]
@@ -52,6 +54,8 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
   wait --pr N [--merged] | --commit SHA [--timeout MINUTES]: waits for the pull request's (or a trusted-branch commit's) required checks to appear and finish (or, with --merged, for the pull request to merge)
     for at most ${WAIT_CEILING_SECONDS} s, or --timeout minutes (stay inside the five-minute prompt cache); exit 0 passed or merged, 1 failed, 4 still pending (the output's next is the command to run again)
   done --task T-0001 --implemented SHA: marks the task record Done in the working tree, for the pull request's last commit
+  precheck [--full]: runs the project's checks.fast (checks.full with --full), a list of shell commands in docs/workflow/config.json, in the repository root; prints each command and its seconds, stops at the first failure with its exit code; exit 2 and what to add when the key is missing (MAINT-0027)
+  lane --baseline REV --candidate REV: prints the change's lane, records, fast or full (paths and ci report it as lane); older pins have no lane, which a project's CI treats as full
   reuse --candidate SHA --emit | --marker TEXT: for a project's CI. --emit prints the marker (the candidate's tree and commit) a passing pull request run leaves on its head; with --marker (the marker found on the pull request that produced a push, or "none") prints reuse=true only when the pushed commit's tree is the tree the pull request passed on, else reuse=false and the reason on standard error (--json: both); grants nothing (v2.14.0)
   prune --milestone M-0001 [--dry-run]: one commit on the current branch, never the trusted branch, removing the Done task records of an Accepted or Released milestone, except those another record names
   usage [--claude-session SESSION.jsonl]... [--codex-dir DIR] [--since ISO] [--until ISO] [--task T-0001 [--outcome]] [--milestone M-0001 [--acceptance-evidence FILE]]: per agent, task and role, what the
@@ -90,6 +94,7 @@ async function main() {
     if (a === '--lead') { o.lead = true; continue; }
     if (a === '--acceptance') { o.acceptance = true; continue; }
     if (a === '--merged') { o.merged = true; continue; }
+    if (a === '--full') { o.full = true; continue; }
     if (a === '--emit') { o.emit = true; continue; }
     if (a === '--dry-run') { o.dryRun = true; continue; }
     if (a === '--outcome') { o.outcome = true; continue; }
@@ -112,6 +117,7 @@ async function main() {
     console.log(USAGE);
     return 0;
   }
+  if (o.full && cmd !== 'precheck') throw new WfError('--full is only for precheck');
   if ((o.emit || o.marker !== undefined) && cmd !== 'reuse') throw new WfError('--emit and --marker are only for reuse');
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
   if (o['acceptance-evidence'] !== undefined && (cmd !== 'usage' || o.milestone === undefined)) throw new WfError('--acceptance-evidence is only for usage, with --milestone');
@@ -303,7 +309,7 @@ async function main() {
     const p = path.resolve(repo, spec);
     return fs.existsSync(p) && fs.statSync(p).isDirectory() ? dirSource(p) : gitSource(repo, spec);
   };
-  if (!o.baseline && !['records', 'status', 'next', 'doctor', 'wait', 'done', 'prune', 'brief', 'reuse'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
+  if (!o.baseline && !['records', 'status', 'next', 'doctor', 'wait', 'done', 'prune', 'brief', 'reuse', 'precheck'].includes(cmd)) throw new WfError('an explicit, freshly fetched --baseline is required');
   // `wf next` defaults its baseline to the trusted branch named by the working tree's config. `git fetch` moves
   // origin/<branch>, never the local branch, so the newer of the two is read when one contains the other, and a note says
   // which (MAINT-0016). Right after bin/wf-adopt the adoption is not committed there yet: read the working tree then.
@@ -340,6 +346,10 @@ async function main() {
     if (!o.task || !/^T-\d{4}$/.test(o.task)) throw new WfError('brief --lead needs --task T-0001');
     process.stdout.write(renderLeadBrief({ baseline, candidate, task: o.task }));
     return 0;
+  }
+  if (cmd === 'precheck') {
+    const result = runPrecheck({ config, root: workTreeRoot(repo), full: o.full === true });
+    return result.code;
   }
   if (cmd === 'doctor') {
     const result = evaluateDoctor({ config, repo });
@@ -586,7 +596,12 @@ async function main() {
     const classes = classifyPaths(config, paths);
     // MAINT-0017 A3: a project's CI may skip its product steps on planning_only (delivery.md); empty or unclassified is never.
     // v2.14.0: records_only also counts milestone and decision records (lib/paths.js), which planning_only never did.
-    result = { ok: !classes.some(c => c.category === 'unclassified'), planning_only: classes.length > 0 && classes.every(c => c.category === 'planning'), records_only: recordsOnly(config, paths), classes };
+    result = { ok: !classes.some(c => c.category === 'unclassified'), planning_only: classes.length > 0 && classes.every(c => c.category === 'planning'), records_only: recordsOnly(config, paths), lane: laneOf({ config, baseline, candidate, changed: paths }), classes };
+  }
+  else if (cmd === 'lane') {
+    if (!o.candidate && !o.head) throw new WfError('lane needs --baseline and --candidate');
+    result = { ok: true, lane: laneOf({ config, baseline, candidate, changed: changed() }) };
+    if (!o.json) { console.log(result.lane); return 0; }
   }
   else if (cmd === 'ci') {
     if (trust && candidate.kind !== 'git') throw new WfError('trusted integration requires a committed candidate');

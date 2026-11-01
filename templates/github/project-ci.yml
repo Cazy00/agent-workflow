@@ -20,12 +20,14 @@
 # - A change to records only (`wf paths` says records_only, since v2.14.0; an older pin leaves the field out and runs everything) skips the
 #   product jobs. `result` is the one required check; skipped jobs count as passed in it.
 # - Lanes (MAINT-0027, procedures/delivery.md): `wf paths --json` also reports `lane`: `records`, `fast` or `full`. A task's pull request is
-#   `fast` and runs the quick jobs only; `full` (the change closes a milestone, or changes an enforcement path or the config's `checks`)
-#   also runs the slow ones, so they run once per milestone, not once per task. The `acceptance` job below is that slow job (end-to-end
-#   or acceptance tests): it runs only when `scope` says the lane is `full`, or, as the comment in `scope` shows, when a path the
-#   suite maps to it changed. A pin from before v2.16.0 has no `lane`, and a missing field is read as `full`. No schedule and no
-#   nightly run: nothing runs by the clock. A skipped job counts as passed in `result`; the delivery evidence may report the required
-#   check `skipped` only when `wf ci` itself recomputes the lane from the baseline and the candidate as `fast`.
+#   `fast` and runs the quick jobs only; `full` (the change closes a milestone, changes an enforcement path, an acceptance test or the
+#   acceptance map, or changes the config's `checks`) also runs the slow ones, so they run once per milestone, not once per task. The
+#   `acceptance` job below is that slow job (end-to-end or acceptance tests): it runs whenever `scope` says the lane is `full`, records
+#   only or not, since a change that closes a milestone is usually records only; a project can also run it when a path the suite maps to
+#   it changed (the comment in `scope`). A pin from before v2.16.0 has no `lane`, and a missing field is read as `full`. No schedule and
+#   no nightly run: nothing runs by the clock. A skipped job counts as passed in `result`; the delivery evidence may report a required
+#   check `skipped` only when it is named in `checks.full_lane` of docs/workflow/config.json (name the check CI reports for this job) and
+#   `wf ci` itself recomputes the lane from the baseline and the candidate as `fast`.
 # - The deploy job always runs on a push to the trusted branch once `result` passed: reuse and records-only skip tests, never a deploy.
 #   Keep a job that holds deployment secrets on GitHub's runner (server/ci-runner/README.md).
 # - Runner labels are fixed here (`wf-build`) and `CI_BUILD` only switches them on; a project depends on no other label.
@@ -73,9 +75,13 @@ jobs:
           git fetch -q origin "$CANDIDATE" || true
           zero=0000000000000000000000000000000000000000
           if [ -n "$BASE" ] && [ "$BASE" != "$zero" ]; then
-            records=$(scripts/wf paths --baseline "$BASE" --candidate "$CANDIDATE" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).records_only===true))' || echo false)
+            # One call, kept whole: wf paths exits 1 for an unclassified path and still prints its JSON. Each word below is read from that
+            # text with a fallback (everything runs, in the slowest lane), so a failed or garbled call never writes a second line.
+            json=$(scripts/wf paths --baseline "$BASE" --candidate "$CANDIDATE" --json) || true
+            records=$(printf %s "$json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).records_only===true?"true":"false")}catch{console.log("false")}})') || records=false
             [ "$records" = true ] && { echo "records only: the product jobs are skipped"; product=false; }
-            lane=$(scripts/wf paths --baseline "$BASE" --candidate "$CANDIDATE" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).lane ?? "full"))' || echo full)
+            lane=$(printf %s "$json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const l=JSON.parse(s).lane;console.log(["records","fast","full"].includes(l)?l:"full")}catch{console.log("full")}})') || lane=full
+            case "$lane" in records|fast|full) ;; *) lane=full;; esac
             # A project can also run the slow job when a path the suite maps to it changed, whatever the lane. For example:
             #   changed=$(git diff --name-only "$BASE" "$CANDIDATE")
             #   echo "$changed" | grep -qE '^(e2e/|src/checkout/)' && lane=full
@@ -92,7 +98,8 @@ jobs:
             # Any error from wf reuse (an older pin, an unreadable marker) means a full run, never a failed one.
             decision=$(scripts/wf reuse --candidate "$GITHUB_SHA" --marker "${marker:-none}") || decision=reuse=false
             echo "$decision"
-            [ "$decision" = reuse=true ] && product=false
+            # The pull request ran this very tree in its own lane, the slow job included when that was full: nothing runs again.
+            [ "$decision" = reuse=true ] && { product=false; lane=fast; }
           fi
           echo "product=$product" >> "$GITHUB_OUTPUT"
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
@@ -139,7 +146,8 @@ jobs:
   acceptance:
     # The slow job, on the full lane only (MAINT-0027): once when a milestone is ready, never per task, never on a schedule.
     needs: scope
-    if: needs.scope.outputs.product == 'true' && needs.scope.outputs.lane == 'full'
+    # Whatever `product` says: a change that closes a milestone is usually records only, and it is the one that must run this job.
+    if: needs.scope.outputs.lane == 'full'
     runs-on: ${{ vars.CI_BUILD == 'on' && 'wf-build' || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:

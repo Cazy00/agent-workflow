@@ -84,7 +84,8 @@ def pages(path, key):
 
 def jobs_of(repo, run_statuses, status):
     """Jobs whose own status is `status`, found through the workflow runs in any of `run_statuses` (the jobs endpoint only
-    lists per run). A run turns in_progress when its first job starts, so its other queued jobs are only found there."""
+    lists per run). A run turns in_progress when its first job starts, so its other queued jobs are only found there. A run held by a
+    concurrency group is `pending` and can stay so while its job is already queued (B41 item 25)."""
     out, seen = [], set()
     for rs in run_statuses:
         for run in pages(f"/repos/{repo}/actions/runs?status={rs}", "workflow_runs"):
@@ -100,7 +101,7 @@ def source(verb, repo):
         private = call("GET", f"/repos/{repo}").get("private") is True
         jobs = [] if not private else [
             {"id": str(j["id"]), "labels": j.get("labels", []), "created_at": j.get("created_at", "")}
-            for j in jobs_of(repo, ("queued", "in_progress", "waiting"), "queued")]
+            for j in jobs_of(repo, ("queued", "in_progress", "waiting", "pending"), "queued")]
         return {"version": VERSION, "repo": repo, "private": private, "jobs": jobs, "api_calls": CALLS[0]}
     if verb == "running":
         jobs = [{"id": str(j["id"]), "runner_name": j.get("runner_name") or ""}

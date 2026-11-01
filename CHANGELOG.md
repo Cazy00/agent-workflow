@@ -2,6 +2,14 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.16.3
+
+A patch: the CI pool's GitHub queue source (`server/ci-runner/ci-pool-github`) read only `queued`, `in_progress` and `waiting` runs, so a job whose run was held `pending` by a concurrency group after a superseding push never got a runner (workspace backlog B41 item 25; found 2026-10-31, when a job sat queued for an hour; home's broker scan was fixed in workspace #364). Nothing is required to move the pin.
+
+- **`ci-pool-github source queued` also reads `pending` runs.** One more run listing per repository and pass (the fixed calls are still the 6 `api_calls_per_repo_poll` counts); a `requested` run has no jobs yet and is not read. `server/ci-runner/README.md` has the new call count. A host that uses it reinstalls the pool (`install-host.sh`) to take the change.
+- Tests: `server/ci-runner/test_ci_pool.py` (a queued job of a pending run is found; the call count).
+- Upgrade: only the pin moves.
+
 ## v2.16.2
 
 A patch: under `review.cadence: milestone`, a fix check run on a head that did not descend from the milestone review's revision failed the acceptance evidence, and had to be named through a later merge commit with the same code (MAINT-0029, `docs/proposals/MAINT-0029-fix-check-same-code.md`; backlog B44, found at headless-lightroom M-0006's acceptance). Nothing is required to move the pin.

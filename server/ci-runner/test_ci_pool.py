@@ -809,6 +809,8 @@ class GithubSourceTests(unittest.TestCase):
                     return self.reply({"workflow_runs": [{"id": 6}]})
                 if self.path.startswith("/repos/o/r/actions/runs?status=waiting"):
                     return self.reply({"workflow_runs": [{"id": 7}]})
+                if self.path.startswith("/repos/o/r/actions/runs?status=pending"):
+                    return self.reply({"workflow_runs": [{"id": 8}]})  # held by a concurrency group, its job queued
                 if self.path == "/repos/o/p":
                     return self.reply({"private": True})
                 if self.path.startswith("/repos/o/p/actions/runs?status=queued"):
@@ -826,6 +828,9 @@ class GithubSourceTests(unittest.TestCase):
                 if "/runs/6/jobs" in self.path:
                     return self.reply({"jobs": [{"id": 13, "status": "in_progress", "runner_name": "ci-pool-wf-gate-1"},
                                                 {"id": 14, "status": "queued", "labels": ["wf-build"], "created_at": "t2"}]})
+                if "/runs/8/jobs" in self.path:
+                    return self.reply({"jobs": [{"id": 17, "status": "queued", "labels": ["wf-gate"], "created_at": "t5"},
+                                                {"id": 18, "status": "pending", "labels": ["wf-gate"]}]})
                 if "/runs/7/jobs" in self.path:
                     return self.reply({"jobs": [{"id": 15, "status": "queued", "labels": ["wf-gate"], "created_at": "t4"},
                                                 {"id": 16, "status": "waiting", "labels": ["wf-gate"]}]})
@@ -864,8 +869,9 @@ class GithubSourceTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), {"version": 1, "repo": "o/r", "private": True,
                                                 "jobs": [{"id": "11", "labels": ["wf-build"], "created_at": "t"},
                                                          {"id": "14", "labels": ["wf-build"], "created_at": "t2"},
-                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}],
-                                                "api_calls": 7})  # the repository, 3 run listings, 3 jobs listings
+                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"},
+                                                         {"id": "17", "labels": ["wf-gate"], "created_at": "t5"}],
+                                                "api_calls": 9})  # the repository, 4 run listings, 4 jobs listings
         self.assertTrue(all(c[2] == "Bearer tok123" for c in self.calls if c[0] == "GET"))
 
     def test_queued_includes_queued_jobs_of_runs_already_in_progress_or_waiting(self):  # F1
@@ -874,6 +880,12 @@ class GithubSourceTests(unittest.TestCase):
         self.assertIn("14", ids)
         self.assertIn("15", ids)
         self.assertNotIn("16", ids, "a job that is itself waiting is not queued")
+
+    def test_queued_includes_a_queued_job_of_a_pending_run(self):  # B41 item 25
+        r = self.run_cli("source", "queued", "o/r")
+        ids = [j["id"] for j in json.loads(r.stdout)["jobs"]]
+        self.assertIn("17", ids)
+        self.assertNotIn("18", ids, "a job that is itself pending is not queued")
 
     def test_the_listings_are_paged(self):  # F1
         r = self.run_cli("source", "queued", "o/p")

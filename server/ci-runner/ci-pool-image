@@ -137,8 +137,23 @@ if [[ $rc -ne 0 ]]; then
 fi
 $LXC stop "$work"
 # Publish under a new alias first, then rotate: a build that fails leaves the current image and its -prev as they were.
+# A -new left by a build that failed after its publish names an image nothing else keeps: delete that image, not
+# only its alias, unless it is the current or the -prev one (published images do not expire).
+stale_fp="$($LXC image info "$alias-new" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || stale_fp=""
+if [[ -n "$stale_fp" ]]; then
+  keep_cur="$($LXC image info "$alias" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || keep_cur=""
+  keep_prev="$($LXC image info "$alias-prev" 2>/dev/null | awk '/^Fingerprint:/ {print $2}')" || keep_prev=""
+  if [[ "$stale_fp" != "$keep_cur" && "$stale_fp" != "$keep_prev" ]]; then
+    $LXC image delete "$stale_fp" || echo "ci-pool-image: could not delete the stale image $stale_fp; delete it by hand." >&2
+  fi
+fi
 $LXC image alias delete "$alias-new" >/dev/null 2>&1 || true
 $LXC publish "$work" --alias "$alias-new" "description=ci-pool $kind $(date -u +%F)"
+new_fp="$($LXC image info "$alias-new" | awk '/^Fingerprint:/ {print $2}')" || new_fp=""
+if [[ -z "$new_fp" ]]; then
+  echo "ci-pool-image: no fingerprint for $alias-new; the current image is unchanged (the next build deletes $alias-new)." >&2
+  exit 1
+fi
 if $LXC image alias list --format csv | cut -d, -f1 | grep -qx "$alias"; then
   # The image behind the old -prev alias would stay unaliased for ever (published images do not expire): delete it by
   # fingerprint first, unless it is the very image being kept.
@@ -148,8 +163,15 @@ if $LXC image alias list --format csv | cut -d, -f1 | grep -qx "$alias"; then
   if [[ -n "$prev_fp" && "$prev_fp" != "$cur_fp" ]]; then
     $LXC image delete "$prev_fp" || echo "ci-pool-image: could not delete the old image $prev_fp; delete it by hand." >&2
   fi
-  $LXC image alias rename "$alias" "$alias-prev"
-  had_prev=1
+  if [[ -n "$cur_fp" ]]; then
+    $LXC image alias create "$alias-prev" "$cur_fp"
+    had_prev=1
+  fi
+  # The pool launches from "$alias" at any moment: repoint it in one API call (PATCH of its target), never a delete and a
+  # create or two renames, so a launch always finds either the old image or the new one.
+  $LXC query -X PATCH "/1.0/images/aliases/$alias" --data "{\"target\": \"$new_fp\"}" >/dev/null
+  $LXC image alias delete "$alias-new"
+else
+  $LXC image alias rename "$alias-new" "$alias"
 fi
-$LXC image alias rename "$alias-new" "$alias"
 echo "Image $alias published${had_prev:+; the previous one is $alias-prev}."

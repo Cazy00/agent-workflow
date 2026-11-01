@@ -91,18 +91,22 @@ class Env:
         self.cfg.update(over)
         self.lxc, self.now, self.host = FakeLxc(), 1000.0, dict(GOOD)
         self.queued, self.running, self.private, self.source_fails = [], set(), True, False
+        self.api_calls = None  # what each source answer reports as `api_calls`; None leaves the field out
         self.commands, self.removed, self.remove_fails = [], [], False
+        self.mem = {}  # container -> what read_memory would answer for it
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
-                              host=lambda: self.host, clock=lambda: self.now)
+                              host=lambda: self.host, clock=lambda: self.now,
+                              memory=lambda n: self.mem.get(n, {"memory_peak_mib": None, "oom_kill": None}))
 
     def cmd(self, argv):
         self.commands.append(argv)
         if argv[0] == "src":
             if self.source_fails:
                 raise pool.PoolError("source down")
+            extra = {} if self.api_calls is None else {"api_calls": self.api_calls}
             if argv[1] == "queued":
-                return json.dumps({"version": 1, "repo": argv[2], "private": self.private, "jobs": self.queued})
-            return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running]})
+                return json.dumps({"version": 1, "repo": argv[2], "private": self.private, "jobs": self.queued, **extra})
+            return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running], **extra})
         if argv[1] == "create":
             return json.dumps({"version": 1, "runner_id": "77", "encoded_jit_config": "SECRET-JIT"})
         if self.remove_fails:
@@ -341,6 +345,56 @@ class ReaperTests(unittest.TestCase):
         self.assertEqual(e.lxc.names("delete"), ["pool-wf-gate-999"])
 
 
+class MemoryTests(unittest.TestCase):  # B41 item 14
+    def events(self, e, name):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.pool.tick()
+        return [d for d in map(json.loads, out.getvalue().splitlines()) if d.get("event") == name]
+
+    def test_the_deleted_event_carries_the_highest_peak_and_oom_kill_seen(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        c = "pool-wf-build-100"
+        e.running = {e.pool.state.jobs["100"]["runner_name"]}
+        e.queued = []
+        e.mem[c] = {"memory_peak_mib": 3000, "oom_kill": 0}
+        e.tick()
+        e.mem[c] = {"memory_peak_mib": 4500, "oom_kill": 1}
+        e.tick()
+        e.lxc.instances[c]["status"] = "Stopped"
+        del e.mem[c]  # a stopped container has no cgroup left
+        [d] = self.events(e, "deleted")
+        self.assertEqual((d["container"], d["why"], d["memory_peak_mib"], d["oom_kill"]), (c, "runner_exited", 4500, 1))
+
+    def test_an_orphan_reports_null_memory(self):  # review of #84, F3
+        e = Env(self)
+        e.lxc.instances["pool-wf-gate-999"] = {"status": "Stopped", "created_at": e.now - 60}
+        [d] = self.events(e, "deleted")
+        self.assertEqual((d["why"], d["memory_peak_mib"], d["oom_kill"]), ("orphan", None, None))
+
+    def test_a_container_never_read_reports_null(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        e.lxc.instances["pool-wf-build-100"]["status"] = "Stopped"
+        [d] = self.events(e, "deleted")
+        self.assertIsNone(d["memory_peak_mib"])
+        self.assertIsNone(d["oom_kill"])
+
+    def test_read_memory_reads_the_containers_cgroup(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = os.path.join(d, "lxc.payload.pool-wf-build-1")
+            os.mkdir(base)
+            with open(os.path.join(base, "memory.peak"), "w") as f:
+                f.write("%d\n" % (4 * 1024 ** 3 + 1))
+            with open(os.path.join(base, "memory.events"), "w") as f:
+                f.write("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\noom_group_kill 0\n")
+            self.assertEqual(pool.read_memory("pool-wf-build-1", root=d), {"memory_peak_mib": 4097, "oom_kill": 1})
+            self.assertEqual(pool.read_memory("gone", root=d), {"memory_peak_mib": None, "oom_kill": None})
+
+
 class ReaperFixTests(unittest.TestCase):
     def started(self):
         e = Env(self)
@@ -402,6 +456,45 @@ class ReaperFixTests(unittest.TestCase):
         self.assertEqual(Env(self).pool.poll_seconds(), 15)
         self.assertEqual(Env(self, repos=["o/%d" % i for i in range(5)]).pool.poll_seconds(), 72)
         self.assertEqual(Env(self, repos=["o/r"], poll_seconds=60).pool.poll_seconds(), 60)
+
+    def test_the_poll_pause_counts_the_calls_the_source_reported(self):  # B41 item 26
+        e = Env(self, repos=["o/a", "o/b"])
+        self.assertEqual(e.pool.poll_seconds(), 29)  # the fixed estimate: 2 × 6 calls
+        e.api_calls = 8  # one queued answer per repository, no containers: 16 calls in the pass
+        e.tick()
+        self.assertEqual(e.pool.last_calls, 16)
+        self.assertEqual(e.pool.poll_seconds(), 39)  # ceil(16 × 3600 / 1500)
+        e.api_calls = 1  # a cheap pass never polls faster than the fixed estimate
+        e.tick()
+        self.assertEqual(e.pool.poll_seconds(), 29)
+
+    def test_a_reported_call_count_is_checked_and_capped(self):  # B41 item 26
+        e = Env(self)
+        for bad in (-5, True, "40", 1.5):
+            e.api_calls = bad
+            e.tick()
+            self.assertEqual(e.pool.last_calls, 0, bad)
+        e.api_calls = 10 ** 9
+        e.tick()
+        self.assertEqual(e.pool.poll_seconds(), pool.MAX_REPORTED_PAUSE)
+
+    def test_jit_answers_are_not_counted(self):  # review of #84, F4
+        e = Env(self)
+        real = e.cmd
+        e.cmd = lambda argv: (json.dumps({**json.loads(real(argv)), "api_calls": 500}) if argv[:2] == ["jit", "create"]
+                              else real(argv))
+        e.pool.run_cmd = e.cmd
+        e.job("100")
+        e.tick()
+        self.assertEqual(e.creates(), 1)
+        self.assertEqual(e.pool.last_calls, 0)
+
+    def test_a_pass_whose_source_fails_counts_only_what_answered(self):
+        e = Env(self, repos=["o/a"])
+        e.api_calls, e.source_fails = 50, True
+        e.tick()
+        self.assertEqual(e.pool.last_calls, 0)
+        self.assertEqual(e.pool.poll_seconds(), 15)
 
 
 class SpareTests(unittest.TestCase):
@@ -771,7 +864,8 @@ class GithubSourceTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), {"version": 1, "repo": "o/r", "private": True,
                                                 "jobs": [{"id": "11", "labels": ["wf-build"], "created_at": "t"},
                                                          {"id": "14", "labels": ["wf-build"], "created_at": "t2"},
-                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}]})
+                                                         {"id": "15", "labels": ["wf-gate"], "created_at": "t4"}],
+                                                "api_calls": 7})  # the repository, 3 run listings, 3 jobs listings
         self.assertTrue(all(c[2] == "Bearer tok123" for c in self.calls if c[0] == "GET"))
 
     def test_queued_includes_queued_jobs_of_runs_already_in_progress_or_waiting(self):  # F1
@@ -788,6 +882,7 @@ class GithubSourceTests(unittest.TestCase):
     def test_running_names_the_runner(self):
         r = self.run_cli("source", "running", "o/r")
         self.assertEqual(json.loads(r.stdout)["jobs"], [{"id": "13", "runner_name": "ci-pool-wf-gate-1"}])
+        self.assertEqual(json.loads(r.stdout)["api_calls"], 2)  # B41 item 26: the run listing and its one jobs listing
 
     def test_jit_create_asks_for_one_label_no_defaults_group_1(self):
         r = self.run_cli("jit", "create", "o/r", "wf-build", "ci-pool-wf-build-123")
@@ -885,9 +980,12 @@ esac
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])
         self.assertIn("systemd-run --wait --pipe /snap/bin/lxc list", self.text("README.md"))
 
-    def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
+    def _rotate(self, aliases, stale="", query_fails=False):
+        """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with
+        `stale`, a -new alias left on that fingerprint by an earlier build); returns (exit code, calls)."""
         t = self.text("ci-pool-image")
         tail = t[t.index("# Publish under a new alias"):]
+        listing = "\n".join(f"{a},x,CONTAINER,x" for a in aliases)
         with tempfile.TemporaryDirectory() as d:
             fake = os.path.join(d, "lxc")
             log = os.path.join(d, "log")
@@ -895,21 +993,63 @@ esac
                 f.write('''#!/usr/bin/env bash
 echo "$*" >> "$LOG"
 case "$*" in
-  "image alias list --format csv") echo "ci-pool-gate,aaaaaaaaaaaa,CONTAINER,x" ;;
+  "image alias list --format csv") printf '%s\\n' "$LISTING" ;;
   "image info ci-pool-gate-prev") echo "Fingerprint: prevfp" ;;
   "image info ci-pool-gate") echo "Fingerprint: curfp" ;;
+  "image info ci-pool-gate-new")
+    if [[ -f "$LOG.published" ]]; then echo "Fingerprint: newfp"
+    elif [[ -n "$STALE" ]]; then echo "Fingerprint: $STALE"
+    else exit 1; fi ;;
+  publish*) touch "$LOG.published" ;;
+  query*) [[ -z "$QUERY_FAILS" ]] ;;
 esac
 ''')
             os.chmod(fake, 0o755)
             r = subprocess.run(["bash", "-c", 'set -euo pipefail\nalias=ci-pool-gate kind=gate work=w\n' + tail], capture_output=True,
-                               text=True, env={**os.environ, "LXC": fake, "LOG": log})
-            self.assertEqual(r.returncode, 0, r.stderr)
+                               text=True, env={**os.environ, "LXC": fake, "LOG": log, "LISTING": listing, "STALE": stale,
+                                               "QUERY_FAILS": "1" if query_fails else ""})
             with open(log) as f:
-                calls = f.read().splitlines()
+                return r.returncode, f.read().splitlines()
+
+    def test_rotating_deletes_the_old_prev_image_by_fingerprint_first(self):  # F9
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        self.assertEqual(code, 0)
         self.assertIn("image delete prevfp", calls)
-        self.assertLess(calls.index("image delete prevfp"), calls.index("image alias rename ci-pool-gate ci-pool-gate-prev"))
+        self.assertLess(calls.index("image delete prevfp"), calls.index("image alias create ci-pool-gate-prev curfp"))
         self.assertNotIn("image delete curfp", calls)
 
+    def test_the_live_alias_is_repointed_in_one_call(self):  # B41 item 21
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"])
+        self.assertEqual(code, 0)
+        patch = 'query -X PATCH /1.0/images/aliases/ci-pool-gate --data {"target": "newfp"}'
+        self.assertIn(patch, calls)
+        # the live alias is never deleted or renamed, so a launch between two calls still finds an image
+        self.assertFalse([c for c in calls if c.split()[:4] in (["image", "alias", "delete", "ci-pool-gate"],
+                                                                ["image", "alias", "rename", "ci-pool-gate"])])
+        self.assertLess(calls.index("image alias create ci-pool-gate-prev curfp"), calls.index(patch))
+        self.assertEqual(calls[-1], "image alias delete ci-pool-gate-new")  # dropped only after the repoint
+
+    def test_a_first_image_takes_the_alias_by_rename(self):
+        code, calls = self._rotate([])
+        self.assertEqual(code, 0)
+        self.assertIn("image alias rename ci-pool-gate-new ci-pool-gate", calls)
+        self.assertFalse([c for c in calls if c.startswith("query")])
+
+    def test_a_stale_new_image_is_deleted_before_the_next_publish(self):  # review of #84, F2
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], stale="stalefp")
+        self.assertEqual(code, 0)
+        self.assertLess(calls.index("image delete stalefp"), calls.index(next(c for c in calls if c.startswith("publish"))))
+        for kept in ("curfp", "prevfp"):  # a -new that names a kept image loses only its alias
+            code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], stale=kept)
+            before_publish = calls[:calls.index(next(c for c in calls if c.startswith("publish")))]
+            self.assertFalse([c for c in before_publish if c.startswith("image delete")], kept)
+            self.assertIn("image alias delete ci-pool-gate-new", before_publish)
+
+    def test_a_failed_repoint_leaves_the_live_alias_and_the_next_build_cleans_up(self):  # review of #84, F2
+        code, calls = self._rotate(["ci-pool-gate", "ci-pool-gate-prev"], query_fails=True)
+        self.assertNotEqual(code, 0)
+        self.assertTrue(calls[-1].startswith("query -X PATCH"))  # it stops there: -new stays for the next build to find
+        self.assertNotIn("image alias rename ci-pool-gate ci-pool-gate-prev", calls)
 
 if __name__ == "__main__":
     unittest.main()

@@ -54,8 +54,13 @@ is success. The pool calls it whenever it deletes a container.
   pool start it. The pool therefore counts containers against the queue, not job against container: per repository and label
   it starts a container while the queued jobs outnumber the containers whose runner has no job yet.
 - `running` is asked every pass for a repository that has live containers, so a runner that took a job is known at once.
-- Each pass costs the source about `api_calls_per_repo_poll` calls per repository (default 6); the pool stretches
-  `poll_seconds` so that `api_calls_per_hour` (default 1500) is not exceeded.
+- **`api_calls`** (optional, in both `queued` and `running` answers): a non-negative integer, the API calls that answer
+  cost. The pool sums them over a pass. A source that omits it is counted at the fixed estimate below.
+- **API budget.** The pool stretches `poll_seconds` so that `api_calls_per_hour` (default 1500) is not exceeded: the pause
+  is at least `ceil(repositories × api_calls_per_repo_poll × 3600 / api_calls_per_hour)` (the fixed estimate, default 6
+  per repository) and at least `ceil(last pass's reported api_calls × 3600 / api_calls_per_hour)`, the second capped at
+  300 s. The fixed estimate leaves out the one jobs listing per unfinished run, which a busy repository adds every pass;
+  the reported count includes it. JIT `create` and `remove` (one call each, per job) are not counted.
 - The pool's own limits (the label cap, memory and pressure checks) apply before `create` is called.
 - **Admission limits** are config, not part of the job or JIT sources. `admission` holds three keys: `min_mem_available_mib`,
   `max_cpu_psi_avg60` and `max_mem_psi_avg60` (pressure is PSI `some`, avg60, 0..100). A label may carry its own `admission`
@@ -63,8 +68,8 @@ is success. The pool calls it whenever it deletes a container.
   start, and by `ci-pool check-config`) for another key, a value that is not a number, a pressure outside 0..100 or a
   negative memory. A reading that is missing refuses. A `max_cpu_psi_avg60` of 100 means CPU pressure does not hold that
   label (its reading must still exist); below 100 a reading at or above the limit refuses. The 100 rule is for CPU only:
-  `max_mem_psi_avg60` keeps `>=` at every value. The label is also a trust boundary: only the installed gate workflow (`wf ci`,
-  from the trusted branch) runs on `wf-gate`; a job that runs code from a pull request or its base runs on `wf-build`.
+  `max_mem_psi_avg60` keeps `>=` at every value. The label is also a trust boundary: only the installed wf workflows (`wf ci`,
+  `wf-status` and the client page, from the trusted branch) run on `wf-gate`; a job that runs code from a pull request or its base runs on `wf-build`.
 - **A refusal holds only its label.** When the admission rule refuses a start, that label starts nothing more in the pass, in
   any repository; other labels still try, against their own limits. The memory of containers started a moment ago counts for
   every label. The event `admission_refused` names the `label`, the `job` and the `why`.

@@ -50,7 +50,11 @@ def token():
     return t
 
 
+CALLS = [0]  # API calls this run made; a source answer reports them as `api_calls` (ci-pool.contract.md)
+
+
 def call(method, path, body=None, gone_ok=False):
+    CALLS[0] += 1
     req = urllib.request.Request(
         API + path, method=method, data=None if body is None else json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {token()}", "Accept": "application/vnd.github+json",
@@ -97,10 +101,11 @@ def source(verb, repo):
         jobs = [] if not private else [
             {"id": str(j["id"]), "labels": j.get("labels", []), "created_at": j.get("created_at", "")}
             for j in jobs_of(repo, ("queued", "in_progress", "waiting"), "queued")]
-        return {"version": VERSION, "repo": repo, "private": private, "jobs": jobs}
+        return {"version": VERSION, "repo": repo, "private": private, "jobs": jobs, "api_calls": CALLS[0]}
     if verb == "running":
-        return {"version": VERSION, "repo": repo, "jobs": [
-            {"id": str(j["id"]), "runner_name": j.get("runner_name") or ""} for j in jobs_of(repo, ("in_progress",), "in_progress")]}
+        jobs = [{"id": str(j["id"]), "runner_name": j.get("runner_name") or ""}
+                for j in jobs_of(repo, ("in_progress",), "in_progress")]
+        return {"version": VERSION, "repo": repo, "jobs": jobs, "api_calls": CALLS[0]}
     die(f"unknown source verb {verb!r}")
 
 

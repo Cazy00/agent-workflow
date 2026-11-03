@@ -2,6 +2,15 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.17.0
+
+A minor release: one optional field in the delivery evidence, `verification.execution.passed_files`, for an acceptance map too large to name test by test. mateen-systems (806 mapped tests, their names alone 137,251 bytes) could not pass `wf ci` on any production task: the pull request description is capped at 128 KiB (`parseMarked`), and the acceptance check requires every mapped test in the evidence (task 174: 625 passed, 182 failed, exactly the pending ones, reported 2026-11-04 by lead-mateen-systems; backlog B45 H31). The version is a minor because every earlier addition of an optional evidence field was one (the compact `passed` form: v2.12.0; the repository has no written version rule). Nothing is required to move the pin.
+
+- **`execution.passed_files: [FILE, ...]`** means every mapped test in that file ran once in the run and passed. `wf ci` expands it against the candidate's `tests/acceptance-map.json` into one passed test per mapped (file, name) (`expandExecution(execution, maps)` in `validator/lib/acceptance.js`), then the unchanged acceptance check requires every mapped test exactly once. It is refused when a file has no mapped test (or the map cannot be read), when a file is listed twice, when a mapped test of a listed file is also in `execution.passed` or `execution.tests` (a file with a failed, skipped or pending test is therefore not listed: its passing tests go in `passed`, the others in `tests`, as before), and, as for `passed`, without an https `run`. `passed` may be left out. The 128 KiB cap is unchanged: 806 tests over 40 files take about 1 KiB.
+- `SCHEMA.md`, `templates/delivery-evidence.json` and the note `wf evidence` prints describe it. A signed receipt's execution keeps the full form and is not expanded.
+- Tests: `validator/test/passed-files.test.js` (the expansion and each refusal; 806 mapped tests across files passing `wf ci` by file and refused by name over the cap).
+- Upgrade: only the pin moves; use the field when the evidence would not fit.
+
 ## v2.16.3
 
 A patch: the CI pool's GitHub queue source (`server/ci-runner/ci-pool-github`) read only `queued`, `in_progress` and `waiting` runs, so a job whose run was held `pending` by a concurrency group after a superseding push never got a runner (workspace backlog B41 item 25; found 2026-10-31, when a job sat queued for an hour; home's broker scan was fixed in workspace #364). Nothing is required to move the pin.

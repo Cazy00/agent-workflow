@@ -261,9 +261,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const ownerTests = namesOwnerTests(config);
   if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
   if (selected.length && production.length) {
-    // MAINT-0023 P7: the agent's own evidence may list its passing tests compactly; a signed receipt's execution is read as it is.
+    // MAINT-0023 P7: the agent's own evidence may list its passing tests compactly (`passed_files` expands against the candidate's map); a signed receipt's execution is read as it is.
     const claimed = trust?.claim('verification', candidate.name)?.execution;
-    const { execution, errors: executionErrors } = claimed ? { execution: claimed, errors: [] } : expandExecution(attested?.verification?.execution);
+    const { execution, errors: executionErrors } = claimed ? { execution: claimed, errors: [] } : expandExecution(attested?.verification?.execution, (() => { try { return JSON.parse(candidate.read('tests/acceptance-map.json')); } catch { return null; } })());
     for (const error of executionErrors) { findings.push(error); fail = true; }
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
     // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012), where

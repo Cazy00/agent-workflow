@@ -6,6 +6,7 @@ import { showPath, unsafePath } from './git.js';
 import { planningEnforcement, isPlanningRuntime } from './planning.js';
 import { evaluateReadiness, foundRoom, OUTCOMES, reliedOn } from './readiness.js';
 
+import { ACCEPTANCE_MAP } from './acceptance-files.js';
 import { evaluateAcceptance, expandExecution, mappedIds, ownerTests as namesOwnerTests, pendingChange, pendingIn, pendingNote, testedIds } from './acceptance.js';
 import { evidenceErrors, fixedAfterError, isBlocking, reviewLevelErrors } from './delivery-evidence.js';
 import { carriedFrom } from './carry.js';
@@ -80,6 +81,18 @@ function recordReferences({ baseline, candidate, rd, changed }) {
     }
   }
   return errors;
+}
+
+// The acceptance map as it stood at the revision an execution ran at, for expanding `passed_files` (null: it cannot be read there, and the
+// expansion is refused). The candidate itself when the run was of it; an earlier revision (a verification carried over) only from Git.
+// A Git read that fails outright propagates (the CLI's exit 2); a missing or unparsable map is null.
+export function mapAtRevision(candidate, revision) {
+  let source = null;
+  if (revision === candidate.name) source = candidate;
+  else if (candidate.kind === 'git' && /^[0-9a-f]{40,64}$/.test(revision ?? '')) { try { source = candidate.atRevision(revision); } catch { source = null; } }
+  const raw = source?.read(ACCEPTANCE_MAP);
+  if (typeof raw !== 'string') return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 // A governing-change receipt listing the path, at the candidate or at an earlier revision in its history where the path
@@ -261,9 +274,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   const ownerTests = namesOwnerTests(config);
   if (attested) findings.push(`unverified: verification, review and integration: agent-attested delivery evidence on the pull request; this validator checked its completeness and revision, not its truth (${trust.label} mode)`);
   if (selected.length && production.length) {
-    // MAINT-0023 P7: the agent's own evidence may list its passing tests compactly; a signed receipt's execution is read as it is.
+    // MAINT-0023 P7: the agent's own evidence may list its passing tests compactly. `passed_files` expands against the acceptance map AT
+    // execution.revision (never the candidate's current map: a test mapped after the run, say on the trusted branch of a carried-over
+    // verification, did not run and stays unrun); a signed receipt's execution is read as it is.
     const claimed = trust?.claim('verification', candidate.name)?.execution;
-    const { execution, errors: executionErrors } = claimed ? { execution: claimed, errors: [] } : expandExecution(attested?.verification?.execution);
+    const agentExecution = attested?.verification?.execution;
+    const { execution, errors: executionErrors } = claimed ? { execution: claimed, errors: [] } : expandExecution(agentExecution, agentExecution?.passed_files === undefined ? null : mapAtRevision(candidate, agentExecution.revision));
     for (const error of executionErrors) { findings.push(error); fail = true; }
     const taskRequirements = selected.map(id => [id, list(candidateRecords.tasks.get(id)?.data?.acceptance)]);
     // A mapped test whose scenario still waits for another task of an in-progress milestone may fail (MAINT-0012), where

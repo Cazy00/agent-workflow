@@ -13,6 +13,7 @@
       "revision": "<the same full commit hash>",
       "run": "<https link to the run that passed the tests listed in passed>",
       "passed": { "<test file mapped in tests/acceptance-map.json>": ["<name of each passing test in it, as mapped>"] },
+      "passed_files": ["<optional: a test file mapped in tests/acceptance-map.json whose mapped tests all ran once in that run and passed, listed by file alone for a large map that would not fit the description's 128 KiB; a test of the file that did not pass is named in full in tests and is the exception to the file (it must not also be in passed)>"],
       "tests": [
         { "file": "<only a mapped test that did not pass: its file>", "name": "<its name, as mapped>", "status": "<failed, as observed>" }
       ]

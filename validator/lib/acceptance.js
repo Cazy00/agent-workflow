@@ -89,23 +89,52 @@ export const pendingNote = w => `pending acceptance test ${w.file} / ${w.name} (
 // receipt's execution is never read through this (ci.js applies it to the agent's delivery evidence alone).
 const nonEmpty = v => typeof v === 'string' && v.trim() !== '';
 export const httpsRun = v => { if (!nonEmpty(v) || /\s/.test(v)) return false; try { const u = new URL(v); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; } catch { return false; } };
-export function expandExecution(execution) {
-  if (!execution || typeof execution !== 'object' || Array.isArray(execution) || !Object.hasOwn(execution, 'passed')) return { execution, errors: [] };
-  const { passed, run, tests, ...rest } = execution, errors = [];
+// `passed_files` (v2.17.0): a delivery evidence that names every mapped test would pass the pull request description's 128 KiB cap on a large
+// map (806 tests whose names alone are 137,251 bytes), so a file whose mapped tests all ran once and passed may be listed by its name alone:
+//   passed_files: [<file>, ...]
+// Each file is expanded against the acceptance map AT THE RUN'S REVISION (`maps`: ci.js reads tests/acceptance-map.json at execution.revision, so
+// a test mapped after the run stays unrun) into one passed entry per mapped (file, name) EXCEPT those the execution names in `tests`: a file means
+// "every mapped test in it passed, but the ones named in tests", which keep their own entry and status (a pending or failing test is named there in
+// full, as before). The same refusals apply as for `passed`: a file must be in the map, a file is listed once, and a mapped test of a listed file
+// may not also be in `passed`. `run` is still given once.
+export function expandExecution(execution, maps) {
+  const has = k => Object.hasOwn(execution, k);
+  if (!execution || typeof execution !== 'object' || Array.isArray(execution) || !(has('passed') || has('passed_files'))) return { execution, errors: [] };
+  const { passed = {}, passed_files: files, run, tests, ...rest } = execution, errors = [];
   const shaped = passed && typeof passed === 'object' && !Array.isArray(passed) && Object.values(passed).every(names => Array.isArray(names) && names.length && names.every(nonEmpty));
   if (!shaped) errors.push('execution.passed must map each test file to the list of the names of its passing tests');
   const entries = shaped ? Object.entries(passed).flatMap(([file, names]) => names.map(name => ({ file, name, status: 'passed' }))) : [];
-  if (entries.length && !httpsRun(run)) errors.push('execution.run must be an https reference to the run that passed the listed tests, given once');
+  const filesShaped = files === undefined || (Array.isArray(files) && files.every(nonEmpty));
+  if (!filesShaped) errors.push('execution.passed_files must be a list of test files, each one whose mapped tests all passed');
+  const listed = filesShaped && files ? files : [];
   // A tests list that is no list stays as it is: evaluateAcceptance reports the execution as missing.
-  if (tests !== undefined && !Array.isArray(tests)) return { execution: { ...rest, tests }, errors };
-  const full = tests ?? [], seen = new Set();
+  const badTests = tests !== undefined && !Array.isArray(tests);
+  const full = badTests ? [] : tests ?? [], seen = new Set(), fileEntries = [];
+  const mapOk = Array.isArray(maps) && maps.every(m => m && typeof m === 'object');
+  if (listed.length && !mapOk) errors.push('execution.passed_files cannot be expanded: tests/acceptance-map.json is missing, unreadable or malformed');
+  const doneFiles = new Set();
+  for (const file of listed) {
+    if (doneFiles.has(file)) { errors.push(`${file} is listed more than once in execution.passed_files`); continue; }
+    doneFiles.add(file);
+    if (!mapOk) continue;
+    const names = [...new Set(maps.filter(m => m.file === file && nonEmpty(m.name)).map(m => m.name))];
+    if (!names.length) { errors.push(`${file} is in execution.passed_files but has no mapped test in tests/acceptance-map.json`); continue; }
+    for (const name of names) {
+      const id = `${file} / ${name}`;
+      if (entries.some(e => e.file === file && e.name === name)) errors.push(`${id} is in both execution.passed_files and execution.passed: list each test once`);
+      else if (full.some(t => t?.file === file && t?.name === name)) continue; // named in tests: its own entry stands, the file does not cover it
+      else fileEntries.push({ file, name, status: 'passed' });
+    }
+  }
+  if ((entries.length || fileEntries.length) && !httpsRun(run)) errors.push('execution.run must be an https reference to the run that passed the listed tests, given once');
+  if (badTests) return { execution: { ...rest, tests }, errors };
   for (const e of entries) {
     const id = `${e.file} / ${e.name}`;
     if (seen.has(id)) { if (!errors.some(x => x.startsWith(`${id} is listed`))) errors.push(`${id} is listed more than once in execution.passed`); }
     seen.add(id);
     if (full.some(t => t?.file === e.file && t?.name === e.name)) errors.push(`${id} is in both execution.passed and execution.tests: list each test once`);
   }
-  return { execution: { ...rest, tests: [...full, ...entries] }, errors };
+  return { execution: { ...rest, tests: [...full, ...entries, ...fileEntries] }, errors };
 }
 
 export function evaluateAcceptance({ baseline, candidate, task, execution, requiredIds = [], taskRequirements, enforced = false, pending = new Map(), carriedFrom = null }) {

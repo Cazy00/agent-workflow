@@ -44,7 +44,7 @@ export function evidenceSkeleton({ baseline, candidate, task, previous = null })
     },
   };
   const notes = [];
-  if (mappedTests.length) notes.push('execution lists the task\'s mapped tests with an empty status: run them, move each test you saw pass into passed under its file and name the run in run once, and give any other its status in tests');
+  if (mappedTests.length) notes.push('execution lists the task\'s mapped tests with an empty status: run them, move each test you saw pass into passed under its file and name the run in run once, and give any other its status in tests (a file whose mapped tests passed may be listed once in passed_files instead, when the names would not fit the 128 KiB description; its tests that did not pass stay named in tests)');
   // MAINT-0022: under review.cadence milestone the task has no review of its own; the milestone's one review covers it (ci.js).
   const live = ['Authorised', 'Active'].includes(loadAll(baseline, rd).milestones.get(record.milestone)?.data?.status);
   if (byMilestone(config) && live) { evidence.review = { level: 'none' }; notes.push('review.cadence milestone: no task review; the milestone review covers this task, so review is level none'); }

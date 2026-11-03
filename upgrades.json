@@ -210,7 +210,7 @@
   },
   "v2.17.0": {
     "notes": [
-      "Nothing is required: only the pin moves. Optional: where the delivery evidence's passing tests, named one by one, would pass the 128 KiB cap on the pull request description, list a test file whose every mapped test ran once in the run and passed as verification.execution.passed_files: [FILE, ...]; wf ci expands it against tests/acceptance-map.json and still requires every mapped test exactly once (a file with a failed, skipped or pending test goes in passed and tests as before)."
+      "Nothing is required: only the pin moves. Optional: where the delivery evidence's passing tests, named one by one, would pass the 128 KiB cap on the pull request description, list a test file whose every mapped test ran once in the run and passed as verification.execution.passed_files: [FILE, ...]; wf ci expands it against tests/acceptance-map.json and still requires every mapped test exactly once (its tests that failed, were skipped or are pending stay named in full in tests, and the field expands against the acceptance map at the run's revision)."
     ]
   }
 }

@@ -14,6 +14,9 @@ StateDirectory=ci-pool
 # No ProtectHome and no NoNewPrivileges: /snap/bin/lxc (snap run) must write under root's home and change confinement, and
 # fails under either. The README's setup check (systemd-run) shows it on a host.
 PrivateTmp=true
+# PrivateTmp hides the host's /tmp/snap-private-tmp; without it every `snap run` (each /snap/bin/lxc call) reads a changed system
+# key and makes snapd rebuild all security profiles (about every 40 s; I-103). Make it in the unit's own /tmp before the start.
+ExecStartPre=/usr/bin/mkdir -p -m 0700 /tmp/snap-private-tmp
 
 [Install]
 WantedBy=multi-user.target

@@ -8,6 +8,10 @@ repo="$1"
 label="$2"
 read -r token
 dir=/home/runner/actions-runner
+# No rsyslog: nothing in a CI job reads /var/log/syslog (containers log to journald), and the image's rsyslogd AppArmor profile
+# denies journald's send to /run/systemd/journal/dev-log, about 6,700 denials a day on the host (I-104). Runs on every
+# registration, so an existing runner loses it too; purging a package that is already gone is not an error.
+DEBIAN_FRONTEND=noninteractive apt-get purge -y rsyslog
 if [ -f "$dir/.runner" ]; then
   echo "$(hostname): already registered."
 else

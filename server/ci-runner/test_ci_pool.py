@@ -1002,36 +1002,56 @@ esac
                 self.assertFalse([l for l in lines if l.startswith("PrivateTmp")])
                 self.assertNotIn("/snap/bin/lxc", "\n".join(lines))
 
-    def _purge_run(self, script, apt_exit=0):
-        """Run `script` with a fake apt-get; returns (exit code, the fake's calls with DEBIAN_FRONTEND)."""
+    def _purge_run(self, script, installed=True, apt_exit=0):
+        """Run `script` with a fake dpkg-query (rsyslog installed or not) and a fake apt-get that exits `apt_exit`;
+        returns (exit code, stderr, the fake apt-get's calls with DEBIAN_FRONTEND)."""
         with tempfile.TemporaryDirectory() as d:
-            fake = os.path.join(d, "apt-get")
             log = os.path.join(d, "log")
-            with open(fake, "w") as f:
-                f.write(f'#!/usr/bin/env bash\necho "$DEBIAN_FRONTEND $*" >> "$LOG"\nexit {apt_exit}\n')
-            os.chmod(fake, 0o755)
+            status = "install ok installed" if installed else ""
+            for name, body in (("apt-get", f'echo "$DEBIAN_FRONTEND $*" >> "$LOG"\nexit {apt_exit}'),
+                               ("dpkg-query", f'[ "${{*: -1}}" = rsyslog ] || exit 2\n'
+                                              f'{"printf %s " + repr(status) if installed else "exit 1"}')):
+                path = os.path.join(d, name)
+                with open(path, "w") as f:
+                    f.write("#!/usr/bin/env bash\n" + body + "\n")
+                os.chmod(path, 0o755)
+            open(log, "w").close()
             r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], capture_output=True, text=True,
-                               env={**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "LOG": log})
+                               env={**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "LOG": log,
+                                    "DEBIAN_FRONTEND": os.environ.get("DEBIAN_FRONTEND", "")})
             with open(log) as f:
-                return r.returncode, f.read().splitlines()
+                return r.returncode, r.stderr, f.read().splitlines()
 
-    def test_the_image_purges_rsyslog_before_it_installs_anything(self):  # I-104
+    def _image_purge(self):
         t = self.text("ci-pool-image")
         body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
-        part = body[body.index("DEBIAN_FRONTEND=noninteractive apt-get purge"):body.index("apt-get update")]
-        for _ in range(2):  # a second run is the same call, not an error
-            rc, calls = self._purge_run(part)
-            self.assertEqual(rc, 0)
-            self.assertEqual(calls, ["noninteractive purge -y rsyslog"])
+        return body, body[body.index("if dpkg-query -W -f='${Status}' rsyslog"):body.index("\napt-get update")]
+
+    def test_the_image_purges_rsyslog_before_it_installs_anything(self):  # I-104
+        body, part = self._image_purge()
+        self.assertEqual(self._purge_run(part)[::2], (0, [" purge -y rsyslog"]))
+        self.assertEqual(self._purge_run(part, installed=False)[::2], (0, []))  # absent: no apt call at all
+        self.assertNotEqual(self._purge_run(part, apt_exit=100)[0], 0)  # the image build stops on a failed purge
         self.assertLess(body.index("apt-get purge -y rsyslog"), body.index("apt-get install"))
 
-    def test_runner_setup_purges_rsyslog_on_every_registration(self):  # I-104
+    def _setup_purge(self):
         t = self.text("runner-setup")
-        part = t[t.index("DEBIAN_FRONTEND=noninteractive apt-get purge"):t.index("if [ -f")]
-        rc, calls = self._purge_run(part)
-        self.assertEqual((rc, calls), (0, ["noninteractive purge -y rsyslog"]))
+        return t, t[t.index("if dpkg-query -W -f='${Status}' rsyslog"):t.index('if [ -f "$dir/.runner" ]')]
+
+    def test_runner_setup_purges_rsyslog_on_every_registration(self):  # I-104
+        t, part = self._setup_purge()
+        rc, _, calls = self._purge_run(part)
+        self.assertEqual((rc, calls), (0, ["noninteractive -o DPkg::Lock::Timeout=300 purge -y rsyslog"]))
+        self.assertEqual(self._purge_run(part, installed=False)[::2], (0, []))
         # before the already-registered branch, so an existing runner is patched too
-        self.assertLess(t.index("apt-get purge -y rsyslog"), t.index('if [ -f "$dir/.runner" ]'))
+        self.assertLess(t.index("apt-get -o DPkg::Lock::Timeout=300 purge -y rsyslog"), t.index('if [ -f "$dir/.runner" ]'))
+
+    def test_a_failed_purge_does_not_stop_a_registration(self):  # rv1a1042734b30e396 finding 1
+        _, part = self._setup_purge()
+        rc, err, calls = self._purge_run(part + "echo registered\n", apt_exit=100)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("runner-setup: could not purge rsyslog (exit 100); registering anyway", err)
 
     def _rotate(self, aliases, stale="", query_fails=False):
         """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with

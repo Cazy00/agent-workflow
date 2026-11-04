@@ -992,6 +992,47 @@ esac
         self.assertFalse([l for l in unit if l.startswith(("NoNewPrivileges", "ProtectHome"))])
         self.assertIn("systemd-run --wait --pipe /snap/bin/lxc list", self.text("README.md"))
 
+    def test_the_unit_makes_snaps_private_tmp_dir_inside_its_private_tmp(self):  # I-103
+        for name in ("ci-pool.service", "ci-pool-runner.service"):
+            lines = [l for l in self.text(name).splitlines() if not l.startswith("#")]
+            if name == "ci-pool.service":  # the only unit that runs /snap/bin/lxc
+                self.assertIn("PrivateTmp=true", lines)
+                self.assertIn("ExecStartPre=/usr/bin/mkdir -p -m 0700 /tmp/snap-private-tmp", lines)
+            else:  # runs inside the container, where there is no snap and no PrivateTmp
+                self.assertFalse([l for l in lines if l.startswith("PrivateTmp")])
+                self.assertNotIn("/snap/bin/lxc", "\n".join(lines))
+
+    def _purge_run(self, script, apt_exit=0):
+        """Run `script` with a fake apt-get; returns (exit code, the fake's calls with DEBIAN_FRONTEND)."""
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "apt-get")
+            log = os.path.join(d, "log")
+            with open(fake, "w") as f:
+                f.write(f'#!/usr/bin/env bash\necho "$DEBIAN_FRONTEND $*" >> "$LOG"\nexit {apt_exit}\n')
+            os.chmod(fake, 0o755)
+            r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], capture_output=True, text=True,
+                               env={**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "LOG": log})
+            with open(log) as f:
+                return r.returncode, f.read().splitlines()
+
+    def test_the_image_purges_rsyslog_before_it_installs_anything(self):  # I-104
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        part = body[body.index("DEBIAN_FRONTEND=noninteractive apt-get purge"):body.index("apt-get update")]
+        for _ in range(2):  # a second run is the same call, not an error
+            rc, calls = self._purge_run(part)
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, ["noninteractive purge -y rsyslog"])
+        self.assertLess(body.index("apt-get purge -y rsyslog"), body.index("apt-get install"))
+
+    def test_runner_setup_purges_rsyslog_on_every_registration(self):  # I-104
+        t = self.text("runner-setup")
+        part = t[t.index("DEBIAN_FRONTEND=noninteractive apt-get purge"):t.index("if [ -f")]
+        rc, calls = self._purge_run(part)
+        self.assertEqual((rc, calls), (0, ["noninteractive purge -y rsyslog"]))
+        # before the already-registered branch, so an existing runner is patched too
+        self.assertLess(t.index("apt-get purge -y rsyslog"), t.index('if [ -f "$dir/.runner" ]'))
+
     def _rotate(self, aliases, stale="", query_fails=False):
         """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with
         `stale`, a -new alias left on that fingerprint by an earlier build); returns (exit code, calls)."""

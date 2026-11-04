@@ -1018,7 +1018,7 @@ esac
             open(log, "w").close()
             r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], capture_output=True, text=True,
                                env={**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "LOG": log,
-                                    "DEBIAN_FRONTEND": os.environ.get("DEBIAN_FRONTEND", "")})
+                                    "DEBIAN_FRONTEND": ""})  # empty, so only the script's own prefix shows
             with open(log) as f:
                 return r.returncode, r.stderr, f.read().splitlines()
 

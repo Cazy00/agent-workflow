@@ -2,6 +2,15 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.17.1
+
+A patch: two durable fixes for the CI pool on a host (workspace backlog B45 H29; found 2026-11-03 and 2026-11-04). Nothing is required to move the pin.
+
+- **I-103: `ci-pool.service` makes `/tmp/snap-private-tmp`.** The unit has `PrivateTmp=true`, so the host's `/tmp/snap-private-tmp` does not exist in its mount namespace; every `snap run` (each `/snap/bin/lxc` call) read that as a changed system key and made snapd rebuild all security profiles about every 40 s. `ExecStartPre=/usr/bin/mkdir -p -m 0700 /tmp/snap-private-tmp` creates it in the unit's own `/tmp`; `PrivateTmp=true` stays. `ci-pool-runner.service` runs inside the container and has no `PrivateTmp`.
+- **I-104: no `rsyslog` in a CI container.** The ubuntu:24.04 image's `rsyslogd` AppArmor profile denies journald's send to `/run/systemd/journal/dev-log`: about 6,700 denials a day. Nothing in a job reads `/var/log/syslog`. `ci-pool-image` (before its first `apt-get install`) and `runner-setup` (on every registration) run `apt-get purge -y rsyslog` when `dpkg-query` says it is installed; in `runner-setup` it waits up to 5 minutes for the dpkg lock and is best effort (a failed purge is said on stderr and the registration goes on). `server/ci-runner/README.md` says so and how to patch an existing runner: `lxc exec <runner> -- apt-get purge -y rsyslog`.
+- Tests: `server/ci-runner/test_ci_pool.py` (the unit has the `ExecStartPre` and `PrivateTmp`; the image's and `runner-setup`'s purge steps run against a fake `dpkg-query` and `apt-get`: no apt call when rsyslog is absent, the purge when it is present, the image failing and `runner-setup` going on with a message when apt fails; and they stand before the installs and before the already-registered branch).
+- Upgrade: the pin moves; a host reinstalls the pool (`install-host.sh`) and rebuilds its images (`ci-pool-image build`) to take the changes, and patches a persistent runner by hand as above.
+
 ## v2.17.0
 
 A minor release: one optional field in the delivery evidence, `verification.execution.passed_files`, for an acceptance map too large to name test by test. mateen-systems (806 mapped tests, their names alone 137,251 bytes) could not pass `wf ci` on any production task: the pull request description is capped at 128 KiB (`parseMarked`), and the acceptance check requires every mapped test in the evidence (task 174: 625 passed, 182 failed, exactly the pending ones, reported 2026-11-04 by lead-mateen-systems; backlog B45 H31). The version is a minor because every earlier addition of an optional evidence field was one (the compact `passed` form: v2.12.0; the repository has no written version rule). Nothing is required to move the pin.

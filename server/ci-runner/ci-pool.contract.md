@@ -75,3 +75,49 @@ is success. The pool calls it whenever it deletes a container.
   every label. The event `admission_refused` names the `label`, the `job` and the `why`.
 - **`ci-pool check-config --config FILE`** reads and validates the config only (no `lxc`, no network). It exits 0, or exits 2
   with the reason on stderr.
+- **The diagnostic copy (not part of the two source contracts; the pool's own behaviour).** Before it deletes a container
+  whose reason is `unassigned` or `hard_timeout`, the pool copies what explains the end of a runner that never reported
+  (I-121) to `diag_dir` (default `/var/log/ci-pool/diag`; `""` turns it off), in `<diag_dir>/<job id>/`
+  (`<job id>.<n>` if that exists), root only: directories 0700, files 0600.
+  - **`diag_dir` is the pool's own.** When it does not exist the pool makes it, mode 0700. An existing one is never changed
+    (no chmod) and is used only when it is a real directory (not a symbolic link) of the pool's user (root) with mode 0700;
+    otherwise nothing is copied (`diag_failed`, `step: diag_dir`) and the delete goes on. `ci-pool check-config` (and the
+    service at start) refuses `/`, a top-level directory, a home directory (`/home/<name>`), a path not written plainly (`..`,
+    `//`, a trailing `/`), well-known shared directories such as `/var/log`, `/var/lib`, `/var/backups` or
+    `/var/log/ci-pool`, and anything under `/etc`, `/usr`, `/proc`, `/sys`, `/dev`, `/run`, `/boot`, `/tmp` and the like.
+  - **Allowlist of names; the content is not trusted.** From the container: the files `*.log` that sit directly in
+    `diag_runner_dir` (default `/opt/actions-runner/_diag`, where `ci-pool-image` installs the runner), whose names match
+    `[A-Za-z0-9_.-]{1,100}.log`, regular files with one link (`find -type f -links 1`), the newest `diag_max_files` (10),
+    the last `diag_max_file_kb` KiB (2048) of each. The allowlist filters names only: job code runs as the runner user that
+    owns `_diag` and can write anything into a `*.log` there, including the content of the runner's own files, so what is
+    copied is untrusted data, kept root only on the host. The listing and the reads run inside the container as the user
+    and group that own `diag_runner_dir` (`lxc exec --user --group`, read with `stat` first), never as root; a `_diag` owned
+    by root is not read. So a name swapped for a symbolic link between the listing and the read can reach only what that
+    user can read anyway, never a root-only file such as the JIT config (which the entrypoint removes after reading it). From
+    the host: the container's cgroup `memory.events` and `memory.peak` (as read, at most 4 KiB each), and a `meta.json` (job,
+    container, reason, repository, label, runner name, start and copy times), written last: a directory whose `meta.json`
+    cannot be written is removed.
+  - **Bounded.** What a container prints is never trusted with host memory: the pool reads at most the cap from each `lxc exec`
+    and kills a process that says more; each lxc call of the copy has 20 s (at least 1 s), the copy of one container
+    `diag_timeout_seconds` (60), and all copies of one reap pass together `diag_pass_budget_seconds` (45). Once a pass has
+    spent its budget, the containers it still deletes are deleted without a copy (`diag_failed`, `step: budget`), so a
+    pass with several slow copies does not hold up launches. Retention after each copy: the oldest job directories go while
+    there are more than `diag_max_jobs` (50) or they hold more than `diag_max_mb` (200) MB; only real directories named like
+    a job id that hold a `meta.json` (a regular file: the pool's own) are counted or removed, and the one just written stays.
+  - **Bounded against a stop.** The copy runs inside the reap, and SIGTERM waits for the pass under way. The copying checks
+    the stop request before each container and each file: after SIGTERM no copy starts (`diag_failed`, `step: stopping`) and
+    the one under way ends after its current lxc call (at most 20 s), then the deletes and `state.save()` finish. With
+    `ci-pool.service`'s stop timeout (systemd's default `TimeoutStopSec`, 90 s) a stop therefore spends at most about 20 s
+    in the copy; without a stop a pass spends at most `diag_pass_budget_seconds` plus a few seconds (each call gets at least
+    1 s) in it. Keep `diag_pass_budget_seconds` well below the stop timeout if the unit's timeout is lowered.
+  - **Never blocks the delete.** A copy that fails in whole or in part is logged (`diag_failed`, with the `step` and
+    `error`) and the delete goes on; a failure of any kind is caught, not only a failed `lxc` call. Nothing is copied for a
+    container the pool keeps (`delete_skipped`: its runner could not be unregistered), and a container whose delete failed is
+    copied once, not on every later pass.
+  - **Events** (one JSON line each): `diag_kept` (`container`, `job`, `why`, `path`, `files`, `bytes`) before `deleted` when
+    anything was kept; `diag_failed` (`container`, `job`, `step`: `diag_dir`, `budget`, `stopping`, `list`, `keep`,
+    `retention`, `meta.json`, `memory.events`, `memory.peak` or a file name, and `error`); `diag_removed` (`path`,
+    `why: retention`).
+  - The copy uses `lxc exec` (`find`, `tail`) inside the container, so it only works while the container is running, which
+    holds for both reasons; a stopped container (`runner_exited`) is not copied. It trusts nothing it reads from the container;
+    replacing it means changing `DiagKeeper` and the three `Lxc` read methods (`owner`, `list_logs`, `tail_file`) only.

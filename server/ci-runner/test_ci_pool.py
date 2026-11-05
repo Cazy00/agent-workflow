@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,10 @@ class FakeLxc:
         self.list_budget = None  # a number: that many more list() calls work, the next one raises
         self.diag_owner = (1001, 1001)  # who owns the runner's _diag directory in every container
         self.exec_users = []  # the user every list_logs / tail_file ran as
+        self.journal_text = b"2026-11-05T09:39:41.000000+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n"
+        self.runner_journal_text = b"2026-11-05T09:39:41.000000+00:00 c systemd[1]: ci-pool-runner.service: Deactivated.\n"
+        self.ps_text = b"PID PPID PGID SID USER STAT STARTED COMMAND\n1 0 1 1 root Ss Thu Nov 5 09:30:00 2026 systemd\n"
+        self.snapshot_hook = lambda: None  # called on every journal / processes
 
     def _do(self, what):
         self.calls.append(what)
@@ -99,6 +104,21 @@ class FakeLxc:
             raise pool.PoolError("tail_file refused")
         self.tail_hook()
         return self.logs[name][os.path.basename(path)][1][-nbytes:]
+
+    def journal(self, name, lines, limit, timeout, unit=None):
+        op = "journal" if unit is None else "journal_unit"  # the whole journal, or ci-pool-runner.service's alone
+        self.calls.append((op, name, lines, limit, timeout) + (() if unit is None else (unit,)))
+        if op in self.fail:
+            raise pool.PoolError("lxc exec journalctl exited 1")
+        self.snapshot_hook()
+        return (self.journal_text if unit is None else self.runner_journal_text)[-limit:]
+
+    def processes(self, name, limit, timeout):
+        self.calls.append(("processes", name, limit, timeout))
+        if "processes" in self.fail:
+            raise pool.PoolError("lxc exec ps exited 1")
+        self.snapshot_hook()
+        return self.ps_text[:limit]
 
     def names(self, op):
         return [c[1] for c in self.calls if c[0] == op]
@@ -460,8 +480,8 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         [kept] = [d for d in evs if d["event"] == "diag_kept"]
         path = os.path.join(e.diag_dir, "100")
         self.assertEqual((kept["path"], kept["container"], kept["job"], kept["why"]), (path, self.C, "100", "unassigned"))
-        self.assertEqual(kept["files"], ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "memory.events",
-                                         "memory.peak", "meta.json"])
+        self.assertEqual(kept["files"], ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log",
+                                         "journal-runner.txt", "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         with open(os.path.join(path, "Worker_20261105-050100-utc.log"), "rb") as f:
             self.assertEqual(f.read(), b"Worker: received SIGTERM\n")
         with open(os.path.join(path, "memory.events")) as f:
@@ -508,8 +528,8 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         self.assertEqual(sorted(os.path.basename(c[2]) for c in e.lxc.calls if c[0] == "tail_file"),
                          ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log"])
         self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
-                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "memory.events", "memory.peak",
-                          "meta.json"])
+                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "journal-runner.txt",
+                          "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         for f in os.listdir(os.path.join(e.diag_dir, "100")):
             with open(os.path.join(e.diag_dir, "100", f), "rb") as fh:
                 self.assertNotIn(b"SECRET", fh.read())
@@ -529,15 +549,16 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
             self.assertNotIn(self.C, e.lxc.instances, fail)
             self.assertEqual([d["event"] for d in evs if d["event"] == "deleted"], ["deleted"])
             self.assertTrue([d for d in evs if d["event"] == "diag_failed"], fail)
-        # the memory files are still kept when the logs are not
-        self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))), ["memory.events", "memory.peak", "meta.json"])
+        # the memory files, the journals and the process list are still kept when the logs are not
+        self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
+                         ["journal-runner.txt", "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         self.assertEqual([d["event"] for d in evs if d["event"] == "diag_kept"], ["diag_kept"])
 
     def test_nothing_readable_leaves_no_directory_and_no_diag_kept(self):
         e = Env(self)
         e.job("100")
         e.tick()
-        e.lxc.fail = {"list_logs"}
+        e.lxc.fail = {"list_logs", "journal", "journal_unit", "processes"}
         evs = self.tick_events(e)
         self.assertNotIn(self.C, e.lxc.instances)
         self.assertEqual([d["event"] for d in evs if d["event"] in ("diag_kept", "diag_failed")].count("diag_kept"), 0)
@@ -738,6 +759,150 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
                          ["pool-wf-build-200"])
         self.assertTrue(pool.Pool(e.cfg, e.lxc, e.pool.state, stopping=lambda: True).diag.stopping())
 
+    JIT = b"QUJD" * 300  # a long base64 run standing in for a just-in-time config, 1.2 KB
+
+    def test_the_journal_and_the_process_list_are_kept_as_root_with_the_jit_config_removed(self):  # I-121 follow-up
+        e = self.started()
+        e.lxc.journal_text = (b"2026-11-05T09:39:41.1+00:00 c sudo[42]: root : PWD=/opt/actions-runner ; USER=runner ; "
+                              b"COMMAND=./run.sh --jitconfig " + self.JIT + b"\n"
+                              b"2026-11-05T09:39:41.2+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n")
+        # ps prints command names only (Lxc.processes), but ps.txt is scrubbed all the same
+        e.lxc.ps_text = (b"  PID  PPID  PGID   SID USER STAT STARTED COMMAND\n"
+                         b"   80    79    79    79 root S Thu Nov  5 09:30:01 2026 sudo -u runner -H ./run.sh --jitconfig "
+                         + self.JIT + b"\n   81    80    79    79 runner S Thu Nov  5 09:30:01 2026 /bin/bash ./run.sh "
+                         b"--jitconfig=" + self.JIT[:150] + b"\n")
+        self.tick_events(e)
+        path = os.path.join(e.diag_dir, "100")
+        with open(os.path.join(path, "journal.txt"), "rb") as f:
+            journal = f.read()
+        with open(os.path.join(path, "ps.txt"), "rb") as f:
+            ps = f.read()
+        self.assertIn(b"systemd[1]: Stopping ci-pool-runner.service...", journal)
+        self.assertIn(b"; USER=runner ; COMMAND=[removed by ci-pool]\n", journal)  # sudo's logged command, whole
+        self.assertIn(b"   80    79    79    79 root S Thu Nov  5 09:30:01 2026 sudo -u runner -H ./run.sh --jitconfig "
+                      b"[removed by ci-pool]\n", ps)
+        self.assertIn(b"--jitconfig=[removed by ci-pool]\n", ps)
+        for text in (journal, ps):
+            self.assertNotIn(self.JIT[:100], text)
+            self.assertNotIn(b"QUJDQUJD", text)
+        for f in ("journal.txt", "ps.txt"):
+            self.assertEqual(self.mode(os.path.join(path, f)), 0o600)
+        [journal_call] = [c for c in e.lxc.calls if c[0] == "journal"]
+        [ps_call] = [c for c in e.lxc.calls if c[0] == "processes"]
+        self.assertEqual(journal_call[1:4], (self.C, 400, 256 * 1024))
+        self.assertEqual(ps_call[1:3], (self.C, 64 * 1024))
+        self.assertLessEqual(max(journal_call[4], ps_call[3]), pool.DIAG_SNAPSHOT_SECONDS)
+        calls = [c[0] for c in e.lxc.calls]
+        self.assertLess(max(calls.index("journal"), calls.index("processes")), calls.index("delete"))
+
+    def test_sudo_s_logged_command_does_not_reach_the_journal(self):  # review F1: a step's `sudo` with a secret
+        e = self.started()
+        e.lxc.journal_text = (b"2026-11-05T09:35:00.1+00:00 c sudo[77]:   runner : PWD=/w ; USER=root ; "
+                              b"COMMAND=/usr/bin/docker login -p hunter2 ghcr.io\n"
+                              b"2026-11-05T09:35:00.2+00:00 c sudo[77]: pam_unix(sudo:session): session opened for user root\n")
+        self.tick_events(e)
+        with open(os.path.join(e.diag_dir, "100", "journal.txt"), "rb") as f:
+            journal = f.read()
+        self.assertNotIn(b"hunter2", journal)
+        self.assertNotIn(b"docker", journal)
+        self.assertIn(b"sudo[77]:   runner : PWD=/w ; USER=root ; COMMAND=[removed by ci-pool]\n", journal)  # who ran it stays
+        self.assertIn(b"session opened for user root\n", journal)
+
+    def test_a_jit_config_split_by_sudo_into_continued_lines_does_not_survive(self):  # review F2
+        e = self.started()
+        e.lxc.journal_text = (b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : PWD=/opt/actions-runner ; USER=runner ; "
+                              b"COMMAND=./run.sh --jitconfig\n"
+                              b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[:950] + b"\n"
+                              b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[950:1100]
+                              + b"\n")
+        self.tick_events(e)
+        with open(os.path.join(e.diag_dir, "100", "journal.txt"), "rb") as f:
+            journal = f.read()
+        self.assertNotIn(b"QUJD", journal)
+        self.assertEqual(journal.count(b"(command continued)[removed by ci-pool]\n"), 2)
+
+    def test_the_runner_unit_s_journal_is_kept_apart_scrubbed(self):  # review F3: dockerd lines can fill the last 400
+        e = self.started()
+        e.lxc.runner_journal_text = (b"2026-11-05T09:39:41.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[:150]
+                                     + b"\n2026-11-05T09:39:41.2+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n")
+        evs = self.tick_events(e)
+        path = os.path.join(e.diag_dir, "100", "journal-runner.txt")
+        with open(path, "rb") as f:
+            got = f.read()
+        self.assertIn(b"systemd[1]: Stopping ci-pool-runner.service...\n", got)
+        self.assertNotIn(b"QUJD", got)
+        self.assertEqual(self.mode(path), 0o600)
+        [call] = [c for c in e.lxc.calls if c[0] == "journal_unit"]
+        self.assertEqual((call[1:4], call[5]), ((self.C, 100, 256 * 1024), "ci-pool-runner.service"))
+        self.assertLessEqual(call[4], pool.DIAG_SNAPSHOT_SECONDS)
+        [kept] = [d for d in evs if d["event"] == "diag_kept"]
+        self.assertIn("journal-runner.txt", kept["files"])
+
+    def test_scrub_removes_the_jit_config_in_every_form_and_leaves_other_text(self):
+        for line, want in ((b"x --jitconfig abc+/= y", b"x --jitconfig [removed by ci-pool] y"),
+                           (b"x --jitconfig 'abc' y", b"x --jitconfig '[removed by ci-pool]' y"),
+                           (b'x --jitconfig="abc"', b'x --jitconfig="[removed by ci-pool]"'),
+                           (b"x --jitconfig  abc", b"x --jitconfig  [removed by ci-pool]"),
+                           (b"blob " + self.JIT + b" end", b"blob [long token removed by ci-pool] end"),
+                           (b"Runner will be shutdown for UserCancelled", b"Runner will be shutdown for UserCancelled"),
+                           (b"t c sudo[9]: a : USER=root ; COMMAND=/bin/x -p pw\nnext", b"t c sudo[9]: a : USER=root ; "
+                            b"COMMAND=[removed by ci-pool]\nnext"),
+                           (b"t c sudo: a : (command continued) rest", b"t c sudo: a : (command continued)[removed by ci-pool]"),
+                           (b"t c app[3]: COMMAND=kept, not sudo", b"t c app[3]: COMMAND=kept, not sudo"),
+                           (b"t c sudo[9]: pam_unix(sudo:session): session closed", b"t c sudo[9]: pam_unix(sudo:session): "
+                            b"session closed"),
+                           (b"sha256 " + b"a" * 64, b"sha256 " + b"a" * 64)):
+            self.assertEqual(pool.scrub(line), want, line[:40])
+
+    def test_a_journal_or_process_list_that_fails_is_logged_and_the_rest_is_kept_and_deleted(self):
+        for fail, gone in (("journal", "journal.txt"), ("journal_unit", "journal-runner.txt"), ("processes", "ps.txt")):
+            e = self.started()
+            e.lxc.fail = {fail}
+            evs = self.tick_events(e)
+            self.assertNotIn(self.C, e.lxc.instances, fail)
+            self.assertEqual([d["event"] for d in evs if d["event"] == "deleted"], ["deleted"])
+            [failed] = [d for d in evs if d["event"] == "diag_failed"]
+            self.assertEqual((failed["step"], failed["container"], failed["job"]), (gone, self.C, "100"))
+            self.assertIn("exited 1", failed["error"])
+            [kept] = [d for d in evs if d["event"] == "diag_kept"]
+            self.assertNotIn(gone, kept["files"])
+            self.assertIn("Worker_20261105-050100-utc.log", kept["files"])
+            self.assertEqual(sorted(kept["files"]), sorted(os.listdir(os.path.join(e.diag_dir, "100"))))
+
+    def test_the_journal_and_the_process_list_count_in_the_copy_and_pass_budgets(self):
+        e = self.two_unassigned(diag_pass_budget_seconds=30, diag_timeout_seconds=60)
+        e.lxc.snapshot_hook = lambda: setattr(e, "now", e.now + 20)  # every ps or journalctl takes 20 s
+        evs = self.tick_events(e)
+        self.assertEqual(sorted(e.lxc.instances), ["pool-wf-build-spare"])  # both deleted
+        self.assertEqual([c[:2] for c in e.lxc.calls if c[0] in ("processes", "journal", "journal_unit")],
+                         [("processes", self.C), ("journal_unit", self.C)])  # 40 s: past the 30 s pass budget
+        self.assertEqual(e.lxc.names("tail_file"), [])  # the pass budget was spent before the logs
+        self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
+                         ["journal-runner.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
+        self.assertEqual([(d["container"], d["step"]) for d in evs if d["event"] == "diag_failed" and d["step"] == "budget"],
+                         [("pool-wf-build-200", "budget")])
+        self.assertTrue([d for d in evs if d["event"] == "diag_failed" and d["error"] == "copy time is up"])
+        # a short budget shortens the calls' own time limit, and a spent one skips the journal
+        e = self.started(diag_timeout_seconds=5)
+        e.lxc.snapshot_hook = lambda: setattr(e, "now", e.now + 6)
+        evs = self.tick_events(e)
+        self.assertEqual([c for c in e.lxc.calls if c[0] in ("processes", "journal", "journal_unit")],
+                         [("processes", self.C, 65536, 5)])
+        self.assertEqual([d["step"] for d in evs if d["event"] == "diag_failed"][:1], ["journal-runner.txt"])
+        self.assertNotIn(self.C, e.lxc.instances)
+
+    def test_a_stop_request_skips_the_journal(self):
+        stop = []
+        e = self.started()
+        e.pool.diag.stopping = lambda: bool(stop)
+        e.lxc.snapshot_hook = lambda: stop.append(1)
+        evs = self.tick_events(e)
+        self.assertEqual(e.lxc.names("processes"), [self.C])
+        self.assertEqual(e.lxc.names("journal_unit") + e.lxc.names("journal"), [])
+        self.assertIn(("journal-runner.txt", "the pool is stopping"),
+                      [(d["step"], d["error"]) for d in evs if d["event"] == "diag_failed"])
+        self.assertNotIn(self.C, e.lxc.instances)
+
     def test_the_config_checks_the_diag_keys(self):
         base = {"version": 1, "repos": ["o/r"], "source_cmd": ["a"], "jit_cmd": ["b"],
                 "labels": {"wf-build": {"profile": "p", "image": "i", "cap": 1, "memory": "5GiB"}}}
@@ -803,9 +968,11 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
     def test_a_slow_lxc_spends_the_pass_budget_and_the_next_container_is_not_copied(self):  # review F3, a real clock
         x = self.lxc('sleep 0.4\n'
                      'while [ "$1" != "--" ]; do shift; done; shift\n'
-                     'case "$1" in stat) echo "1001 1001";; find) printf "1.0 3 a.log\\n";; tail) echo log;; esac\n')
-        with tempfile.TemporaryDirectory() as d:
-            cfg = {**pool.DEFAULTS, "diag_dir": os.path.join(d, "diag"), "diag_pass_budget_seconds": 1}
+                     'case "$1" in stat) echo "1001 1001";; find) printf "1.0 3 a.log\\n";; tail) echo log;;\n'
+                     '  journalctl) echo journal;; ps) echo ps;; esac\n')
+        with tempfile.TemporaryDirectory() as d:  # six calls of 0.4 s: ps, journalctl -u, journalctl, stat, find, tail;
+            # tail starts at about 2.0 s, inside the budget, and the pass ends at about 2.4 s, past it
+            cfg = {**pool.DEFAULTS, "diag_dir": os.path.join(d, "diag"), "diag_pass_budget_seconds": 2.2}
             keeper = pool.DiagKeeper(cfg, x, cgroup_root=os.path.join(d, "cgroup"))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -816,6 +983,8 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
             self.assertEqual(first, os.path.join(d, "diag", "1"))
             with open(os.path.join(first, "a.log")) as f:
                 self.assertEqual(f.read(), "log\n")
+            with open(os.path.join(first, "journal.txt")) as f:
+                self.assertEqual(f.read(), "journal\n")
             self.assertIsNone(second)
             self.assertEqual([(v["container"], v["step"]) for v in evs if v["event"] == "diag_failed" and v["step"] == "budget"],
                              [("c2", "budget")])
@@ -825,6 +994,58 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
         x = self.lxc("exec yes x\n")
         got = x.tail_file("c1", "/f.log", 1000, 10, (1, 1))
         self.assertEqual(len(got), 1000)
+
+    def test_journal_and_processes_run_as_root_with_their_arguments(self):
+        x = self.lxc('echo "$@" > "$0.args"\necho out\n')
+        self.assertEqual(x.journal("c1", 400, 1000, 5), b"out\n")
+        with open(x.binary + ".args") as f:
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "journalctl", "-b", "--no-pager", "-o", "short-iso-precise",
+                                                "-n", "400"])
+        self.assertEqual(x.journal("c1", 100, 1000, 5, unit="ci-pool-runner.service"), b"out\n")
+        with open(x.binary + ".args") as f:
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "journalctl", "-b", "--no-pager", "-o", "short-iso-precise",
+                                                "-u", "ci-pool-runner.service", "-n", "100"])
+        self.assertEqual(x.processes("c1", 1000, 5), b"out\n")
+        with open(x.binary + ".args") as f:  # comm, never args: a step's command line can hold its secrets (review F1)
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "ps", "-eo", "pid,ppid,pgid,sid,user,stat,lstart,comm"])
+
+    @unittest.skipUnless(shutil.which("ps"), "needs ps")
+    def test_a_token_on_a_command_line_does_not_reach_the_process_list(self):  # review F1, the real ps
+        token = "ghp_" + "A" * 36
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "-H", f"Authorization: token {token}"])
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        x = self.lxc('while [ "$1" != "--" ]; do shift; done; shift\nexec "$@"\n')  # runs the command here, not in a container
+        got = x.processes("c1", 1024 * 1024, 10)
+        [line] = [ln for ln in got.split(b"\n") if ln.split()[:1] == [str(p.pid).encode()]]  # the process is listed
+        self.assertNotIn(b"ghp_", got)
+        self.assertNotIn(b"Authorization", got)
+        self.assertNotIn(b"time.sleep", line)
+
+    def test_a_window_that_starts_at_a_line_start_keeps_that_line(self):  # review F4
+        x = self.lxc("i=10; while [ $i -lt 100 ]; do echo \"line-$i\"; i=$((i+1)); done\n")  # 90 lines of 8 bytes
+        got = x.journal("c1", 400, 200, 5)  # the last 200 bytes are exactly the last 25 lines
+        self.assertEqual(got, b"".join(b"line-%d\n" % i for i in range(75, 100)))
+
+    def test_the_journal_keeps_its_last_whole_lines_within_the_cap(self):
+        x = self.lxc("i=0; while [ $i -lt 100 ]; do echo \"line-$i\"; i=$((i+1)); done\n")
+        got = x.journal("c1", 400, 300, 5)  # 790 bytes: over the cap, within the 4 x cap that is read
+        self.assertLessEqual(len(got), 300)
+        self.assertGreater(len(got), 290)
+        self.assertTrue(got.startswith(b"line-") and got.endswith(b"line-99\n"), got)
+        self.assertEqual(got.split(b"\n")[0], b"line-" + str(100 - len(got.split(b"\n")) + 1).encode())
+        self.assertEqual(x.journal("c1", 400, 4096, 5).count(b"\n"), 100)  # under the cap: all of it
+
+    def test_a_journal_or_process_flood_is_cut_at_the_cap_and_killed(self):
+        x = self.lxc("exec yes x\n")
+        got = x.journal("c1", 400, 1000, 10)
+        self.assertLessEqual(len(got), 1000)
+        self.assertTrue(got.endswith(b"x\n") and set(got) <= set(b"x\n"))
+        self.assertEqual(len(x.processes("c1", 1000, 10)), 1000)
+        with self.assertRaises(pool.PoolError):
+            self.lxc("exit 1\n").journal("c1", 400, 1000, 5)
+        with self.assertRaises(pool.PoolError):
+            self.lxc("exec sleep 30\n").journal("c1", 400, 1000, 0.3)
 
     def test_a_failed_or_stuck_exec_is_a_pool_error(self):
         with self.assertRaises(pool.PoolError):

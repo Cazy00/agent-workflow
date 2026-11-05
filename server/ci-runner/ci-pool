@@ -42,6 +42,22 @@ DIAG_DIR_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # the only entries retention m
 DIAG_LIST_LIMIT = 65536  # bytes read from a container's file listing
 DIAG_CALL_SECONDS = 20  # one lxc call of the copy
 DIAG_META = "meta.json"  # every job directory the pool keeps holds one; retention removes no directory without it
+DIAG_JOURNAL = "journal.txt"  # the container's journal for this boot, its last DIAG_JOURNAL_LINES lines (I-121)
+DIAG_JOURNAL_LINES = 400
+DIAG_JOURNAL_LIMIT = 256 * 1024  # bytes kept of it: the end, cut at a line start
+DIAG_JOURNAL_RUNNER = "journal-runner.txt"  # the journal of ci-pool-runner.service alone: its stop and why, whatever
+DIAG_JOURNAL_RUNNER_LINES = 100  # else filled the last DIAG_JOURNAL_LINES (review F3); same byte cap as journal.txt
+DIAG_RUNNER_UNIT = "ci-pool-runner.service"
+DIAG_PS = "ps.txt"  # the container's processes with their process groups and sessions, the command name only
+DIAG_PS_LIMIT = 64 * 1024  # bytes kept of it: the start
+DIAG_SNAPSHOT_SECONDS = 10  # one journal or ps call; never more than the copy and pass time left
+# what job code prints is not trusted, and secrets reach both: a step's command line (`docker login -p ...`) and the
+# runner's just-in-time config (`run.sh --jitconfig <config>`). ps prints no arguments (comm only); sudo logs the whole
+# command to the journal, split into `(command continued)` lines when long. Before a byte is written: on sudo's lines
+# everything after `COMMAND=` or `(command continued)`, then the value after --jitconfig and any run of 200 or more base64
+# characters, are replaced. Two plain searches per line, never a backtracking pattern: job code writes these lines.
+DIAG_SUDO = (re.compile(rb"\bsudo(?:\[[0-9]+\])?: "), re.compile(rb"COMMAND=|\(command continued\)"))
+DIAG_SCRUB = (re.compile(rb"(--jitconfig[= ]+['\"]?)[^\s'\"]+"), re.compile(rb"[A-Za-z0-9+/=_-]{200,}"))
 # diag_dir may not be one of these, nor a top-level directory: a shared directory is never the pool's to prune (review F1)
 DIAG_DIR_REFUSED = {"/var/log", "/var/lib", "/var/cache", "/var/tmp", "/var/backups", "/var/spool", "/var/mail", "/var/www",
                     "/var/opt", "/var/snap", "/var/lib/ci-pool", "/var/log/ci-pool"}
@@ -161,10 +177,12 @@ class Lxc:
     def start(self, name):
         self._run("start", name)
 
-    def _exec_bounded(self, name, argv, limit, timeout, user=None):
+    def _exec_bounded(self, name, argv, limit, timeout, user=None, keep_end=False):
         """Run argv inside the instance and return at most `limit` bytes of its output; a process that says more is killed. What
         a container prints is not trusted: it never fills the host's memory. stderr is dropped. `user` = (uid, gid) runs it as
-        that user and group instead of root."""
+        that user and group instead of root. keep_end: the last `limit` bytes instead of the first, from the first whole line
+        in them when the output was longer (a window that starts at a line start keeps that line); at most 4 x `limit` bytes
+        are read, then the process is killed."""
         who = [] if user is None else ["--user", str(int(user[0])), "--group", str(int(user[1]))]
         try:
             p = subprocess.Popen([self.binary, "exec", name, *who, "--", *argv], stdout=subprocess.PIPE,
@@ -175,10 +193,26 @@ class Lxc:
         timer = threading.Timer(timeout, lambda: (timed_out.append(1), p.kill()))
         timer.start()
         try:
-            out = p.stdout.read(limit + 1)
-            over = len(out) > limit
-            if over:
-                p.kill()
+            if keep_end:
+                out, seen, over = b"", 0, False
+                while True:
+                    chunk = p.stdout.read1(65536)
+                    if not chunk:
+                        break
+                    seen += len(chunk)
+                    out = (out + chunk)[-(limit + 1):]  # one byte more: was the window's first byte a line start?
+                    if seen > 4 * limit:
+                        over = True
+                        p.kill()
+                        break
+                if seen > limit:  # cut: drop the partial first line; a newline just before the window drops only itself
+                    nl = out.find(b"\n")
+                    out = out[nl + 1:] if nl >= 0 else b""
+            else:
+                out = p.stdout.read(limit + 1)
+                over = len(out) > limit
+                if over:
+                    p.kill()
         finally:
             timer.cancel()
             p.stdout.close()
@@ -215,6 +249,18 @@ class Lxc:
     def tail_file(self, name, path, nbytes, timeout, user):
         """The last `nbytes` bytes (at most) of a file inside the instance, read as `user` (uid, gid)."""
         return self._exec_bounded(name, ["tail", "-c", str(nbytes), "--", path], nbytes, timeout, user=user)
+
+    def journal(self, name, lines, limit, timeout, unit=None):
+        """The last `lines` lines of the instance's journal for this boot (of systemd `unit` alone when given), read as root
+        (journald's files are root's), at most its last `limit` bytes. Untrusted text."""
+        only = [] if unit is None else ["-u", unit]
+        return self._exec_bounded(name, ["journalctl", "-b", "--no-pager", "-o", "short-iso-precise", *only,
+                                         "-n", str(int(lines))], limit, timeout, keep_end=True)
+
+    def processes(self, name, limit, timeout):
+        """The instance's processes with parent, process group, session, user, state, start time and command name (comm: no
+        arguments, which can hold a step's secrets), read as root, at most the first `limit` bytes. Untrusted text."""
+        return self._exec_bounded(name, ["ps", "-eo", "pid,ppid,pgid,sid,user,stat,lstart,comm"], limit, timeout)
 
     def delete(self, name):
         self._run("delete", "--force", name)
@@ -388,9 +434,14 @@ def read_memory(name, root="/sys/fs/cgroup"):
 
 class DiagKeeper:
     """Keeps what explains a container that is about to be deleted without its job's outcome (I-121): the runner's `_diag/*.log`
-    files (the signal or lost Worker that ended a cancelled step shows there) and the container's cgroup `memory.events` and
-    `memory.peak`, in `<diag_dir>/<job id>/`, mode 0700 for directories and 0600 for files, root only. Bounded at every step:
-    the newest `diag_max_files` logs, the last `diag_max_file_kb` KiB of each, `diag_max_jobs` directories and `diag_max_mb` MB
+    files (the signal or lost Worker that ended a cancelled step shows there), the container's cgroup `memory.events` and
+    `memory.peak`, and, read as root inside it, its process list `ps.txt` (command names, no arguments), the end of
+    ci-pool-runner.service's journal `journal-runner.txt` and the end of its whole journal for this boot `journal.txt` (a
+    systemd stop of ci-pool-runner.service, or which process group survived a kill, shows there; all three are untrusted
+    text, written as data with sudo's logged commands and the runner's just-in-time config removed, `scrub`), in
+    `<diag_dir>/<job id>/`, mode 0700 for directories and 0600 for files, root only. Bounded at every step:
+    the newest `diag_max_files` logs, the last `diag_max_file_kb` KiB of each, DIAG_PS_LIMIT and DIAG_JOURNAL_LIMIT bytes and
+    DIAG_SNAPSHOT_SECONDS for the process list and each journal, `diag_max_jobs` directories and `diag_max_mb` MB
     in all (the oldest directory goes first), `diag_timeout_seconds` for the copy of one container and
     `diag_pass_budget_seconds` for all copies of one pass; a stop request ends the copying. Only `*.log` names matching
     DIAG_NAME_RE, regular files with one link, are listed and read, from the one directory `diag_runner_dir`, as the user that
@@ -452,12 +503,30 @@ class DiagKeeper:
             kept.append(fname)
             total += len(data)
 
+        def out_of_time(step):
+            if self.clock() > deadline or self.stopping():
+                log("diag_failed", container=name, job=jid, step=step,
+                    error="the pool is stopping" if self.stopping() else "copy time is up")
+                return True
+            return False
+
         try:
             for fname in ("memory.events", "memory.peak"):
                 try:
                     with open(os.path.join(self.cgroup_root, f"lxc.payload.{name}", fname), "rb") as f:
                         put(fname, f.read(4096))
                 except OSError as e:
+                    log("diag_failed", container=name, job=jid, step=fname, error=str(e))
+            snapshots = ((DIAG_PS, lambda t: self.lxc.processes(name, DIAG_PS_LIMIT, t)),
+                         (DIAG_JOURNAL_RUNNER, lambda t: self.lxc.journal(name, DIAG_JOURNAL_RUNNER_LINES, DIAG_JOURNAL_LIMIT, t,
+                                                                          unit=DIAG_RUNNER_UNIT)),
+                         (DIAG_JOURNAL, lambda t: self.lxc.journal(name, DIAG_JOURNAL_LINES, DIAG_JOURNAL_LIMIT, t)))
+            for fname, read in snapshots:  # who signalled the runner: a systemd stop, or a kill of its process group
+                if out_of_time(fname):
+                    break
+                try:
+                    put(fname, scrub(read(min(DIAG_SNAPSHOT_SECONDS, left()))))
+                except (PoolError, OSError) as e:
                     log("diag_failed", container=name, job=jid, step=fname, error=str(e))
             try:
                 nbytes = cfg["diag_max_file_kb"] * 1024
@@ -467,9 +536,7 @@ class DiagKeeper:
                     raise PoolError(f"{rdir} is owned by root; not read as root")
                 listed = [f for f in self.lxc.list_logs(name, rdir, left(), user) if DIAG_NAME_RE.match(f[2])]
                 for _, _, fname in listed[:cfg["diag_max_files"]]:
-                    if self.clock() > deadline or self.stopping():
-                        log("diag_failed", container=name, job=jid, step=fname,
-                            error="the pool is stopping" if self.stopping() else "copy time is up")
+                    if out_of_time(fname):
                         break
                     try:
                         put(fname, self.lxc.tail_file(name, f"{rdir}/{fname}", nbytes, left(), user))
@@ -553,6 +620,19 @@ class DiagKeeper:
                 log("diag_removed", path=path, why="retention")
         except OSError as e:
             log("diag_failed", container=name, job=jid, step="retention", error=str(e))
+
+
+def scrub(data):
+    """Untrusted container output with sudo's logged commands (DIAG_SUDO) and the runner's just-in-time config (DIAG_SCRUB)
+    taken out."""
+    lines = data.split(b"\n")
+    for i, line in enumerate(lines):
+        who = DIAG_SUDO[0].search(line)
+        cmd = who and DIAG_SUDO[1].search(line, who.end())
+        if cmd:
+            lines[i] = line[:cmd.end()] + b"[removed by ci-pool]"
+    data = DIAG_SCRUB[0].sub(rb"\1[removed by ci-pool]", b"\n".join(lines))
+    return DIAG_SCRUB[1].sub(b"[long token removed by ci-pool]", data)
 
 
 def admission_refusal(host, limits):

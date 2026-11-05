@@ -18,9 +18,11 @@ import calendar
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 DEFAULT_CONFIG = "/etc/ci-pool/config.json"
@@ -33,6 +35,11 @@ MIN_POLL_SECONDS = 15
 MAX_REPORTED_PAUSE = 300  # a source that reports absurd call counts slows the pool to this, never stops it
 YOUNG_SECONDS = 60  # a container this young has not used its memory yet
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+DIAG_WHY = ("unassigned", "hard_timeout")  # the deletions that keep a diagnostic copy
+DIAG_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}\.log$")  # the only file names taken from a container: *.log, nothing else
+DIAG_DIR_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # the only entries retention may remove from the diag directory
+DIAG_LIST_LIMIT = 65536  # bytes read from a container's file listing
+DIAG_CALL_SECONDS = 20  # one lxc call of the copy
 ADMISSION_KEYS = ("min_mem_available_mib", "max_cpu_psi_avg60", "max_mem_psi_avg60")
 
 DEFAULTS = {
@@ -46,6 +53,14 @@ DEFAULTS = {
     "state_file": "/var/lib/ci-pool/state.json",
     "lxc": "/snap/bin/lxc",
     "command_timeout_seconds": 120,
+    # the runner's diagnostic log, kept when a container is deleted unassigned or at the hard timeout (I-121); "" turns it off
+    "diag_dir": "/var/log/ci-pool/diag",
+    "diag_runner_dir": "/opt/actions-runner/_diag",  # inside the container; ci-pool-image installs the runner in /opt/actions-runner
+    "diag_max_files": 10,  # *.log files taken from one container (the newest)
+    "diag_max_file_kb": 2048,  # the last this many KiB of each
+    "diag_max_jobs": 50,  # kept job directories; the oldest go first
+    "diag_max_mb": 200,  # their size together
+    "diag_timeout_seconds": 60,  # the whole copy for one container; past it what was copied stays and the delete goes on
     "admission": {"min_mem_available_mib": 3072, "max_cpu_psi_avg60": 40.0, "max_mem_psi_avg60": 10.0},
 }
 
@@ -138,6 +153,51 @@ class Lxc:
     def start(self, name):
         self._run("start", name)
 
+    def _exec_bounded(self, name, argv, limit, timeout):
+        """Run argv inside the instance and return at most `limit` bytes of its output; a process that says more is killed. What
+        a container prints is not trusted: it never fills the host's memory. stderr is dropped."""
+        try:
+            p = subprocess.Popen([self.binary, "exec", name, "--", *argv], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise PoolError(f"lxc exec: {e}") from e
+        timed_out = []
+        timer = threading.Timer(timeout, lambda: (timed_out.append(1), p.kill()))
+        timer.start()
+        try:
+            out = p.stdout.read(limit + 1)
+            over = len(out) > limit
+            if over:
+                p.kill()
+        finally:
+            timer.cancel()
+            p.stdout.close()
+            rc = p.wait()
+        if timed_out:
+            raise PoolError(f"lxc exec {name} {argv[0]}: timed out after {timeout:.0f}s")
+        if rc != 0 and not over:
+            raise PoolError(f"lxc exec {name} {argv[0]} exited {rc}")
+        return out[:limit]
+
+    def list_logs(self, name, directory, timeout):
+        """The regular files `*.log` directly in `directory` inside the instance, as [(mtime, size, file name)], newest first.
+        Only names that pass DIAG_NAME_RE are returned."""
+        out = self._exec_bounded(name, ["find", directory, "-maxdepth", "1", "-type", "f", "-name", "*.log",
+                                        "-printf", "%T@ %s %f\\n"], DIAG_LIST_LIMIT, timeout)
+        found = []
+        for line in out.decode("utf-8", "replace").splitlines():
+            parts = line.split(" ", 2)
+            try:
+                mtime, size, fname = float(parts[0]), int(parts[1]), parts[2]
+            except (ValueError, IndexError):
+                continue
+            if DIAG_NAME_RE.match(fname):
+                found.append((mtime, size, fname))
+        return sorted(found, reverse=True)
+
+    def tail_file(self, name, path, nbytes, timeout):
+        """The last `nbytes` bytes (at most) of a file inside the instance."""
+        return self._exec_bounded(name, ["tail", "-c", str(nbytes), path], nbytes, timeout)
+
     def delete(self, name):
         self._run("delete", "--force", name)
 
@@ -203,6 +263,13 @@ def load_config(path):
         if mem_mib(spec["memory"]) is None:
             raise PoolError(f"config: label {label} memory must look like 5GiB (MiB, GiB, MB or GB)")
         check_admission(f"label {label} admission", spec.get("admission", {}))
+    if not isinstance(cfg["diag_dir"], str) or (cfg["diag_dir"] and not os.path.isabs(cfg["diag_dir"])):
+        raise PoolError("config: diag_dir must be an absolute path, or \"\" for none")
+    if not isinstance(cfg["diag_runner_dir"], str) or not os.path.isabs(cfg["diag_runner_dir"]):
+        raise PoolError("config: diag_runner_dir must be an absolute path")
+    for k in ("diag_max_files", "diag_max_file_kb", "diag_max_jobs", "diag_max_mb", "diag_timeout_seconds"):
+        if isinstance(cfg[k], bool) or not isinstance(cfg[k], int) or cfg[k] < 1:
+            raise PoolError(f"config: {k} must be an integer, 1 or more")
     for k in ("source_cmd", "jit_cmd"):
         if not (isinstance(cfg.get(k), list) and cfg[k] and all(isinstance(a, str) for a in cfg[k])):
             raise PoolError(f"config: {k} must be a non-empty list of strings")
@@ -283,6 +350,123 @@ def read_memory(name, root="/sys/fs/cgroup"):
     return {"memory_peak_mib": peak, "oom_kill": oom}
 
 
+class DiagKeeper:
+    """Keeps what explains a container that is about to be deleted without its job's outcome (I-121): the runner's `_diag/*.log`
+    files (the signal or lost Worker that ended a cancelled step shows there) and the container's cgroup `memory.events` and
+    `memory.peak`, in `<diag_dir>/<job id>/`, mode 0700 for directories and 0600 for files, root only. Bounded at every step:
+    the newest `diag_max_files` logs, the last `diag_max_file_kb` KiB of each, `diag_max_jobs` directories and `diag_max_mb` MB
+    in all (the oldest directory goes first), `diag_timeout_seconds` for the copy of one container. Only `*.log` names matching
+    DIAG_NAME_RE are listed and read, from the one directory `diag_runner_dir`: the runner's `.credentials`, `.runner` and the
+    JIT config are not logs and are never read. A failure is logged and never stops the delete (ci-pool.contract.md)."""
+
+    def __init__(self, cfg, lxc, clock=time.time, cgroup_root="/sys/fs/cgroup"):
+        self.cfg, self.lxc, self.clock, self.cgroup_root = cfg, lxc, clock, cgroup_root
+
+    def keep(self, name, entry, jid, why):
+        """Copy for one container; returns the directory kept, or None (nothing kept, or already kept for this entry)."""
+        cfg = self.cfg
+        if not cfg["diag_dir"] or why not in DIAG_WHY or entry is None or entry.get("diag"):
+            return None
+        try:
+            return self._keep(name, entry, jid, why)
+        except Exception as e:  # not only PoolError: nothing here may stop the delete
+            log("diag_failed", container=name, job=jid, step="keep", error=f"{type(e).__name__}: {e}")
+            return None
+
+    def _keep(self, name, entry, jid, why):
+        cfg = self.cfg
+        root = cfg["diag_dir"]
+        if not DIAG_DIR_RE.match(str(jid)):
+            raise ValueError(f"job id {jid!r} is not digits")
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        os.chmod(root, 0o700)
+        dest = self._new_dir(root, str(jid))
+        deadline = self.clock() + cfg["diag_timeout_seconds"]
+        kept, total = [], 0
+
+        def left():
+            return max(1.0, min(DIAG_CALL_SECONDS, deadline - self.clock()))
+
+        def put(fname, data):
+            nonlocal total
+            fd = os.open(os.path.join(dest, fname), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                os.fchmod(f.fileno(), 0o600)
+                f.write(data)
+            kept.append(fname)
+            total += len(data)
+
+        try:
+            for fname in ("memory.events", "memory.peak"):
+                try:
+                    with open(os.path.join(self.cgroup_root, f"lxc.payload.{name}", fname), "rb") as f:
+                        put(fname, f.read(4096))
+                except OSError as e:
+                    log("diag_failed", container=name, job=jid, step=fname, error=str(e))
+            try:
+                nbytes = cfg["diag_max_file_kb"] * 1024
+                for _, _, fname in self.lxc.list_logs(name, cfg["diag_runner_dir"], left())[:cfg["diag_max_files"]]:
+                    if self.clock() > deadline:
+                        log("diag_failed", container=name, job=jid, step=fname, error="copy time is up")
+                        break
+                    try:
+                        put(fname, self.lxc.tail_file(name, f"{cfg['diag_runner_dir']}/{fname}", nbytes, left()))
+                    except (PoolError, OSError) as e:
+                        log("diag_failed", container=name, job=jid, step=fname, error=str(e))
+            except PoolError as e:
+                log("diag_failed", container=name, job=jid, step="list", error=str(e))
+            if kept:
+                meta = {"job": jid, "container": name, "why": why, "repo": entry.get("repo"), "label": entry.get("label"),
+                        "runner_name": entry.get("runner_name"), "started": entry.get("started"), "kept_at": self.clock()}
+                try:
+                    put("meta.json", json.dumps(meta, sort_keys=True, indent=1).encode())
+                except OSError as e:
+                    log("diag_failed", container=name, job=jid, step="meta.json", error=str(e))
+        finally:
+            if not kept:
+                shutil.rmtree(dest, ignore_errors=True)
+        if not kept:
+            return None
+        entry["diag"] = dest
+        log("diag_kept", container=name, job=jid, why=why, path=dest, files=sorted(kept), bytes=total)
+        self._prune(root, dest, name, jid)
+        return dest
+
+    @staticmethod
+    def _new_dir(root, jid):
+        """<root>/<jid>, or <jid>.<n> when it exists (a job id the pool launched twice); mode 0700."""
+        n = 0
+        while True:
+            path = os.path.join(root, jid if n == 0 else f"{jid}.{n}")
+            try:
+                os.mkdir(path, 0o700)
+            except FileExistsError:
+                n += 1
+                continue
+            os.chmod(path, 0o700)
+            return path
+
+    def _prune(self, root, keep_path, name, jid):
+        """Remove the oldest job directories while there are more than diag_max_jobs or they hold more than diag_max_mb. Only
+        real directories named like a job directory are touched; the one just written stays."""
+        try:
+            dirs = []
+            for entry in os.scandir(root):
+                if DIAG_DIR_RE.match(entry.name) and entry.is_dir(follow_symlinks=False):
+                    size = sum(os.lstat(os.path.join(entry.path, f)).st_size for f in os.listdir(entry.path))
+                    dirs.append((entry.stat(follow_symlinks=False).st_mtime, entry.path, size))
+            dirs.sort()
+            count, total = len(dirs), sum(d[2] for d in dirs)
+            for _, path, size in dirs:
+                if (count <= self.cfg["diag_max_jobs"] and total <= self.cfg["diag_max_mb"] * 1048576) or path == keep_path:
+                    break
+                shutil.rmtree(path)
+                count, total = count - 1, total - size
+                log("diag_removed", path=path, why="retention")
+        except OSError as e:
+            log("diag_failed", container=name, job=jid, step="retention", error=str(e))
+
+
 def admission_refusal(host, limits):
     """Why a container may not start now, or '' when it may. A reading that is missing refuses. A CPU limit of 100 or more
     means CPU pressure does not hold the label (avg60 never exceeds 100), though its reading must still exist."""
@@ -297,8 +481,10 @@ def admission_refusal(host, limits):
 
 # ── the pool ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class Pool:
-    def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time, memory=read_memory):
+    def __init__(self, cfg, lxc, state, run_cmd=None, host=read_host, clock=time.time, memory=read_memory,
+                 diag=None):
         self.cfg, self.lxc, self.state, self.host, self.clock, self.memory = cfg, lxc, state, host, clock, memory
+        self.diag = diag or DiagKeeper(cfg, lxc, clock)
         self.run_cmd = run_cmd or self._run_cmd
         self.pass_calls = 0   # API calls the source reported for the pass under way (ci-pool.contract.md, `api_calls`)
         self.last_calls = 0   # ... and for the last whole pass; the poll pause is stretched to keep it within the budget
@@ -467,6 +653,7 @@ class Pool:
                 return
         if entry is not None:
             self.sample_memory(name, entry)  # a container still running (timeouts) gives its final reading here
+            self.diag.keep(name, entry, jid, why)  # the runner's _diag logs would go with the container (I-121); never blocks
         try:
             self.lxc.delete(name)
         except PoolError as e:

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,7 +42,8 @@ class FakeLxc:
         self.diag_owner = (1001, 1001)  # who owns the runner's _diag directory in every container
         self.exec_users = []  # the user every list_logs / tail_file ran as
         self.journal_text = b"2026-11-05T09:39:41.000000+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n"
-        self.ps_text = b"PID PPID PGID SID USER STAT STARTED COMMAND\n1 0 1 1 root Ss Thu Nov 5 09:30:00 2026 /sbin/init\n"
+        self.runner_journal_text = b"2026-11-05T09:39:41.000000+00:00 c systemd[1]: ci-pool-runner.service: Deactivated.\n"
+        self.ps_text = b"PID PPID PGID SID USER STAT STARTED COMMAND\n1 0 1 1 root Ss Thu Nov 5 09:30:00 2026 systemd\n"
         self.snapshot_hook = lambda: None  # called on every journal / processes
 
     def _do(self, what):
@@ -103,12 +105,13 @@ class FakeLxc:
         self.tail_hook()
         return self.logs[name][os.path.basename(path)][1][-nbytes:]
 
-    def journal(self, name, lines, limit, timeout):
-        self.calls.append(("journal", name, lines, limit, timeout))
-        if "journal" in self.fail:
+    def journal(self, name, lines, limit, timeout, unit=None):
+        op = "journal" if unit is None else "journal_unit"  # the whole journal, or ci-pool-runner.service's alone
+        self.calls.append((op, name, lines, limit, timeout) + (() if unit is None else (unit,)))
+        if op in self.fail:
             raise pool.PoolError("lxc exec journalctl exited 1")
         self.snapshot_hook()
-        return self.journal_text[-limit:]
+        return (self.journal_text if unit is None else self.runner_journal_text)[-limit:]
 
     def processes(self, name, limit, timeout):
         self.calls.append(("processes", name, limit, timeout))
@@ -477,8 +480,8 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         [kept] = [d for d in evs if d["event"] == "diag_kept"]
         path = os.path.join(e.diag_dir, "100")
         self.assertEqual((kept["path"], kept["container"], kept["job"], kept["why"]), (path, self.C, "100", "unassigned"))
-        self.assertEqual(kept["files"], ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "journal.txt",
-                                         "memory.events", "memory.peak", "meta.json", "ps.txt"])
+        self.assertEqual(kept["files"], ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log",
+                                         "journal-runner.txt", "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         with open(os.path.join(path, "Worker_20261105-050100-utc.log"), "rb") as f:
             self.assertEqual(f.read(), b"Worker: received SIGTERM\n")
         with open(os.path.join(path, "memory.events")) as f:
@@ -525,8 +528,8 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         self.assertEqual(sorted(os.path.basename(c[2]) for c in e.lxc.calls if c[0] == "tail_file"),
                          ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log"])
         self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
-                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "journal.txt", "memory.events",
-                          "memory.peak", "meta.json", "ps.txt"])
+                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "journal-runner.txt",
+                          "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         for f in os.listdir(os.path.join(e.diag_dir, "100")):
             with open(os.path.join(e.diag_dir, "100", f), "rb") as fh:
                 self.assertNotIn(b"SECRET", fh.read())
@@ -546,16 +549,16 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
             self.assertNotIn(self.C, e.lxc.instances, fail)
             self.assertEqual([d["event"] for d in evs if d["event"] == "deleted"], ["deleted"])
             self.assertTrue([d for d in evs if d["event"] == "diag_failed"], fail)
-        # the memory files, the journal and the process list are still kept when the logs are not
+        # the memory files, the journals and the process list are still kept when the logs are not
         self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
-                         ["journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
+                         ["journal-runner.txt", "journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         self.assertEqual([d["event"] for d in evs if d["event"] == "diag_kept"], ["diag_kept"])
 
     def test_nothing_readable_leaves_no_directory_and_no_diag_kept(self):
         e = Env(self)
         e.job("100")
         e.tick()
-        e.lxc.fail = {"list_logs", "journal", "processes"}
+        e.lxc.fail = {"list_logs", "journal", "journal_unit", "processes"}
         evs = self.tick_events(e)
         self.assertNotIn(self.C, e.lxc.instances)
         self.assertEqual([d["event"] for d in evs if d["event"] in ("diag_kept", "diag_failed")].count("diag_kept"), 0)
@@ -763,6 +766,7 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         e.lxc.journal_text = (b"2026-11-05T09:39:41.1+00:00 c sudo[42]: root : PWD=/opt/actions-runner ; USER=runner ; "
                               b"COMMAND=./run.sh --jitconfig " + self.JIT + b"\n"
                               b"2026-11-05T09:39:41.2+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n")
+        # ps prints command names only (Lxc.processes), but ps.txt is scrubbed all the same
         e.lxc.ps_text = (b"  PID  PPID  PGID   SID USER STAT STARTED COMMAND\n"
                          b"   80    79    79    79 root S Thu Nov  5 09:30:01 2026 sudo -u runner -H ./run.sh --jitconfig "
                          + self.JIT + b"\n   81    80    79    79 runner S Thu Nov  5 09:30:01 2026 /bin/bash ./run.sh "
@@ -774,7 +778,7 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         with open(os.path.join(path, "ps.txt"), "rb") as f:
             ps = f.read()
         self.assertIn(b"systemd[1]: Stopping ci-pool-runner.service...", journal)
-        self.assertIn(b"COMMAND=./run.sh --jitconfig [removed by ci-pool]\n", journal)
+        self.assertIn(b"; USER=runner ; COMMAND=[removed by ci-pool]\n", journal)  # sudo's logged command, whole
         self.assertIn(b"   80    79    79    79 root S Thu Nov  5 09:30:01 2026 sudo -u runner -H ./run.sh --jitconfig "
                       b"[removed by ci-pool]\n", ps)
         self.assertIn(b"--jitconfig=[removed by ci-pool]\n", ps)
@@ -791,6 +795,49 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         calls = [c[0] for c in e.lxc.calls]
         self.assertLess(max(calls.index("journal"), calls.index("processes")), calls.index("delete"))
 
+    def test_sudo_s_logged_command_does_not_reach_the_journal(self):  # review F1: a step's `sudo` with a secret
+        e = self.started()
+        e.lxc.journal_text = (b"2026-11-05T09:35:00.1+00:00 c sudo[77]:   runner : PWD=/w ; USER=root ; "
+                              b"COMMAND=/usr/bin/docker login -p hunter2 ghcr.io\n"
+                              b"2026-11-05T09:35:00.2+00:00 c sudo[77]: pam_unix(sudo:session): session opened for user root\n")
+        self.tick_events(e)
+        with open(os.path.join(e.diag_dir, "100", "journal.txt"), "rb") as f:
+            journal = f.read()
+        self.assertNotIn(b"hunter2", journal)
+        self.assertNotIn(b"docker", journal)
+        self.assertIn(b"sudo[77]:   runner : PWD=/w ; USER=root ; COMMAND=[removed by ci-pool]\n", journal)  # who ran it stays
+        self.assertIn(b"session opened for user root\n", journal)
+
+    def test_a_jit_config_split_by_sudo_into_continued_lines_does_not_survive(self):  # review F2
+        e = self.started()
+        e.lxc.journal_text = (b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : PWD=/opt/actions-runner ; USER=runner ; "
+                              b"COMMAND=./run.sh --jitconfig\n"
+                              b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[:950] + b"\n"
+                              b"2026-11-05T09:30:01.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[950:1100]
+                              + b"\n")
+        self.tick_events(e)
+        with open(os.path.join(e.diag_dir, "100", "journal.txt"), "rb") as f:
+            journal = f.read()
+        self.assertNotIn(b"QUJD", journal)
+        self.assertEqual(journal.count(b"(command continued)[removed by ci-pool]\n"), 2)
+
+    def test_the_runner_unit_s_journal_is_kept_apart_scrubbed(self):  # review F3: dockerd lines can fill the last 400
+        e = self.started()
+        e.lxc.runner_journal_text = (b"2026-11-05T09:39:41.1+00:00 c sudo[42]: root : (command continued) " + self.JIT[:150]
+                                     + b"\n2026-11-05T09:39:41.2+00:00 c systemd[1]: Stopping ci-pool-runner.service...\n")
+        evs = self.tick_events(e)
+        path = os.path.join(e.diag_dir, "100", "journal-runner.txt")
+        with open(path, "rb") as f:
+            got = f.read()
+        self.assertIn(b"systemd[1]: Stopping ci-pool-runner.service...\n", got)
+        self.assertNotIn(b"QUJD", got)
+        self.assertEqual(self.mode(path), 0o600)
+        [call] = [c for c in e.lxc.calls if c[0] == "journal_unit"]
+        self.assertEqual((call[1:4], call[5]), ((self.C, 100, 256 * 1024), "ci-pool-runner.service"))
+        self.assertLessEqual(call[4], pool.DIAG_SNAPSHOT_SECONDS)
+        [kept] = [d for d in evs if d["event"] == "diag_kept"]
+        self.assertIn("journal-runner.txt", kept["files"])
+
     def test_scrub_removes_the_jit_config_in_every_form_and_leaves_other_text(self):
         for line, want in ((b"x --jitconfig abc+/= y", b"x --jitconfig [removed by ci-pool] y"),
                            (b"x --jitconfig 'abc' y", b"x --jitconfig '[removed by ci-pool]' y"),
@@ -798,11 +845,17 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
                            (b"x --jitconfig  abc", b"x --jitconfig  [removed by ci-pool]"),
                            (b"blob " + self.JIT + b" end", b"blob [long token removed by ci-pool] end"),
                            (b"Runner will be shutdown for UserCancelled", b"Runner will be shutdown for UserCancelled"),
+                           (b"t c sudo[9]: a : USER=root ; COMMAND=/bin/x -p pw\nnext", b"t c sudo[9]: a : USER=root ; "
+                            b"COMMAND=[removed by ci-pool]\nnext"),
+                           (b"t c sudo: a : (command continued) rest", b"t c sudo: a : (command continued)[removed by ci-pool]"),
+                           (b"t c app[3]: COMMAND=kept, not sudo", b"t c app[3]: COMMAND=kept, not sudo"),
+                           (b"t c sudo[9]: pam_unix(sudo:session): session closed", b"t c sudo[9]: pam_unix(sudo:session): "
+                            b"session closed"),
                            (b"sha256 " + b"a" * 64, b"sha256 " + b"a" * 64)):
             self.assertEqual(pool.scrub(line), want, line[:40])
 
     def test_a_journal_or_process_list_that_fails_is_logged_and_the_rest_is_kept_and_deleted(self):
-        for fail, gone in (("journal", "journal.txt"), ("processes", "ps.txt")):
+        for fail, gone in (("journal", "journal.txt"), ("journal_unit", "journal-runner.txt"), ("processes", "ps.txt")):
             e = self.started()
             e.lxc.fail = {fail}
             evs = self.tick_events(e)
@@ -821,10 +874,11 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         e.lxc.snapshot_hook = lambda: setattr(e, "now", e.now + 20)  # every ps or journalctl takes 20 s
         evs = self.tick_events(e)
         self.assertEqual(sorted(e.lxc.instances), ["pool-wf-build-spare"])  # both deleted
-        self.assertEqual([c[1] for c in e.lxc.calls if c[0] in ("processes", "journal")], [self.C, self.C])
+        self.assertEqual([c[:2] for c in e.lxc.calls if c[0] in ("processes", "journal", "journal_unit")],
+                         [("processes", self.C), ("journal_unit", self.C)])  # 40 s: past the 30 s pass budget
         self.assertEqual(e.lxc.names("tail_file"), [])  # the pass budget was spent before the logs
         self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
-                         ["journal.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
+                         ["journal-runner.txt", "memory.events", "memory.peak", "meta.json", "ps.txt"])
         self.assertEqual([(d["container"], d["step"]) for d in evs if d["event"] == "diag_failed" and d["step"] == "budget"],
                          [("pool-wf-build-200", "budget")])
         self.assertTrue([d for d in evs if d["event"] == "diag_failed" and d["error"] == "copy time is up"])
@@ -832,8 +886,9 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         e = self.started(diag_timeout_seconds=5)
         e.lxc.snapshot_hook = lambda: setattr(e, "now", e.now + 6)
         evs = self.tick_events(e)
-        self.assertEqual([c for c in e.lxc.calls if c[0] in ("processes", "journal")], [("processes", self.C, 65536, 5)])
-        self.assertEqual([d["step"] for d in evs if d["event"] == "diag_failed"][:1], ["journal.txt"])
+        self.assertEqual([c for c in e.lxc.calls if c[0] in ("processes", "journal", "journal_unit")],
+                         [("processes", self.C, 65536, 5)])
+        self.assertEqual([d["step"] for d in evs if d["event"] == "diag_failed"][:1], ["journal-runner.txt"])
         self.assertNotIn(self.C, e.lxc.instances)
 
     def test_a_stop_request_skips_the_journal(self):
@@ -843,8 +898,8 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
         e.lxc.snapshot_hook = lambda: stop.append(1)
         evs = self.tick_events(e)
         self.assertEqual(e.lxc.names("processes"), [self.C])
-        self.assertEqual(e.lxc.names("journal"), [])
-        self.assertIn(("journal.txt", "the pool is stopping"),
+        self.assertEqual(e.lxc.names("journal_unit") + e.lxc.names("journal"), [])
+        self.assertIn(("journal-runner.txt", "the pool is stopping"),
                       [(d["step"], d["error"]) for d in evs if d["event"] == "diag_failed"])
         self.assertNotIn(self.C, e.lxc.instances)
 
@@ -915,8 +970,9 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
                      'while [ "$1" != "--" ]; do shift; done; shift\n'
                      'case "$1" in stat) echo "1001 1001";; find) printf "1.0 3 a.log\\n";; tail) echo log;;\n'
                      '  journalctl) echo journal;; ps) echo ps;; esac\n')
-        with tempfile.TemporaryDirectory() as d:  # five calls of 0.4 s: ps, journalctl, stat, find, tail
-            cfg = {**pool.DEFAULTS, "diag_dir": os.path.join(d, "diag"), "diag_pass_budget_seconds": 2}
+        with tempfile.TemporaryDirectory() as d:  # six calls of 0.4 s: ps, journalctl -u, journalctl, stat, find, tail;
+            # tail starts at about 2.0 s, inside the budget, and the pass ends at about 2.4 s, past it
+            cfg = {**pool.DEFAULTS, "diag_dir": os.path.join(d, "diag"), "diag_pass_budget_seconds": 2.2}
             keeper = pool.DiagKeeper(cfg, x, cgroup_root=os.path.join(d, "cgroup"))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -945,10 +1001,31 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
         with open(x.binary + ".args") as f:
             self.assertEqual(f.read().split(), ["exec", "c1", "--", "journalctl", "-b", "--no-pager", "-o", "short-iso-precise",
                                                 "-n", "400"])
-        self.assertEqual(x.processes("c1", 1000, 5), b"out\n")
+        self.assertEqual(x.journal("c1", 100, 1000, 5, unit="ci-pool-runner.service"), b"out\n")
         with open(x.binary + ".args") as f:
-            self.assertEqual(f.read().split(), ["exec", "c1", "--", "ps", "-ww", "-eo",
-                                                "pid,ppid,pgid,sid,user,stat,lstart,args"])
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "journalctl", "-b", "--no-pager", "-o", "short-iso-precise",
+                                                "-u", "ci-pool-runner.service", "-n", "100"])
+        self.assertEqual(x.processes("c1", 1000, 5), b"out\n")
+        with open(x.binary + ".args") as f:  # comm, never args: a step's command line can hold its secrets (review F1)
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "ps", "-eo", "pid,ppid,pgid,sid,user,stat,lstart,comm"])
+
+    @unittest.skipUnless(shutil.which("ps"), "needs ps")
+    def test_a_token_on_a_command_line_does_not_reach_the_process_list(self):  # review F1, the real ps
+        token = "ghp_" + "A" * 36
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "-H", f"Authorization: token {token}"])
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        x = self.lxc('while [ "$1" != "--" ]; do shift; done; shift\nexec "$@"\n')  # runs the command here, not in a container
+        got = x.processes("c1", 1024 * 1024, 10)
+        [line] = [ln for ln in got.split(b"\n") if ln.split()[:1] == [str(p.pid).encode()]]  # the process is listed
+        self.assertNotIn(b"ghp_", got)
+        self.assertNotIn(b"Authorization", got)
+        self.assertNotIn(b"time.sleep", line)
+
+    def test_a_window_that_starts_at_a_line_start_keeps_that_line(self):  # review F4
+        x = self.lxc("i=10; while [ $i -lt 100 ]; do echo \"line-$i\"; i=$((i+1)); done\n")  # 90 lines of 8 bytes
+        got = x.journal("c1", 400, 200, 5)  # the last 200 bytes are exactly the last 25 lines
+        self.assertEqual(got, b"".join(b"line-%d\n" % i for i in range(75, 100)))
 
     def test_the_journal_keeps_its_last_whole_lines_within_the_cap(self):
         x = self.lxc("i=0; while [ $i -lt 100 ]; do echo \"line-$i\"; i=$((i+1)); done\n")

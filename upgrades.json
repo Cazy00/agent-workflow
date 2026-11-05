@@ -217,5 +217,10 @@
     "notes": [
       "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), ci-pool.service now makes /tmp/snap-private-tmp in its private /tmp before it starts (without it snapd rebuilt all security profiles about every 40 s), and the pool image and runner-setup purge rsyslog (its AppArmor profile denied journald about 6,700 times a day); the host reinstalls the pool (server/ci-runner/install-host.sh), rebuilds its images, and patches a persistent runner with lxc exec RUNNER -- apt-get purge -y rsyslog."
     ]
+  },
+  "v2.18.0": {
+    "notes": [
+      "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), ci-pool now copies the runner's _diag/*.log and the container's memory.events and memory.peak to /var/log/ci-pool/diag/<job id>/ (root only, bounded, oldest removed past 50 jobs or 200 MB) before it deletes a container as unassigned or at the hard timeout, and logs diag_kept; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
+    ]
   }
 }

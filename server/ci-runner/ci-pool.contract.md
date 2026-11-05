@@ -75,3 +75,28 @@ is success. The pool calls it whenever it deletes a container.
   every label. The event `admission_refused` names the `label`, the `job` and the `why`.
 - **`ci-pool check-config --config FILE`** reads and validates the config only (no `lxc`, no network). It exits 0, or exits 2
   with the reason on stderr.
+- **The diagnostic copy (not part of the two source contracts; the pool's own behaviour).** Before it deletes a container
+  whose reason is `unassigned` or `hard_timeout`, the pool copies what explains the end of a runner that never reported
+  (I-121) to `diag_dir` (default `/var/log/ci-pool/diag`; `""` turns it off), in `<diag_dir>/<job id>/`
+  (`<job id>.<n>` if that exists), root only: directories 0700, files 0600.
+  - **Allowlist, nothing else.** From the container: the files `*.log` that sit directly in `diag_runner_dir` (default
+    `/opt/actions-runner/_diag`, where `ci-pool-image` installs the runner), whose names match `[A-Za-z0-9_.-]{1,100}.log`, as
+    regular files (`find -type f`), the newest `diag_max_files` (10), the last `diag_max_file_kb` KiB (2048) of each. The
+    runner's `.credentials`, `.credentials_rsaparams`, `.runner` and the JIT config (which the entrypoint removes after
+    reading it) are not logs and are never listed, read or copied; nor is anything outside that directory. From the host: the
+    container's cgroup `memory.events` and `memory.peak` (as read, at most 4 KiB each), and a `meta.json` (job, container,
+    reason, repository, label, runner name, start and copy times).
+  - **Bounded.** What a container prints is never trusted with host memory: the pool reads at most the cap from each `lxc exec`
+    and kills a process that says more; each lxc call of the copy has 20 s and the copy of one container
+    `diag_timeout_seconds` (60). Retention after each copy: the oldest job directories go while there are more than
+    `diag_max_jobs` (50) or they hold more than `diag_max_mb` (200) MB; only real directories named like a job id are
+    removed, and the one just written stays.
+  - **Never blocks the delete.** A copy that fails in whole or in part is logged (`diag_failed`, with the `step` and
+    `error`) and the delete goes on; a failure of any kind is caught, not only a failed `lxc` call. Nothing is copied for a
+    container the pool keeps (`delete_skipped`: its runner could not be unregistered), and a container whose delete failed is
+    copied once, not on every later pass.
+  - **Events** (one JSON line each): `diag_kept` (`container`, `job`, `why`, `path`, `files`, `bytes`) before `deleted` when
+    anything was kept; `diag_failed`; `diag_removed` (`path`, `why: retention`).
+  - The copy uses `lxc exec` (`find`, `tail`) inside the container, so it only works while the container is running, which
+    holds for both reasons; a stopped container (`runner_exited`) is not copied. It trusts nothing it reads from the container
+    beyond the allowlist above; replacing it means changing `DiagKeeper` and the two `Lxc` read methods only.

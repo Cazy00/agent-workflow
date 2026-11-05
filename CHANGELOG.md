@@ -2,6 +2,17 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.18.0
+
+A minor release: the CI pool keeps the runner's diagnostic log when it deletes a container that never reported its job (workspace I-121; on home, mateen-systems' `checks` job is cancelled mid-step while its runner's container keeps running, the pool then deletes it `unassigned`, and the `_diag` log that names the signal or lost Worker went with it: eight such deletions since 2026-11-02). New optional config keys and events; nothing is required to move the pin.
+
+- **`ci-pool` copies `_diag/*.log` and the memory files before an `unassigned` or `hard_timeout` delete.** Into `/var/log/ci-pool/diag/<job id>/`, root only (directories 0700, files 0600): the newest 10 `*.log` files directly in `/opt/actions-runner/_diag` (the last 2 MiB of each), the container's cgroup `memory.events` and `memory.peak`, and a `meta.json`. One `diag_kept` event names the path. Retention: the oldest job directories go past 50 jobs or 200 MB (`diag_removed`).
+- **Allowlist only.** Names matching `[A-Za-z0-9_.-]{1,100}.log`, regular files, in the one directory; the runner's `.credentials`, `.runner` and the JIT config are never listed, read or copied (`ci-pool.contract.md` says so). Reads from a container are capped (a flood is killed), so a container cannot fill the host's memory.
+- **Never blocks the delete.** Any failure of the copy is a `diag_failed` event and the delete goes on; a copy takes at most `diag_timeout_seconds` (60); a container whose delete failed is copied once. A container the pool keeps because its runner could not be unregistered is not copied.
+- Config (all optional): `diag_dir` (`""` turns it off), `diag_runner_dir`, `diag_max_files`, `diag_max_file_kb`, `diag_max_jobs`, `diag_max_mb`, `diag_timeout_seconds`; `ci-pool check-config` refuses a bad one. Code: `DiagKeeper` and `Lxc.list_logs` / `Lxc.tail_file` in `server/ci-runner/ci-pool`; the README and the contract describe it.
+- Tests: `server/ci-runner/test_ci_pool.py` (`DiagTests`, `LxcDiagTests`: kept and ordered before the delete, modes, the allowlist with `.credentials`, `.runner`, a `../` name and a JIT file offered, both reasons and not the others, failures of the listing, the read and the directory, once per container, the off switch, the file, size and time caps, retention by count and size leaving other entries alone, the config checks, and the real `Lxc` methods against a stub `lxc` script: parsing, the output cap, a failed and a stuck exec).
+- Upgrade: the pin moves; a host reinstalls the pool (`install-host.sh`) to take it. No image rebuild.
+
 ## v2.17.1
 
 A patch: two durable fixes for the CI pool on a host (workspace backlog B45 H29; found 2026-11-03 and 2026-11-04). Nothing is required to move the pin.

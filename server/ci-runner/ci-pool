@@ -405,7 +405,8 @@ class DiagKeeper:
                     log("diag_failed", container=name, job=jid, step=fname, error=str(e))
             try:
                 nbytes = cfg["diag_max_file_kb"] * 1024
-                for _, _, fname in self.lxc.list_logs(name, cfg["diag_runner_dir"], left())[:cfg["diag_max_files"]]:
+                listed = [f for f in self.lxc.list_logs(name, cfg["diag_runner_dir"], left()) if DIAG_NAME_RE.match(f[2])]
+                for _, _, fname in listed[:cfg["diag_max_files"]]:
                     if self.clock() > deadline:
                         log("diag_failed", container=name, job=jid, step=fname, error="copy time is up")
                         break

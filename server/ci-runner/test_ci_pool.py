@@ -34,6 +34,8 @@ class FakeLxc:
 
     def __init__(self, fingerprint="fp1"):
         self.instances, self.calls, self.fingerprint, self.fail = {}, [], fingerprint, set()
+        self.logs = {}  # container -> {file name: (mtime, bytes)} : what the runner's _diag directory holds
+        self.tail_hook = lambda: None  # called on every tail_file
         self.list_budget = None  # a number: that many more list() calls work, the next one raises
 
     def _do(self, what):
@@ -74,6 +76,19 @@ class FakeLxc:
     def profile_show(self, name):
         return ""
 
+    def list_logs(self, name, directory, timeout):
+        self.calls.append(("list_logs", name, directory))
+        if "list_logs" in self.fail:
+            raise pool.PoolError("list_logs refused")
+        return sorted(((m, len(d), f) for f, (m, d) in self.logs.get(name, {}).items()), reverse=True)
+
+    def tail_file(self, name, path, nbytes, timeout):
+        self.calls.append(("tail_file", name, path))
+        if "tail_file" in self.fail:
+            raise pool.PoolError("tail_file refused")
+        self.tail_hook()
+        return self.logs[name][os.path.basename(path)][1][-nbytes:]
+
     def names(self, op):
         return [c[1] for c in self.calls if c[0] == op]
 
@@ -86,16 +101,20 @@ class Env:
         tc.addCleanup(self.tmp.cleanup)
         self.cfg = {**pool.DEFAULTS, "version": 1, "repos": ["o/r"], "source_cmd": ["src"], "jit_cmd": ["jit"],
                     "state_file": os.path.join(self.tmp.name, "state.json"),
+                    "diag_dir": os.path.join(self.tmp.name, "diag"),
                     "labels": {"wf-build": {"profile": "ci-pool-build", "image": "ci-pool-build", "cap": 1, "memory": "5GiB"},
                                "wf-gate": {"profile": "ci-pool-gate", "image": "ci-pool-gate", "cap": 2, "memory": "2GiB"}}}
         self.cfg.update(over)
+        self.diag_dir = self.cfg["diag_dir"]
         self.lxc, self.now, self.host = FakeLxc(), 1000.0, dict(GOOD)
         self.queued, self.running, self.private, self.source_fails = [], set(), True, False
         self.api_calls = None  # what each source answer reports as `api_calls`; None leaves the field out
         self.commands, self.removed, self.remove_fails = [], [], False
         self.mem = {}  # container -> what read_memory would answer for it
+        self.cgroup = os.path.join(self.tmp.name, "cgroup")
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
                               host=lambda: self.host, clock=lambda: self.now,
+                              diag=pool.DiagKeeper(self.cfg, self.lxc, lambda: self.now, cgroup_root=self.cgroup),
                               memory=lambda n: self.mem.get(n, {"memory_peak_mib": None, "oom_kill": None}))
 
     def cmd(self, argv):
@@ -393,6 +412,253 @@ class MemoryTests(unittest.TestCase):  # B41 item 14
                 f.write("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\noom_group_kill 0\n")
             self.assertEqual(pool.read_memory("pool-wf-build-1", root=d), {"memory_peak_mib": 4097, "oom_kill": 1})
             self.assertEqual(pool.read_memory("gone", root=d), {"memory_peak_mib": None, "oom_kill": None})
+
+
+class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives the delete of an unassigned container
+    C = "pool-wf-build-100"
+
+    def started(self, **over):
+        e = Env(self, **over)
+        e.job("100")
+        e.tick()
+        e.lxc.logs[self.C] = {"Runner_20261105-050000-utc.log": (50.0, b"runner log\n"),
+                              "Worker_20261105-050100-utc.log": (60.0, b"Worker: received SIGTERM\n")}
+        os.makedirs(os.path.join(e.cgroup, "lxc.payload." + self.C))
+        for k, v in (("memory.events", "oom_kill 1\n"), ("memory.peak", "12345\n")):
+            with open(os.path.join(e.cgroup, "lxc.payload." + self.C, k), "w") as f:
+                f.write(v)
+        return e
+
+    def events(self, e, name=None):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.pool.tick()
+        return [d for d in map(json.loads, out.getvalue().splitlines()) if name is None or d.get("event") == name]
+
+    def tick_events(self, e):
+        e.now += 301
+        return self.events(e)
+
+    @staticmethod
+    def mode(path):
+        return os.stat(path).st_mode & 0o777
+
+    def test_an_unassigned_container_keeps_its_logs_and_memory_files_before_it_is_deleted(self):
+        e = self.started()
+        evs = self.tick_events(e)
+        [kept] = [d for d in evs if d["event"] == "diag_kept"]
+        path = os.path.join(e.diag_dir, "100")
+        self.assertEqual((kept["path"], kept["container"], kept["job"], kept["why"]), (path, self.C, "100", "unassigned"))
+        self.assertEqual(kept["files"], ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "memory.events",
+                                         "memory.peak", "meta.json"])
+        with open(os.path.join(path, "Worker_20261105-050100-utc.log"), "rb") as f:
+            self.assertEqual(f.read(), b"Worker: received SIGTERM\n")
+        with open(os.path.join(path, "memory.events")) as f:
+            self.assertEqual(f.read(), "oom_kill 1\n")
+        with open(os.path.join(path, "meta.json")) as f:
+            self.assertEqual(json.load(f)["why"], "unassigned")
+        self.assertEqual(kept["bytes"], sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path)))
+        self.assertEqual((self.mode(e.diag_dir), self.mode(path)), (0o700, 0o700))
+        for f in os.listdir(path):
+            self.assertEqual(self.mode(os.path.join(path, f)), 0o600, f)
+        order = [d["event"] for d in evs if d["event"] in ("diag_kept", "deleted")]
+        self.assertEqual(order, ["diag_kept", "deleted"])
+        self.assertLess([c[0] for c in e.lxc.calls].index("tail_file"), [c[0] for c in e.lxc.calls].index("delete"))
+
+    def test_a_job_past_the_hard_timeout_keeps_them_too(self):
+        e = self.started()
+        e.running = {e.pool.state.jobs["100"]["runner_name"]}
+        e.now += 7201
+        evs = self.events(e)
+        self.assertEqual([d["why"] for d in evs if d["event"] == "diag_kept"], ["hard_timeout"])
+
+    def test_other_deletions_keep_nothing_and_do_not_look_inside(self):
+        e = self.started()
+        e.lxc.instances[self.C]["status"] = "Stopped"
+        evs = self.events(e)
+        self.assertEqual([d["why"] for d in evs if d["event"] == "deleted"], ["runner_exited"])
+        e.lxc.instances["pool-wf-gate-999"] = {"status": "Stopped", "created_at": e.now - 60}
+        self.events(e)
+        self.assertEqual(e.lxc.names("list_logs"), [])
+        self.assertFalse(os.path.exists(e.diag_dir))
+
+    def test_a_runner_that_could_not_be_unregistered_keeps_its_container_and_nothing_is_copied(self):
+        e = self.started()
+        e.remove_fails = True
+        self.tick_events(e)
+        self.assertIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("list_logs"), [])
+
+    def test_only_log_files_directly_in_the_diag_directory_are_read(self):
+        e = self.started()
+        e.lxc.logs[self.C].update({".credentials": (99.0, b"SECRET"), ".runner": (98.0, b"SECRET"), "../evil.log": (97.0, b"x"),
+                                   "a b.log": (96.0, b"x"), "jit": (95.0, b"SECRET-JIT"), "x.log.gz": (94.0, b"x")})
+        self.tick_events(e)
+        self.assertEqual(sorted(os.path.basename(c[2]) for c in e.lxc.calls if c[0] == "tail_file"),
+                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log"])
+        self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))),
+                         ["Runner_20261105-050000-utc.log", "Worker_20261105-050100-utc.log", "memory.events", "memory.peak",
+                          "meta.json"])
+        for f in os.listdir(os.path.join(e.diag_dir, "100")):
+            with open(os.path.join(e.diag_dir, "100", f), "rb") as fh:
+                self.assertNotIn(b"SECRET", fh.read())
+        self.assertEqual(os.listdir(e.diag_dir), ["100"])  # nothing escaped by a name with ..
+
+    def test_the_runner_directory_is_the_configured_one(self):
+        e = self.started(diag_runner_dir="/srv/runner/_diag")
+        self.tick_events(e)
+        self.assertIn(("list_logs", self.C, "/srv/runner/_diag"), e.lxc.calls)
+        self.assertIn(("tail_file", self.C, "/srv/runner/_diag/Worker_20261105-050100-utc.log"), e.lxc.calls)
+
+    def test_a_copy_that_fails_never_blocks_the_delete(self):
+        for fail in ({"list_logs"}, {"tail_file"}):
+            e = self.started()
+            e.lxc.fail = fail
+            evs = self.tick_events(e)
+            self.assertNotIn(self.C, e.lxc.instances, fail)
+            self.assertEqual([d["event"] for d in evs if d["event"] == "deleted"], ["deleted"])
+            self.assertTrue([d for d in evs if d["event"] == "diag_failed"], fail)
+        # the memory files are still kept when the logs are not
+        self.assertEqual(sorted(os.listdir(os.path.join(e.diag_dir, "100"))), ["memory.events", "memory.peak", "meta.json"])
+        self.assertEqual([d["event"] for d in evs if d["event"] == "diag_kept"], ["diag_kept"])
+
+    def test_nothing_readable_leaves_no_directory_and_no_diag_kept(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        e.lxc.fail = {"list_logs"}
+        evs = self.tick_events(e)
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual([d["event"] for d in evs if d["event"] in ("diag_kept", "diag_failed")].count("diag_kept"), 0)
+        self.assertEqual(os.listdir(e.diag_dir), [])
+
+    def test_a_diag_directory_that_cannot_be_made_never_blocks_the_delete(self):
+        e = self.started()
+        with open(e.diag_dir, "w") as f:  # a file where the directory should be
+            f.write("x")
+        evs = self.tick_events(e)
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual([d["step"] for d in evs if d["event"] == "diag_failed"], ["keep"])
+
+    def test_a_delete_that_fails_does_not_copy_again_on_the_next_pass(self):
+        e = self.started()
+        e.lxc.fail = {"delete"}
+        self.tick_events(e)
+        e.now += 15
+        self.events(e)
+        self.assertEqual(e.lxc.names("list_logs"), [self.C])
+        self.assertEqual(os.listdir(e.diag_dir), ["100"])
+        e.lxc.fail = set()
+        e.now += 15
+        self.events(e)
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("list_logs"), [self.C])
+
+    def test_the_off_switch(self):
+        e = self.started(diag_dir="")
+        evs = self.tick_events(e)
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("list_logs"), [])
+        self.assertFalse([d for d in evs if d["event"].startswith("diag_")])
+
+    def test_the_newest_files_and_the_last_kilobytes_only(self):
+        e = self.started(diag_max_files=2, diag_max_file_kb=1)
+        e.lxc.logs[self.C] = {f"f{i}.log": (float(i), bytes([65 + i]) * 3000) for i in range(5)}
+        self.tick_events(e)
+        got = sorted(f for f in os.listdir(os.path.join(e.diag_dir, "100")) if f.endswith(".log"))
+        self.assertEqual(got, ["f3.log", "f4.log"])
+        self.assertEqual(os.path.getsize(os.path.join(e.diag_dir, "100", "f4.log")), 1024)
+
+    def test_the_copy_stops_at_its_time_limit_and_the_delete_goes_on(self):
+        e = self.started(diag_timeout_seconds=10)
+        e.lxc.tail_hook = lambda: setattr(e, "now", e.now + 11)  # every read takes 11 s
+        evs = self.tick_events(e)
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual(len(e.lxc.names("tail_file")), 1)
+        self.assertTrue([d for d in evs if d["event"] == "diag_failed" and d["error"] == "copy time is up"])
+
+    def test_retention_removes_the_oldest_directories_by_count_and_size_and_nothing_else(self):
+        e = self.started(diag_max_jobs=3, diag_max_mb=1)
+        os.makedirs(e.diag_dir)
+        for i, jid in enumerate(("1", "2", "3")):
+            d = os.path.join(e.diag_dir, jid)
+            os.mkdir(d)
+            with open(os.path.join(d, "x.log"), "wb") as f:
+                f.write(b"x" * 100)
+            os.utime(d, (100 + i, 100 + i))
+        os.mkdir(os.path.join(e.diag_dir, "keep-me"))  # not a job directory
+        os.symlink("/", os.path.join(e.diag_dir, "9"))  # not a real directory
+        evs = self.tick_events(e)
+        self.assertEqual(sorted(os.listdir(e.diag_dir)), ["100", "2", "3", "9", "keep-me"])
+        self.assertEqual([d["path"] for d in evs if d["event"] == "diag_removed"], [os.path.join(e.diag_dir, "1")])
+        e = self.started(diag_max_jobs=50, diag_max_mb=1)  # by size: an old 1 MB directory goes, the new one stays
+        os.makedirs(os.path.join(e.diag_dir, "7"))
+        with open(os.path.join(e.diag_dir, "7", "big.log"), "wb") as f:
+            f.write(b"x" * 1048576)
+        os.utime(os.path.join(e.diag_dir, "7"), (100, 100))
+        self.tick_events(e)
+        self.assertEqual(os.listdir(e.diag_dir), ["100"])
+
+    def test_one_job_id_kept_twice_gets_its_own_directory(self):
+        e = self.started()
+        os.makedirs(os.path.join(e.diag_dir, "100"))
+        evs = self.tick_events(e)
+        [kept] = [d for d in evs if d["event"] == "diag_kept"]
+        self.assertEqual(kept["path"], os.path.join(e.diag_dir, "100.1"))
+
+    def test_the_config_checks_the_diag_keys(self):
+        base = {"version": 1, "repos": ["o/r"], "source_cmd": ["a"], "jit_cmd": ["b"],
+                "labels": {"wf-build": {"profile": "p", "image": "i", "cap": 1, "memory": "5GiB"}}}
+
+        def load(**over):
+            with tempfile.TemporaryDirectory() as d:
+                p = os.path.join(d, "c.json")
+                with open(p, "w") as f:
+                    json.dump({**base, **over}, f)
+                return pool.load_config(p)
+        cfg = load()
+        self.assertEqual((cfg["diag_dir"], cfg["diag_runner_dir"]), ("/var/log/ci-pool/diag", "/opt/actions-runner/_diag"))
+        self.assertEqual(load(diag_dir="")["diag_dir"], "")
+        for bad in ({"diag_dir": "relative"}, {"diag_dir": 5}, {"diag_runner_dir": "_diag"}, {"diag_max_files": 0},
+                    {"diag_max_mb": True}, {"diag_max_jobs": "9"}, {"diag_timeout_seconds": -1}, {"diag_max_file_kb": 1.5}):
+            with self.assertRaises(pool.PoolError, msg=str(bad)):
+                load(**bad)
+
+
+class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `lxc` script
+    def lxc(self, body):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "lxc")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+        return pool.Lxc(path)
+
+    def test_list_logs_parses_find_output_and_drops_other_names(self):
+        x = self.lxc('echo "$@" > "$0.args"\n'
+                     'printf "10.5 120 Worker_a.log\\n20.25 7 Runner_b.log\\n30.0 9 .credentials\\n31.0 9 x y.log\\n'
+                     '32.0 9 ..log\\nnot a line\\n"\n')
+        self.assertEqual(x.list_logs("c1", "/opt/actions-runner/_diag", 5),
+                         [(32.0, 9, "..log"), (20.25, 7, "Runner_b.log"), (10.5, 120, "Worker_a.log")])
+        with open(x.binary + ".args") as f:
+            args = f.read().split()
+        self.assertEqual(args[:4], ["exec", "c1", "--", "find"])
+        self.assertIn("-type", args)
+        self.assertIn("*.log", args)
+
+    def test_tail_file_returns_at_most_the_limit_and_kills_a_flood(self):
+        x = self.lxc("exec yes x\n")
+        got = x.tail_file("c1", "/f.log", 1000, 10)
+        self.assertEqual(len(got), 1000)
+
+    def test_a_failed_or_stuck_exec_is_a_pool_error(self):
+        with self.assertRaises(pool.PoolError):
+            self.lxc("exit 3\n").tail_file("c1", "/f.log", 10, 5)
+        with self.assertRaises(pool.PoolError):
+            self.lxc("exec sleep 30\n").tail_file("c1", "/f.log", 10, 0.3)
+        with self.assertRaises(pool.PoolError):
+            pool.Lxc("/nonexistent/lxc").tail_file("c1", "/f.log", 10, 5)
 
 
 class ReaperFixTests(unittest.TestCase):

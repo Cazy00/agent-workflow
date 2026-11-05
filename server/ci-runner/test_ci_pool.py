@@ -756,7 +756,7 @@ class DiagTests(unittest.TestCase):  # I-121: the runner's _diag log survives th
                          ["pool-wf-build-200"])
         self.assertTrue(pool.Pool(e.cfg, e.lxc, e.pool.state, stopping=lambda: True).diag.stopping())
 
-    JIT = b"eyJhIjoi" + b"QUJD" * 300  # a just-in-time config as base64, about 1.2 KB
+    JIT = b"QUJD" * 300  # a long base64 run standing in for a just-in-time config, 1.2 KB
 
     def test_the_journal_and_the_process_list_are_kept_as_root_with_the_jit_config_removed(self):  # I-121 follow-up
         e = self.started()

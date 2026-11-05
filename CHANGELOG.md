@@ -2,6 +2,16 @@
 
 Releases are tags. From `v1.6.0` a release is tagged by `.github/workflows/release-tag.yml` when the owner merges the pull request that bumps `package.json`; review and owner approval precede every tag. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`; a new tag never upgrades a project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.18.1
+
+A patch: the CI pool's diagnostic copy (v2.18.0) also keeps the container's journal and its process list (workspace I-121). The kept `_diag` of mateen-systems' job 127161917280 on home showed the Listener stopping for `UserCancelled` at 09:39:41Z: `run.sh` got SIGTERM or SIGINT, memory was not it, and the container ran six more minutes, so `ci-pool-entrypoint`'s `systemctl poweroff` never ran. Either systemd stopped `ci-pool-runner.service` or something killed the whole process group; the container's journal tells them apart, and it went with the container. Nothing is required to move the pin.
+
+- **`journal.txt` and `ps.txt` in the kept directory.** Read inside the container as root before the `_diag` logs: `journalctl -b --no-pager -o short-iso-precise -n 400` (its last 256 KiB, cut at a line start; at most 1 MiB read) and `ps -ww -eo pid,ppid,pgid,sid,user,stat,lstart,args` (its first 64 KiB), 10 s each at most, inside the copy's and the pass's time budgets. Files 0600 in the job's 0700 directory, written with `O_EXCL|O_NOFOLLOW`, as before.
+- **Untrusted, and the JIT config is taken out.** Both are untrusted text written as data. The entrypoint passes the runner's just-in-time config on the command line (`run.sh --jitconfig <config>`), so `sudo`, `run.sh` and the Listener carry it in `ps`, and `sudo` logs that command to the journal: the pool replaces the value after `--jitconfig` and any run of 200 or more base64 characters before writing (`scrub`).
+- **Never blocks the delete.** A failing or slow `journalctl` or `ps` is a `diag_failed` event (`step: journal.txt` or `ps.txt`) and the rest of the copy and the delete go on; a stop request skips them as it skips the logs.
+- Code: `DiagKeeper._keep`, `scrub`, `Lxc.journal` / `Lxc.processes` and the `keep_end` mode of `Lxc._exec_bounded` in `server/ci-runner/ci-pool`; the contract and the README describe it. Tests in `server/ci-runner/test_ci_pool.py`: both files kept, as root, before the delete, with the JIT config removed in every form; the byte caps (the last whole lines of the journal, a flood cut and killed); a failing `journalctl` or `ps` logged while the rest is kept and the container deleted; the copy and pass budgets and a stop request counting them; the real `Lxc` arguments against the stub `lxc`.
+- Upgrade: the pin moves; a host reinstalls the pool (`install-host.sh`) to take it. No image rebuild.
+
 ## v2.18.0
 
 A minor release: the CI pool keeps the runner's diagnostic log when it deletes a container that never reported its job (workspace I-121; on home, mateen-systems' `checks` job is cancelled mid-step while its runner's container keeps running, the pool then deletes it `unassigned`, and the `_diag` log that names the signal or lost Worker went with it: eight such deletions since 2026-11-02). New optional config keys and events; nothing is required to move the pin.

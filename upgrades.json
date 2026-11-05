@@ -222,5 +222,10 @@
     "notes": [
       "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), ci-pool now copies the runner's _diag/*.log and the container's memory.events and memory.peak to /var/log/ci-pool/diag/<job id>/ (root only, bounded, oldest removed past 50 jobs or 200 MB) before it deletes a container as unassigned or at the hard timeout, and logs diag_kept; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
     ]
+  },
+  "v2.18.1": {
+    "notes": [
+      "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), the diagnostic copy in /var/log/ci-pool/diag/<job id>/ now also holds journal.txt (the container's journal for this boot, its last 400 lines, 256 KiB) and ps.txt (its process list with process groups, 64 KiB), read as root inside the container with the runner's just-in-time config removed; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
+    ]
   }
 }

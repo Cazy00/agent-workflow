@@ -97,15 +97,28 @@ is success. The pool calls it whenever it deletes a container.
     the host: the container's cgroup `memory.events` and `memory.peak` (as read, at most 4 KiB each), and a `meta.json` (job,
     container, reason, repository, label, runner name, start and copy times), written last: a directory whose `meta.json`
     cannot be written is removed.
+  - **The process list and the journal, read as root; the content is not trusted.** Before the `_diag` logs (they say who
+    signalled the runner: a systemd stop of `ci-pool-runner.service` and its cause, or a kill of the process group that the
+    entrypoint, `sudo`, `run.sh`, the Listener, the Worker and the steps share), two commands run inside the container as root
+    (journald's files are root's): `ps.txt` from `ps -ww -eo pid,ppid,pgid,sid,user,stat,lstart,args`, its first 64 KiB, and
+    `journal.txt` from `journalctl -b --no-pager -o short-iso-precise -n 400`, its last 256 KiB cut at a line start (at most
+    1 MiB is read; past it the process is killed and the last 256 KiB of what was read is kept). Each call gets 10 s at most,
+    never more than the copy and the pass have left. Job code can write to the journal and name its processes, so both are
+    untrusted text, written as data, never parsed or run. Two places in a container carry the runner's just-in-time config:
+    the command lines of `sudo`, `run.sh` and the Listener (`--jitconfig <config>`) and `sudo`'s journal line naming that
+    command. Before a byte is written the pool replaces the value after `--jitconfig` (with ` ` or `=`, quoted or not) with
+    `[removed by ci-pool]` and any run of 200 or more base64 characters with `[long token removed by ci-pool]`; the cut at a
+    line start keeps every remaining `--jitconfig` on the line of its value.
   - **Bounded.** What a container prints is never trusted with host memory: the pool reads at most the cap from each `lxc exec`
-    and kills a process that says more; each lxc call of the copy has 20 s (at least 1 s), the copy of one container
+    and kills a process that says more; each lxc call of the copy has 20 s (at least 1 s; 10 s for `ps` and `journalctl`),
+    the process list and the journal count in both budgets below, the copy of one container
     `diag_timeout_seconds` (60), and all copies of one reap pass together `diag_pass_budget_seconds` (45). Once a pass has
     spent its budget, the containers it still deletes are deleted without a copy (`diag_failed`, `step: budget`), so a
     pass with several slow copies does not hold up launches. Retention after each copy: the oldest job directories go while
     there are more than `diag_max_jobs` (50) or they hold more than `diag_max_mb` (200) MB; only real directories named like
     a job id that hold a `meta.json` (a regular file: the pool's own) are counted or removed, and the one just written stays.
   - **Bounded against a stop.** The copy runs inside the reap, and SIGTERM waits for the pass under way. The copying checks
-    the stop request before each container and each file: after SIGTERM no copy starts (`diag_failed`, `step: stopping`) and
+    the stop request before each container and each file (`ps.txt` and `journal.txt` included): after SIGTERM no copy starts (`diag_failed`, `step: stopping`) and
     the one under way ends after its current lxc call (at most 20 s), then the deletes and `state.save()` finish. With
     `ci-pool.service`'s stop timeout (systemd's default `TimeoutStopSec`, 90 s) a stop therefore spends at most about 20 s
     in the copy; without a stop a pass spends at most `diag_pass_budget_seconds` plus a few seconds (each call gets at least
@@ -116,8 +129,10 @@ is success. The pool calls it whenever it deletes a container.
     copied once, not on every later pass.
   - **Events** (one JSON line each): `diag_kept` (`container`, `job`, `why`, `path`, `files`, `bytes`) before `deleted` when
     anything was kept; `diag_failed` (`container`, `job`, `step`: `diag_dir`, `budget`, `stopping`, `list`, `keep`,
-    `retention`, `meta.json`, `memory.events`, `memory.peak` or a file name, and `error`); `diag_removed` (`path`,
+    `retention`, `meta.json`, `memory.events`, `memory.peak`, `ps.txt`, `journal.txt` or a file name, and `error`);
+    `diag_removed` (`path`,
     `why: retention`).
-  - The copy uses `lxc exec` (`find`, `tail`) inside the container, so it only works while the container is running, which
-    holds for both reasons; a stopped container (`runner_exited`) is not copied. It trusts nothing it reads from the container;
-    replacing it means changing `DiagKeeper` and the three `Lxc` read methods (`owner`, `list_logs`, `tail_file`) only.
+  - The copy uses `lxc exec` (`find`, `tail`, `ps`, `journalctl`) inside the container, so it only works while the container
+    is running, which holds for both reasons; a stopped container (`runner_exited`) is not copied. It trusts nothing it reads
+    from the container; replacing it means changing `DiagKeeper`, `scrub` and the five `Lxc` read methods (`owner`,
+    `list_logs`, `tail_file`, `processes`, `journal`) only.

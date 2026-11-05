@@ -31,8 +31,9 @@ it: an unknown answer never deletes or starts a container. A command gets 120 s.
 {"version": 1, "repo": "OWNER/REPO", "jobs": [{"id": "123456789", "runner_name": "ci-pool-wf-build-56789012"}]}
 ```
 
-- `jobs`: jobs in progress and the name of the runner each one runs on. The pool asks only about a container past the
-  unassigned timeout, to tell a runner that took a job from one that never got one.
+- `jobs`: jobs in progress and the name of the runner each one runs on. The pool uses it to tell a runner that took a job
+  from one that never got one. The list is not taken as complete: GitHub's listing can miss a run whose job is running
+  (I-121), so a runner it leaves out is checked inside its container before it counts as unassigned (Notes).
 
 ## JIT source: `jit_cmd`
 
@@ -54,6 +55,17 @@ is success. The pool calls it whenever it deletes a container.
   pool start it. The pool therefore counts containers against the queue, not job against container: per repository and label
   it starts a container while the queued jobs outnumber the containers whose runner has no job yet.
 - `running` is asked every pass for a repository that has live containers, so a runner that took a job is known at once.
+- **Unassigned** means both: the runner is not named in `running`, **and** no `Runner.Worker` process runs in its container
+  (the runner starts one per job). Only a container past `unassigned_timeout_seconds` (300) is looked into: `ps -e -o comm=`
+  inside it, as root (as for `ps.txt`), at most 64 KiB read and 10 s. A `Runner.Worker` there holds the container: the pool
+  marks it assigned, logs `assigned_by_worker` (`container`, `job`, `runner_name`, `workers`) the first time, and neither
+  unregisters the runner (`jit_cmd remove`: GitHub then cancels the job, `UserCancelled`) nor deletes the container; the
+  runner exits when its job ends and the container is reaped as `runner_exited`. A check that fails, times out or fills the
+  64 KiB is no answer and holds the container too (`worker_check_failed`: `container`, `job`, `error`, once per pass), since
+  unknown is never a reason to delete. Only a container seen to run no `Runner.Worker` is unregistered and deleted as
+  `unassigned`, and if GitHub still refuses to let its runner go it stays (`delete_skipped`), as before. The hard timeout
+  (`hard_timeout_seconds`) does not look inside: past it the container is deleted whatever runs in it. A source that does
+  not answer `running` deletes nothing and looks into nothing.
 - **`api_calls`** (optional, in both `queued` and `running` answers): a non-negative integer, the API calls that answer
   cost. The pool sums them over a pass. A source that omits it is counted at the fixed estimate below.
 - **API budget.** The pool stretches `poll_seconds` so that `api_calls_per_hour` (default 1500) is not exceeded: the pause
@@ -144,4 +156,5 @@ is success. The pool calls it whenever it deletes a container.
   - The copy uses `lxc exec` (`find`, `tail`, `ps`, `journalctl`) inside the container, so it only works while the container
     is running, which holds for both reasons; a stopped container (`runner_exited`) is not copied. It trusts nothing it reads
     from the container; replacing it means changing `DiagKeeper`, `scrub` and the five `Lxc` read methods (`owner`,
-    `list_logs`, `tail_file`, `processes`, `journal`) only.
+    `list_logs`, `tail_file`, `processes`, `journal`) only. (The Worker check above is apart: `Pool.holds_job` and
+    `Lxc.workers`.)

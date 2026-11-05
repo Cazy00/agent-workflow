@@ -225,7 +225,7 @@
   },
   "v2.18.1": {
     "notes": [
-      "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), the diagnostic copy in /var/log/ci-pool/diag/<job id>/ now also holds journal.txt (the container's journal for this boot, its last 400 lines, 256 KiB) and ps.txt (its process list with process groups, 64 KiB), read as root inside the container with the runner's just-in-time config removed; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
+      "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), the diagnostic copy in /var/log/ci-pool/diag/<job id>/ now also holds ps.txt (its process list with process groups, command names without arguments, 64 KiB), journal-runner.txt (ci-pool-runner.service's journal, its last 100 lines) and journal.txt (the container's journal for this boot, its last 400 lines), each journal 256 KiB at most, read as root inside the container; sudo's logged commands and the runner's just-in-time config are removed, anything else a job printed stays, and the files are root only; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
     ]
   }
 }

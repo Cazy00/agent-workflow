@@ -9,8 +9,8 @@
 
 Contracts: ci-pool.contract.md (the job source and the JIT source are commands named in the config). Every `lxc` call goes
 through the Lxc class; every event is one JSON line on stdout. Nothing here kills a running job for room: a container is
-deleted only when its runner has exited, past the hard timeout, or when no job was assigned to it in time and GitHub lets
-the runner go. Containers are launched by count: a runner takes any queued job of its label, so a repository's label gets a
+deleted only when its runner has exited, past the hard timeout, or when no job was assigned to it in time (GitHub's running
+list does not name it and no Runner.Worker process runs in it) and GitHub lets the runner go. Containers are launched by count: a runner takes any queued job of its label, so a repository's label gets a
 container for every queued job that no unassigned container is waiting for, under the label's cap.
 """
 import argparse
@@ -51,6 +51,11 @@ DIAG_RUNNER_UNIT = "ci-pool-runner.service"
 DIAG_PS = "ps.txt"  # the container's processes with their process groups and sessions, the command name only
 DIAG_PS_LIMIT = 64 * 1024  # bytes kept of it: the start
 DIAG_SNAPSHOT_SECONDS = 10  # one journal or ps call; never more than the copy and pass time left
+# the runner starts one Runner.Worker process per job: a container that runs one holds a job, whatever GitHub's running list
+# says (I-121: the list missed running jobs and the pool unregistered their runners, which cancelled the jobs mid-step)
+WORKER_COMM = b"Runner.Worker"
+WORKER_CHECK_LIMIT = 64 * 1024  # bytes read of the container's process names; output that reaches it is not an answer
+WORKER_CHECK_SECONDS = 10
 # what job code prints is not trusted, and secrets reach both: a step's command line (`docker login -p ...`) and the
 # runner's just-in-time config (`run.sh --jitconfig <config>`). ps prints no arguments (comm only); sudo logs the whole
 # command to the journal, split into `(command continued)` lines when long. Before a byte is written: on sudo's lines
@@ -261,6 +266,14 @@ class Lxc:
         """The instance's processes with parent, process group, session, user, state, start time and command name (comm: no
         arguments, which can hold a step's secrets), read as root, at most the first `limit` bytes. Untrusted text."""
         return self._exec_bounded(name, ["ps", "-eo", "pid,ppid,pgid,sid,user,stat,lstart,comm"], limit, timeout)
+
+    def workers(self, name, limit, timeout):
+        """How many processes named WORKER_COMM run inside the instance (`ps -e -o comm=`, read as root like `processes`).
+        Output that fills `limit` is cut, so it is no answer: a PoolError, as is a failed or stuck exec."""
+        out = self._exec_bounded(name, ["ps", "-e", "-o", "comm="], limit, timeout)
+        if len(out) >= limit:
+            raise PoolError(f"lxc exec {name} ps: the process list reached {limit} bytes")
+        return sum(1 for line in out.split(b"\n") if line.strip() == WORKER_COMM)
 
     def delete(self, name):
         self._run("delete", "--force", name)
@@ -793,7 +806,10 @@ class Pool:
                 if names is not None:  # asked every pass, not remembered: a container that lost its JIT config stops counting
                     e["assigned"] = e["runner_name"] in names
                     if not e["assigned"] and now - e["started"] > cfg["unassigned_timeout_seconds"]:
-                        why = "unassigned"
+                        if self.holds_job(name, e, jid):  # the list can miss a running job: look inside before letting go
+                            e["assigned"] = True
+                        else:
+                            why = "unassigned"
             if why:
                 self._delete(name, e, jid, why)
         # a launch whose container is gone (a crash between the record and the container, or a container removed by hand)
@@ -802,6 +818,22 @@ class Pool:
                 self.jit_remove(e["repo"], e["runner_id"])
                 e["status"], e["finished"] = "finished", now
                 log("entry_closed", job=jid, container=e["container"], why="no container")
+
+    def holds_job(self, name, entry, jid):
+        """True unless the container is seen to run no Runner.Worker: a check that fails or times out holds the container
+        too (unknown is never a reason to delete). Logs `assigned_by_worker` when a Worker is first seen in it, and
+        `worker_check_failed` on each pass whose check fails."""
+        try:
+            n = self.lxc.workers(name, WORKER_CHECK_LIMIT, WORKER_CHECK_SECONDS)
+        except PoolError as err:
+            log("worker_check_failed", container=name, job=jid, error=str(err))
+            return True
+        if n:
+            if not entry.get("by_worker"):
+                entry["by_worker"] = True
+                log("assigned_by_worker", container=name, job=jid, runner_name=entry.get("runner_name"), workers=n)
+            return True
+        return False
 
     def sample_memory(self, name, entry):
         """Keep the highest memory.peak and oom_kill read so far in the entry: a container that stopped has no cgroup left,

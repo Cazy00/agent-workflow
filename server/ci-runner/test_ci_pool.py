@@ -45,6 +45,7 @@ class FakeLxc:
         self.runner_journal_text = b"2026-11-05T09:39:41.000000+00:00 c systemd[1]: ci-pool-runner.service: Deactivated.\n"
         self.ps_text = b"PID PPID PGID SID USER STAT STARTED COMMAND\n1 0 1 1 root Ss Thu Nov 5 09:30:00 2026 systemd\n"
         self.snapshot_hook = lambda: None  # called on every journal / processes
+        self.worker_count = {}  # container -> Runner.Worker processes running in it (none when absent)
 
     def _do(self, what):
         self.calls.append(what)
@@ -119,6 +120,12 @@ class FakeLxc:
             raise pool.PoolError("lxc exec ps exited 1")
         self.snapshot_hook()
         return self.ps_text[:limit]
+
+    def workers(self, name, limit, timeout):
+        self.calls.append(("workers", name, limit, timeout))
+        if "workers" in self.fail:
+            raise pool.PoolError("lxc exec c ps: timed out after 10s")
+        return self.worker_count.get(name, 0)
 
     def names(self, op):
         return [c[1] for c in self.calls if c[0] == op]
@@ -393,6 +400,98 @@ class ReaperTests(unittest.TestCase):
         e.lxc.instances["not-a-pool-box"] = {"status": "Stopped", "created_at": 1}
         e.tick()
         self.assertEqual(e.lxc.names("delete"), ["pool-wf-gate-999"])
+
+
+class WorkerGuardTests(unittest.TestCase):  # I-121: GitHub's running list missed busy runners; removing them cancelled jobs
+    C = "pool-wf-build-100"
+
+    def started(self):
+        e = Env(self)
+        e.job("100")
+        e.tick()
+        e.queued = []
+        return e
+
+    def events(self, e):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.pool.tick()
+        return [json.loads(line) for line in out.getvalue().splitlines()]
+
+    def jit_removes(self, e):
+        return [c for c in e.commands if c[:2] == ["jit", "remove"]]
+
+    def test_a_runner_with_a_worker_missing_from_the_running_list_is_neither_removed_nor_deleted(self):
+        e = self.started()
+        e.lxc.worker_count[self.C] = 1
+        e.now += 301
+        evs = self.events(e)
+        self.assertIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("delete"), [])
+        self.assertEqual(self.jit_removes(e), [], "never unregistered: that is what cancelled the step")
+        self.assertTrue(e.pool.state.jobs["100"]["assigned"])
+        [d] = [v for v in evs if v["event"] == "assigned_by_worker"]
+        self.assertEqual((d["container"], d["job"], d["workers"]), (self.C, "100", 1))
+        self.assertFalse([v for v in evs if v["event"] in ("deleted", "delete_skipped", "diag_kept")])
+        e.now += 600  # later passes: still held, and the event is not repeated
+        evs = self.events(e)
+        self.assertIn(self.C, e.lxc.instances)
+        self.assertEqual(self.jit_removes(e), [])
+        self.assertFalse([v for v in evs if v["event"] == "assigned_by_worker"])
+        e.lxc.instances[self.C]["status"] = "Stopped"  # the job ends, the runner exits: reaped as before
+        e.now += 15
+        e.tick()
+        self.assertNotIn(self.C, e.lxc.instances)
+
+    def test_a_runner_with_no_worker_is_removed_and_deleted_unassigned_as_before(self):
+        e = self.started()
+        e.now += 301
+        evs = self.events(e)
+        self.assertEqual(e.lxc.names("workers"), [self.C], "looked inside first")
+        self.assertEqual(self.jit_removes(e), [["jit", "remove", "o/r", "77"]])
+        self.assertNotIn(self.C, e.lxc.instances)
+        [d] = [v for v in evs if v["event"] == "deleted"]
+        self.assertEqual(d["why"], "unassigned")
+        self.assertFalse([v for v in evs if v["event"] in ("assigned_by_worker", "worker_check_failed")])
+
+    def test_a_check_that_fails_holds_the_container_and_is_logged_once_per_pass(self):
+        e = self.started()
+        e.lxc.fail.add("workers")
+        e.now += 301
+        for _ in range(2):
+            evs = self.events(e)
+            self.assertEqual([(v["container"], v["job"]) for v in evs if v["event"] == "worker_check_failed"],
+                             [(self.C, "100")])
+            e.now += 15
+        self.assertIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("delete"), [])
+        self.assertEqual(self.jit_removes(e), [])
+        e.lxc.fail.discard("workers")  # the check answers again, with no Worker: deleted unassigned
+        e.tick()
+        self.assertNotIn(self.C, e.lxc.instances)
+
+    def test_no_look_inside_before_the_timeout_or_for_a_listed_runner_and_the_hard_timeout_is_unchanged(self):
+        e = self.started()
+        e.now += 299
+        e.tick()
+        e.running = {e.pool.state.jobs["100"]["runner_name"]}
+        e.now += 600
+        e.tick()
+        self.assertEqual(e.lxc.names("workers"), [])
+        e.lxc.worker_count[self.C] = 1  # a Worker does not hold a container past the hard timeout
+        e.running = set()
+        e.now = e.pool.state.jobs["100"]["started"] + 7201
+        e.tick()
+        self.assertNotIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("workers"), [])
+
+    def test_a_source_that_fails_still_deletes_nothing_and_looks_inside_nothing(self):
+        e = self.started()
+        e.source_fails = True
+        e.now += 301
+        e.tick()
+        self.assertIn(self.C, e.lxc.instances)
+        self.assertEqual(e.lxc.names("workers"), [])
 
 
 class MemoryTests(unittest.TestCase):  # B41 item 14
@@ -1008,6 +1107,19 @@ class LxcDiagTests(unittest.TestCase):  # the real Lxc methods, against a stub `
         self.assertEqual(x.processes("c1", 1000, 5), b"out\n")
         with open(x.binary + ".args") as f:  # comm, never args: a step's command line can hold its secrets (review F1)
             self.assertEqual(f.read().split(), ["exec", "c1", "--", "ps", "-eo", "pid,ppid,pgid,sid,user,stat,lstart,comm"])
+
+    def test_workers_counts_runner_worker_processes_as_root(self):  # I-121 busy guard
+        x = self.lxc('echo "$@" > "$0.args"\nprintf "systemd\\nRunner.Listener\\nRunner.Worker\\nbash\\n Runner.Worker \\n'
+                     'Runner.Workers\\n"\n')
+        self.assertEqual(x.workers("c1", 1000, 5), 2)
+        with open(x.binary + ".args") as f:
+            self.assertEqual(f.read().split(), ["exec", "c1", "--", "ps", "-e", "-o", "comm="])
+        self.assertEqual(self.lxc('printf "systemd\\nRunner.Listener\\n"\n').workers("c1", 1000, 5), 0)
+
+    def test_workers_with_cut_failed_or_stuck_output_is_a_pool_error(self):
+        for body, timeout in (("exec yes Runner.Worker\n", 10), ("exit 1\n", 5), ("exec sleep 30\n", 0.3)):
+            with self.assertRaises(pool.PoolError, msg=body):
+                self.lxc(body).workers("c1", 1000, timeout)
 
     @unittest.skipUnless(shutil.which("ps"), "needs ps")
     def test_a_token_on_a_command_line_does_not_reach_the_process_list(self):  # review F1, the real ps

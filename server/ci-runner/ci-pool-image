@@ -6,8 +6,8 @@
 # a container starts. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
 # and the one before that is deleted.
 # Nothing here runs this on a schedule: a host rebuilds on release, and a weekly timer, if it wants one, is its own to add.
-# A container takes no updates of its own (no apt timers), so its packages are as new as this build. ci-pool replaces a
-# spare made from an older image by itself.
+# A container takes no updates of its own (no apt timers), so its packages are as new as this build, which ends in a full
+# upgrade. ci-pool replaces a spare made from an older image by itself.
 set -euo pipefail
 LXC="${LXC:-/snap/bin/lxc}"
 SHARE="${SHARE:-/usr/local/share/ci-runner}"
@@ -39,7 +39,7 @@ $LXC file push "$SHARE/ci-pool-runner.service" "$work/etc/systemd/system/ci-pool
 rc=0
 $LXC exec -T "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
   --env TMP_SIZE="$TMP_SIZE" -- bash -s <<'PROVISION' || rc=$?
-set -euo pipefail
+set -Eeuo pipefail  # -E: the ERR trap below also fires inside a function, such as purge_updaters
 umask 022
 exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1
 set -x
@@ -146,7 +146,11 @@ HOOK
   rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
 fi
 
-# Again, after the last install: ubuntu-server recommends both packages, so an install above could bring one back.
+# A container never upgrades itself, so the build does: every package is current here, not only the ones named above. Here
+# for both kinds, after the last refresh of the lists. confdef and confold, with stdin closed: dpkg has no one to ask about a
+# changed configuration file, and this script is itself read from stdin.
+apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade </dev/null
+# Again, after the last install and the upgrade: ubuntu-server recommends both packages, so either could bring one back.
 purge_updaters
 
 # /tmp in RAM (counts against the container's memory limit): tests that write many small files are several times faster.

@@ -1881,29 +1881,61 @@ esac
             self.assertLess(body.rindex(last), again)
         self.assertLess(again, body.index("systemctl enable ci-pool-runner.service"))
 
+    def _image_upgrade(self):
+        """The provisioning script, and what runs from the upgrade through the second purge, with the function it calls."""
+        body = self._image_purge()[0]
+        func = body[body.index("purge_updaters() {"):body.index("\npurge_updaters\n")]
+        again = body.rindex("\npurge_updaters\n")
+        return body, func + "\n" + body[body.index("apt-get -y -o Dpkg::Options"):again + len("\npurge_updaters\n")]
+
+    def test_the_image_upgrades_everything_after_its_last_update_and_before_the_second_purge(self):  # rv962a55b403ff4301 F1
+        body, part = self._image_upgrade()
+        upgrade = body.index("apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade </dev/null")
+        for earlier in ("apt-get update", "apt-get install", "playwright install", "installdependencies.sh"):
+            self.assertLess(body.rindex(earlier), upgrade)
+        self.assertLess(body.index("export DEBIAN_FRONTEND=noninteractive"), upgrade)
+        self.assertLess(upgrade, body.rindex("\npurge_updaters\n"))
+        self.assertLess(upgrade, body.index("rm -rf /var/lib/apt/lists/*"))  # the lists it needs are still there
+        full = "-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade"
+        rc, _, _, apt_calls = self._apt_run(part)
+        self.assertEqual((rc, apt_calls), (0, [full] + self.APT_PURGES))  # run in this order, an upgrade cannot leave one behind
+
+    def test_a_failed_upgrade_stops_the_image_build(self):
+        rc, _, _, apt_calls = self._apt_run(self._image_upgrade()[1], apt_exit=100)
+        self.assertEqual(len(apt_calls), 1)  # nothing after it runs
+        self.assertNotEqual(rc, 0)
+
+    def test_the_provisioning_trap_reports_a_failure_inside_a_function(self):  # rv962a55b403ff4301 F3
+        body, _ = self._image_apt()
+        head = body[body.index("set -E"):body.index("umask 022")]
+        trap = next(l for l in body.splitlines() if l.startswith("trap ") and l.endswith(" ERR"))
+        func = body[body.index("purge_updaters() {"):body.index("\npurge_updaters\n")]
+        rc, err, _, _ = self._apt_run("\n".join((head, trap, func, "purge_updaters")), apt_exit=100)
+        self.assertEqual(rc, 100)
+        self.assertIn("provisioning failed (exit 100) at line", err)
+
     def _setup_apt(self):
         t = self.text("runner-setup")
-        return t, t[t.index("systemctl disable --now apt-daily.timer"):t.index("# No rsyslog:")]
+        return t, t[t.index("if dpkg-query -W -f='${Status}' needrestart"):t.index("# No rsyslog:")]
 
-    def test_runner_setup_turns_apt_activity_off_on_every_registration(self):  # I-121, second cause
+    def test_runner_setup_purges_only_needrestart_on_every_registration(self):  # I-121, second cause; rv962a55b403ff4301 F2
         t, part = self._setup_apt()
         rc, err, sys_calls, apt_calls = self._apt_run(part)
-        self.assertEqual((rc, err), (0, ""))
-        # a run in progress is left to finish: no stop of the services, and the purges wait for its lock
-        self.assertEqual(sys_calls, [f"disable --now {self.APT_TIMERS}", self.APT_MASK])
-        self.assertEqual(apt_calls, self.APT_PURGES)
-        self.assertEqual(self._apt_run(part, installed=("needrestart",))[3], self.APT_PURGES[:1])
-        self.assertEqual(self._apt_run(part, installed=())[3], [])
-        self.assertLess(t.index("systemctl disable --now apt-daily.timer"), t.index('if [ -f "$dir/.runner" ]'))
+        self.assertEqual((rc, err, sys_calls), (0, "", []))
+        self.assertEqual(apt_calls, self.APT_PURGES[:1])  # unattended-upgrades is installed here and stays
+        self.assertEqual(self._apt_run(part, installed=())[3], [])  # absent: no apt call at all
+        self.assertLess(t.index("purge -y needrestart"), t.index('if [ -f "$dir/.runner" ]'))
 
-    def test_a_failed_apt_step_does_not_stop_a_registration(self):  # the rule of the rsyslog step
+    def test_a_long_lived_runner_keeps_its_security_updates(self):  # the owner's decision on rv962a55b403ff4301 F2
+        code = "\n".join(l for l in self.text("runner-setup").splitlines() if not l.lstrip().startswith("#"))
+        for gone in ("apt-daily", "unattended-upgrades", "packagekit", "systemctl mask", "systemctl disable"):
+            self.assertNotIn(gone, code)
+
+    def test_a_failed_needrestart_purge_does_not_stop_a_registration(self):  # the rule of the rsyslog step
         _, part = self._setup_apt()
-        rc, err, sys_calls, apt_calls = self._apt_run(part + "echo registered\n", apt_exit=100, systemctl_exit=1)
-        self.assertEqual(rc, 0)
-        self.assertEqual((len(sys_calls), apt_calls), (2, self.APT_PURGES))  # each step is still tried
-        for line in ("could not disable the apt timers (exit 1)", "could not mask the apt units (exit 1)",
-                     "could not purge needrestart (exit 100)", "could not purge unattended-upgrades (exit 100)"):
-            self.assertIn(f"runner-setup: {line}; registering anyway", err)
+        rc, err, _, apt_calls = self._apt_run(part + "echo registered\n", apt_exit=100)
+        self.assertEqual((rc, apt_calls), (0, self.APT_PURGES[:1]))
+        self.assertIn("runner-setup: could not purge needrestart (exit 100); registering anyway", err)
 
     def _rotate(self, aliases, stale="", query_fails=False):
         """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with

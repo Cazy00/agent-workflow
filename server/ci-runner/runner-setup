@@ -8,6 +8,20 @@ repo="$1"
 label="$2"
 read -r token
 dir=/home/runner/actions-runner
+# No apt activity in a job (I-121's second cause; ci-pool-image says why, and why the mask). Runs on every registration, so an
+# existing runner is covered too. Best effort, as for rsyslog below: each failed step is said on stderr and the setup goes on.
+# An apt run in progress is not stopped, which can take 15 minutes: the mask stops the next one and the purges wait for its lock.
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer ||
+  echo "runner-setup: could not disable the apt timers (exit $?); registering anyway" >&2
+systemctl mask apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
+  packagekit.service packagekit-offline-update.service ||
+  echo "runner-setup: could not mask the apt units (exit $?); registering anyway" >&2
+for pkg in needrestart unattended-upgrades; do  # needrestart first, so the second purge does not run its hook
+  if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then
+    DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y "$pkg" ||
+      echo "runner-setup: could not purge $pkg (exit $?); registering anyway" >&2
+  fi
+done
 # No rsyslog: nothing in a CI job reads /var/log/syslog (containers log to journald), and the image's rsyslogd AppArmor profile
 # denies journald's send to /run/systemd/journal/dev-log, about 6,700 denials a day on the host (I-104). Runs on every
 # registration, so an existing runner loses it too. Best effort: a held dpkg lock or a broken apt must not stop a

@@ -1826,6 +1826,85 @@ esac
         self.assertEqual(len(calls), 1)
         self.assertIn("runner-setup: could not purge rsyslog (exit 100); registering anyway", err)
 
+    APT_TIMERS = "apt-daily.timer apt-daily-upgrade.timer"
+    APT_MASK = "mask " + APT_TIMERS + (" apt-daily.service apt-daily-upgrade.service"
+                                       " packagekit.service packagekit-offline-update.service")
+    APT_PURGES = [f"-o DPkg::Lock::Timeout=300 purge -y {p}" for p in ("needrestart", "unattended-upgrades")]
+
+    def _apt_run(self, script, installed=("needrestart", "unattended-upgrades"), apt_exit=0, systemctl_exit=0):
+        """Run `script` with a fake dpkg-query (these packages installed), apt-get and systemctl; returns (exit code,
+        stderr, the fake systemctl's calls, the fake apt-get's calls)."""
+        with tempfile.TemporaryDirectory() as d:
+            sys_log, apt_log = os.path.join(d, "systemctl.log"), os.path.join(d, "apt.log")
+            status = "|".join(installed) or "none"
+            for name, body in (("systemctl", f'echo "$*" >> {sys_log}\nexit {systemctl_exit}'),
+                               ("apt-get", f'echo "$*" >> {apt_log}\nexit {apt_exit}'),
+                               ("dpkg-query", f'case "${{*: -1}}" in {status}) printf "install ok installed" ;; *) exit 1 ;; esac')):
+                path = os.path.join(d, name)
+                with open(path, "w") as f:
+                    f.write("#!/usr/bin/env bash\n" + body + "\n")
+                os.chmod(path, 0o755)
+            open(sys_log, "w").close()
+            open(apt_log, "w").close()
+            r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], capture_output=True, text=True,
+                               env={**os.environ, "PATH": d + os.pathsep + os.environ["PATH"]})
+            with open(sys_log) as f, open(apt_log) as g:
+                return r.returncode, r.stderr, f.read().splitlines(), g.read().splitlines()
+
+    def _image_apt(self):
+        body = self._image_purge()[0]
+        return body, body[body.index("systemctl disable --now apt-daily.timer"):body.index("# No rsyslog:")]
+
+    def test_the_image_turns_apt_activity_off_before_it_uses_apt(self):  # I-121, second cause
+        body, part = self._image_apt()
+        rc, _, sys_calls, apt_calls = self._apt_run(part)
+        self.assertEqual(rc, 0)
+        self.assertEqual(sys_calls, [f"disable --now {self.APT_TIMERS}", "stop apt-daily.service apt-daily-upgrade.service",
+                                     self.APT_MASK])
+        self.assertEqual(apt_calls, self.APT_PURGES)  # needrestart first, so the other purge does not run its hook
+        self.assertEqual(self._apt_run(part, installed=())[3], [])  # absent: no apt call at all
+        self.assertLess(body.index("systemctl disable --now apt-daily.timer"), body.index("apt-get purge -y rsyslog"))
+        self.assertLess(body.index("\npurge_updaters\n"), body.index("apt-get update"))
+
+    def test_a_failed_apt_step_stops_the_image_build(self):  # a container with the timers armed would cancel jobs again
+        _, part = self._image_apt()
+        self.assertNotEqual(self._apt_run(part, apt_exit=100)[0], 0)
+        rc, _, sys_calls, apt_calls = self._apt_run(part, systemctl_exit=1)
+        self.assertNotEqual(rc, 0)
+        self.assertEqual((len(sys_calls), apt_calls), (1, []))
+
+    def test_the_image_purges_the_updaters_again_after_its_last_install(self):  # ubuntu-server recommends both
+        body = self._image_purge()[0]
+        again = body.rindex("\npurge_updaters\n")
+        self.assertNotEqual(again, body.index("\npurge_updaters\n"))
+        for last in ("apt-get install", "playwright install", "installdependencies.sh"):
+            self.assertLess(body.rindex(last), again)
+        self.assertLess(again, body.index("systemctl enable ci-pool-runner.service"))
+
+    def _setup_apt(self):
+        t = self.text("runner-setup")
+        return t, t[t.index("systemctl disable --now apt-daily.timer"):t.index("# No rsyslog:")]
+
+    def test_runner_setup_turns_apt_activity_off_on_every_registration(self):  # I-121, second cause
+        t, part = self._setup_apt()
+        rc, err, sys_calls, apt_calls = self._apt_run(part)
+        self.assertEqual((rc, err), (0, ""))
+        # a run in progress is left to finish: no stop of the services, and the purges wait for its lock
+        self.assertEqual(sys_calls, [f"disable --now {self.APT_TIMERS}", self.APT_MASK])
+        self.assertEqual(apt_calls, self.APT_PURGES)
+        self.assertEqual(self._apt_run(part, installed=("needrestart",))[3], self.APT_PURGES[:1])
+        self.assertEqual(self._apt_run(part, installed=())[3], [])
+        self.assertLess(t.index("systemctl disable --now apt-daily.timer"), t.index('if [ -f "$dir/.runner" ]'))
+
+    def test_a_failed_apt_step_does_not_stop_a_registration(self):  # the rule of the rsyslog step
+        _, part = self._setup_apt()
+        rc, err, sys_calls, apt_calls = self._apt_run(part + "echo registered\n", apt_exit=100, systemctl_exit=1)
+        self.assertEqual(rc, 0)
+        self.assertEqual((len(sys_calls), apt_calls), (2, self.APT_PURGES))  # each step is still tried
+        for line in ("could not disable the apt timers (exit 1)", "could not mask the apt units (exit 1)",
+                     "could not purge needrestart (exit 100)", "could not purge unattended-upgrades (exit 100)"):
+            self.assertIn(f"runner-setup: {line}; registering anyway", err)
+
     def _rotate(self, aliases, stale="", query_fails=False):
         """Run the publish-and-rotate tail of ci-pool-image against a fake lxc that knows these aliases (and, with
         `stale`, a -new alias left on that fingerprint by an earlier build); returns (exit code, calls)."""

@@ -232,5 +232,10 @@
     "notes": [
       "Nothing is required: only the pin moves. On a host that runs the CI pool (server/ci-runner), ci-pool no longer unregisters or deletes a container past the unassigned timeout while a Runner.Worker process runs in it (GitHub's running list can miss a running job, and unregistering its runner cancelled the job); a check that fails holds the container too (worker_check_failed), and a Worker seen is logged as assigned_by_worker; the host reinstalls the pool (server/ci-runner/install-host.sh) to take it."
     ]
+  },
+  "v2.18.3": {
+    "notes": [
+      "Nothing is required of a project: only the pin moves. On a host that runs the CI pool (server/ci-runner), pool containers and persistent runners no longer run apt on their own: apt-daily.timer, apt-daily-upgrade.timer and their services are disabled and masked, PackageKit's services are masked, and unattended-upgrades and needrestart are purged, because an automatic upgrade restarted ci-pool-runner.service and cancelled long jobs (I-121's second cause). Containers therefore take no updates between image builds, and no schedule is installed: rebuild the images at each release, or add a timer. The host reinstalls the pool (server/ci-runner/install-host.sh) and rebuilds its images (ci-pool-image build); a persistent runner takes the change at its next ci-runner register."
+    ]
   }
 }

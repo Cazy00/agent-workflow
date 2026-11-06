@@ -5,7 +5,9 @@
 # pulled, and /tmp as tmpfs. The runner is not registered: ci-pool-entrypoint registers it with a just-in-time config when
 # a container starts. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
 # and the one before that is deleted.
-# Run weekly (a timer) and on release; ci-pool replaces a spare made from an older image by itself.
+# Nothing here runs this on a schedule: a host rebuilds on release, and a weekly timer, if it wants one, is its own to add.
+# A container takes no updates of its own (no apt timers), so its packages are as new as this build. ci-pool replaces a
+# spare made from an older image by itself.
 set -euo pipefail
 LXC="${LXC:-/snap/bin/lxc}"
 SHARE="${SHARE:-/usr/local/share/ci-runner}"
@@ -43,6 +45,26 @@ exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1
 set -x
 trap 'rc=$?; echo "ci-pool-image: provisioning failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
 export DEBIAN_FRONTEND=noninteractive
+# No apt activity in a job (I-121's second cause). A fresh container has missed apt-daily-upgrade.timer (Persistent), so it
+# fires up to an hour after boot, into any long job; unattended-upgrades then upgrades packages, and needrestart's apt hook,
+# automatic where there is no terminal, reexecutes systemd and restarts every service on an old library, ci-pool-runner.service
+# with them, which cancels the job. needrestart goes too because a package a job installs with sudo runs the same hook. Masked,
+# not only disabled: an upgrade of apt enables its timers again, and a mask outlives that. PackageKit stays installed
+# (software-properties-common depends on it) and masked, so its apt hook and any client cannot start it. Before anything
+# else here: an apt run of the timers' own would hold the lock this build needs, so a run in progress is stopped and waited for.
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
+systemctl stop apt-daily.service apt-daily-upgrade.service
+systemctl mask apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
+  packagekit.service packagekit-offline-update.service
+purge_updaters() {
+  local pkg
+  for pkg in needrestart unattended-upgrades; do  # needrestart first, so the second purge does not run its hook
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then
+      apt-get -o DPkg::Lock::Timeout=300 purge -y "$pkg"
+    fi
+  done
+}
+purge_updaters
 # No rsyslog: nothing in a CI job reads /var/log/syslog (containers log to journald), and the image's rsyslogd AppArmor profile
 # denies journald's send to /run/systemd/journal/dev-log, about 6,700 denials a day on the host (I-104). Only when the
 # base image has it: this runs before `apt-get update`, and apt cannot find a package it has no list for.
@@ -123,6 +145,9 @@ HOOK
   # the pre-pulled images stay; nothing else Docker made at build time does
   rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
 fi
+
+# Again, after the last install: ubuntu-server recommends both packages, so an install above could bring one back.
+purge_updaters
 
 # /tmp in RAM (counts against the container's memory limit): tests that write many small files are several times faster.
 # The ubuntu:24.04 container image ships no /etc/fstab, and sed -i exits 2 on a missing file.

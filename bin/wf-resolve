@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+// Resolves a project's workflow channel (or hold) to the release that judges its runs: contract channel-resolve v3,
+// adapters/resolve.mjs. The trust root is a channel record signed by the release broker's key and verified with the
+// public key in the base config; GitHub tags, markers and assets are storage only. Read-only. It prints the resolution
+// as JSON, or refuses with the reason on stderr and exit status 2; it never falls back to main or to a cache. Exit
+// statuses: 0 resolved, 2 refused or bad usage, 3 an unexpected error (a bug, not a decision: callers must not read it
+// as a refusal).
+import fs from 'node:fs';
+import path from 'node:path';
+import { resolve, run, ResolveError } from '../adapters/resolve.mjs';
+
+const TEST_ENV = 'WF_RESOLVE_TEST';
+const USAGE = `usage: wf-resolve (--project DIR --base REV | --config FILE) [--min-seq N]
+  Reads the workflow section of the BASE branch's docs/workflow/config.json: --project DIR with --base REV (required; in
+  pull request CI exactly the event's pull_request.base.sha, never HEAD) reads it from that commit with git; --config FILE is a copy of it (not
+  accepted in GitHub Actions). A hold (workflow.revision) is returned with version null and the config's version as
+  declared_version. A channel (workflow.channel: stable or canary for major 2, stable-N / canary-N for a later major N)
+  resolves only through its record channel-<name>.json on the workflow repository's "channels" release, signed by a key
+  in workflow.channel_key, for that channel and major, unexpired, valid for at most 72 hours, at a seq no lower than
+  --min-seq when given (the floor is the seq of the last record the caller saw; the broker side that persists it and
+  passes it comes in a later part, so today it is only used when given), naming a revision on main that the record's tag points at and whose package.json carries the
+  record's version. Output: {channel, revision, version, seq, expires_at}. Exit status: 0 resolved, 2 refused or bad
+  usage, 3 unexpected error.
+  Tests only (refused unless ${TEST_ENV}=1): --git-url URL replaces the repository, --record-url DIR replaces the
+  release assets with the files of a directory.`;
+const fail = (message, status = 2) => { console.error(`wf-resolve: ${message}`); process.exit(status); };
+const o = {};
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+  else if (['--config', '--project', '--base', '--min-seq', '--git-url', '--record-url'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) o[a.slice(2)] = argv[++i];
+  else fail(`invalid option or missing value: ${a}\n${USAGE}`);
+}
+const testing = process.env[TEST_ENV] === '1';
+for (const k of ['git-url', 'record-url']) if (o[k] !== undefined && !testing) fail(`--${k} is for tests only and needs ${TEST_ENV}=1`);
+if (Boolean(o.config) === Boolean(o.project)) fail(`give exactly one of --config and --project\n${USAGE}`);
+if (o.base && !o.project) fail(`--base goes with --project\n${USAGE}`);
+if (o.project && !o.base) fail(`--project needs --base REV: the base branch's commit, never the candidate\n${USAGE}`);
+const inActions = process.env.GITHUB_ACTIONS === 'true';
+if (o.config && inActions && !testing) fail('--config is not accepted in GitHub Actions: use --project with --base so the config comes from the base commit');
+let minSeq;
+if (o['min-seq'] !== undefined) { minSeq = Number(o['min-seq']); if (!/^[1-9]\d*$/.test(o['min-seq']) || !Number.isSafeInteger(minSeq)) fail(`--min-seq ${o['min-seq']} is not a positive integer`); }
+
+let text;
+if (o.config) {
+  try { text = fs.readFileSync(path.resolve(o.config), 'utf8'); } catch (e) { fail(`cannot read ${o.config}: ${e.message}`); }
+} else {
+  const dir = path.resolve(o.project);
+  if (o.base.startsWith('-')) fail(`--base ${o.base} is not a revision`);
+  const commitOf = rev => { const r = run(['-C', dir, 'rev-parse', '--verify', '-q', '--end-of-options', `${rev}^{commit}`]); return r.status === 0 ? r.stdout.trim() : ''; };
+  const base = commitOf(o.base);
+  if (!base) fail(`--base ${o.base} is not a commit in ${o.project}`);
+  // In pull request CI the checkout's HEAD is the candidate; a base that is the candidate would let it choose its judge.
+  const event = process.env.GITHUB_EVENT_NAME ?? '';
+  if (inActions && /^(pull_request|pull_request_target|merge_group)$/.test(event) && base === commitOf('HEAD')) fail(`--base ${o.base} is the candidate (HEAD) in a ${event} run: pass the base commit`);
+  // HEAD is not the only wrong answer (the PR's own head commit differs from the merge commit the checkout leaves in
+  // HEAD): in a pull request run the base is exactly the event's pull_request.base.sha.
+  if (inActions && /^pull_request(?:_target)?$/.test(event)) {
+    const eventPath = process.env.GITHUB_EVENT_PATH;
+    if (!eventPath) fail(`GITHUB_EVENT_PATH is not set in a ${event} run: cannot check --base against the event's base commit`);
+    let sha;
+    try { sha = JSON.parse(fs.readFileSync(eventPath, 'utf8'))?.pull_request?.base?.sha; } catch (e) { fail(`cannot read the ${event} event ${eventPath}: ${e.message}`); }
+    if (typeof sha !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) fail(`the ${event} event has no pull_request.base.sha`);
+    if (base !== sha.toLowerCase()) fail(`--base ${o.base} (${base.slice(0, 12)}) is not the event's pull_request.base.sha (${sha.slice(0, 12)}) in a ${event} run: pass the base commit`);
+  }
+  const r = run(['-C', dir, 'show', `${base}:docs/workflow/config.json`]);
+  if (r.status !== 0) fail(`cannot read docs/workflow/config.json at ${o.base}: ${(r.stderr || r.error?.message || '').trim()}`);
+  text = r.stdout;
+}
+let config;
+try { config = JSON.parse(text); } catch { fail('the base config is not valid JSON'); }
+let readRecord;
+if (o['record-url'] !== undefined) {
+  const dir = path.resolve(o['record-url']);
+  readRecord = async name => { try { return fs.readFileSync(path.join(dir, path.basename(name))); } catch { return null; } };
+}
+try {
+  const out = await resolve({ config, readRecord, gitUrl: o['git-url'], minSeq, retryMs: testing ? 0 : 3000 });
+  console.log(JSON.stringify(out));
+} catch (e) { e instanceof ResolveError ? fail(e.message) : fail(`unexpected: ${e.stack ?? e.message}`, 3); }

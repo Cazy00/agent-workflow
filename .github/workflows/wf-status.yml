@@ -81,7 +81,7 @@ jobs:
           read -r REPO REV CHANNEL VERSION <<< "$out"
           cat "$RUNNER_TEMP/resolved.json"; echo
           # The resolved revision: its validator and its gate script judge.
-          if [ -n "$WF_READ_TOKEN" ]; then
+          if [ -n "${WF_READ_TOKEN:-}" ]; then
             export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
             GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
             export GIT_CONFIG_VALUE_0

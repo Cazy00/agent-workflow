@@ -28,13 +28,16 @@ function world(t, { approval = 'manual' } = {}) {
   if (sh('git', ['-C', root, 'rev-parse', 'HEAD']).status !== 0) return null;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-gate-entry-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
-  const wf = path.join(temp, 'gh', 'Cazy00', 'agent-workflow');
+  const wf = path.join(temp, 'gh', 'Cazy00', 'agent-workflow.git');
   git(temp, 'clone', '-q', '--no-hardlinks', '--no-tags', root, wf);
   git(wf, 'checkout', '-q', '-B', 'main');
   const records = path.join(temp, 'records');
   fs.mkdirSync(records);
   fs.renameSync(path.join(wf, 'bin/wf-resolve'), path.join(wf, 'bin/wf-resolve-real'));
-  fs.writeFileSync(path.join(wf, 'bin/wf-resolve'), `#!/bin/sh\nexec env WF_RESOLVE_TEST=1 node "$(dirname "$0")/wf-resolve-real" --git-url ${JSON.stringify(wf)} --record-url ${JSON.stringify(records)} "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(wf, 'bin/wf-resolve'), `import { spawnSync } from 'node:child_process';
+const r = spawnSync(process.execPath, [new URL('./wf-resolve-real', import.meta.url).pathname, '--git-url', ${JSON.stringify(wf)}, '--record-url', ${JSON.stringify(records)}, ...process.argv.slice(2)], { stdio: 'inherit', env: { ...process.env, WF_RESOLVE_TEST: '1' } });
+process.exit(r.status ?? 3);
+`, { mode: 0o755 });
   const pkg = path.join(wf, 'package.json');
   fs.writeFileSync(pkg, fs.readFileSync(pkg, 'utf8').replace(/"version": "[^"]+"/, '"version": "2.19.0"'));
   git(wf, 'add', '-A'); git(wf, 'commit', '-qm', 'v2.19.0'); git(wf, 'tag', 'v2.19.0');
@@ -149,13 +152,13 @@ test('the head caller must name the entry at an accepted release tag, repeated a
     [w.caller('main'), /names the entry at main: name a release tag vX\.Y\.Z/],
     [w.caller('v2.18.0'), /older than v2\.19\.0, the oldest entry this release accepts/],
     [w.caller('v2.19.0', 'v2.20.0'), /must repeat the entry's tag as `with: entry: v2\.20\.0` \(found v2\.19\.0\)/],
-    [w.caller().replace('Cazy00/agent-workflow/', 'mallory/agent-workflow/'), /calls mallory\/agent-workflow\/\.github\/workflows\/wf-gate\.yml, not Cazy00/],
+    [w.caller().replace('uses: Cazy00/', 'uses: mallory/'), /calls mallory\/agent-workflow\/\.github\/workflows\/wf-gate\.yml, not Cazy00/],
   ]) {
     git(w.project, 'checkout', '-q', 'main');
     const head = w.commit('a caller', { '.github/workflows/wf-ci.yml': caller });
     const { resolved, gate } = w.pullRequest({ base: w.base, head });
     assert.equal(resolved.status, 0, resolved.stderr);
-    assert.equal(gate.status, 2, gate.stdout + gate.stderr);
+    assert.equal(gate.status, 2, String(why) + gate.stdout + gate.stderr + git(w.project, 'show', `${head}:.github/workflows/wf-ci.yml`).slice(-300));
     assert.match(gate.stderr, why);
     assert.match(gate.summary, /### wf ci: fail/);
     git(w.project, 'checkout', '-q', 'main'); git(w.project, 'reset', '-q', '--hard', w.base);

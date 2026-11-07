@@ -29,8 +29,12 @@ function world(t, { approval = 'manual' } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-gate-entry-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const wf = path.join(temp, 'gh', 'Cazy00', 'agent-workflow.git');
-  git(temp, 'clone', '-q', '--no-hardlinks', '--no-tags', root, wf);
-  git(wf, 'checkout', '-q', '-B', 'main');
+  // A fresh history from the committed tree, never a clone: CI's checkout is shallow, and a shallow repository served to
+  // the resolver's partial clone hangs it.
+  fs.mkdirSync(wf, { recursive: true }); git(wf, 'init', '-q', '-b', 'main');
+  const tar = sh('sh', ['-c', 'git -C "$1" archive HEAD | tar -x -C "$2"', 'sh', root, wf]);
+  assert.equal(tar.status, 0, tar.stderr);
+  git(wf, 'add', '-A'); git(wf, 'commit', '-qm', 'this checkout');
   const records = path.join(temp, 'records');
   fs.mkdirSync(records);
   fs.renameSync(path.join(wf, 'bin/wf-resolve'), path.join(wf, 'bin/wf-resolve-real'));

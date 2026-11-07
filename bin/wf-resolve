@@ -7,18 +7,18 @@
 // as a refusal).
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { resolve, ResolveError } from '../adapters/resolve.mjs';
+import { resolve, run, ResolveError } from '../adapters/resolve.mjs';
 
 const TEST_ENV = 'WF_RESOLVE_TEST';
 const USAGE = `usage: wf-resolve (--project DIR --base REV | --config FILE) [--min-seq N]
   Reads the workflow section of the BASE branch's docs/workflow/config.json: --project DIR with --base REV (required; in
-  pull request CI the base commit, never HEAD) reads it from that commit with git; --config FILE is a copy of it (not
+  pull request CI exactly the event's pull_request.base.sha, never HEAD) reads it from that commit with git; --config FILE is a copy of it (not
   accepted in GitHub Actions). A hold (workflow.revision) is returned with version null and the config's version as
   declared_version. A channel (workflow.channel: stable or canary for major 2, stable-N / canary-N for a later major N)
   resolves only through its record channel-<name>.json on the workflow repository's "channels" release, signed by a key
   in workflow.channel_key, for that channel and major, unexpired, valid for at most 72 hours, at a seq no lower than
-  --min-seq when given, naming a revision on main that the record's tag points at and whose package.json carries the
+  --min-seq when given (the floor is the seq of the last record the caller saw; the broker side that persists it and
+  passes it comes in a later part, so today it is only used when given), naming a revision on main that the record's tag points at and whose package.json carries the
   record's version. Output: {channel, revision, version, seq, expires_at}. Exit status: 0 resolved, 2 refused or bad
   usage, 3 unexpected error.
   Tests only (refused unless ${TEST_ENV}=1): --git-url URL replaces the repository, --record-url DIR replaces the
@@ -48,13 +48,23 @@ if (o.config) {
 } else {
   const dir = path.resolve(o.project);
   if (o.base.startsWith('-')) fail(`--base ${o.base} is not a revision`);
-  const commitOf = rev => { const r = spawnSync('git', ['-C', dir, 'rev-parse', '--verify', '-q', '--end-of-options', `${rev}^{commit}`], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : ''; };
+  const commitOf = rev => { const r = run(['-C', dir, 'rev-parse', '--verify', '-q', '--end-of-options', `${rev}^{commit}`]); return r.status === 0 ? r.stdout.trim() : ''; };
   const base = commitOf(o.base);
   if (!base) fail(`--base ${o.base} is not a commit in ${o.project}`);
   // In pull request CI the checkout's HEAD is the candidate; a base that is the candidate would let it choose its judge.
   const event = process.env.GITHUB_EVENT_NAME ?? '';
   if (inActions && /^(pull_request|pull_request_target|merge_group)$/.test(event) && base === commitOf('HEAD')) fail(`--base ${o.base} is the candidate (HEAD) in a ${event} run: pass the base commit`);
-  const r = spawnSync('git', ['-C', dir, 'show', `${base}:docs/workflow/config.json`], { encoding: 'utf8' });
+  // HEAD is not the only wrong answer (the PR's own head commit differs from the merge commit the checkout leaves in
+  // HEAD): in a pull request run the base is exactly the event's pull_request.base.sha.
+  if (inActions && /^pull_request(?:_target)?$/.test(event)) {
+    const eventPath = process.env.GITHUB_EVENT_PATH;
+    if (!eventPath) fail(`GITHUB_EVENT_PATH is not set in a ${event} run: cannot check --base against the event's base commit`);
+    let sha;
+    try { sha = JSON.parse(fs.readFileSync(eventPath, 'utf8'))?.pull_request?.base?.sha; } catch (e) { fail(`cannot read the ${event} event ${eventPath}: ${e.message}`); }
+    if (typeof sha !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) fail(`the ${event} event has no pull_request.base.sha`);
+    if (base !== sha.toLowerCase()) fail(`--base ${o.base} (${base.slice(0, 12)}) is not the event's pull_request.base.sha (${sha.slice(0, 12)}) in a ${event} run: pass the base commit`);
+  }
+  const r = run(['-C', dir, 'show', `${base}:docs/workflow/config.json`]);
   if (r.status !== 0) fail(`cannot read docs/workflow/config.json at ${o.base}: ${(r.stderr || r.error?.message || '').trim()}`);
   text = r.stdout;
 }

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolve, readWorkflow, githubRecords, ResolveError, MAX_VALIDITY_MS } from '../../adapters/resolve.mjs';
+import { resolve, readWorkflow, githubRecords, gitEnv, ResolveError, MAX_VALIDITY_MS } from '../../adapters/resolve.mjs';
 
 // bin/wf-resolve (channel-resolve v3): the base config's channel or hold -> the release that judges, or a refusal.
 // The trust root is a channel record signed with the broker's Ed25519 key; GitHub tags, markers and assets only store.
@@ -15,7 +15,7 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 const bin = path.join(root, 'bin/wf-resolve');
 const HOUR = 3600 * 1000;
 const git = (dir, ...args) => { const r = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
-const cleanEnv = () => { const env = { ...process.env }; for (const k of ['GITHUB_ACTIONS', 'GITHUB_EVENT_NAME', 'WF_RESOLVE_TEST']) delete env[k]; return env; };
+const cleanEnv = () => { const env = { ...process.env }; for (const k of ['GITHUB_ACTIONS', 'GITHUB_EVENT_NAME', 'GITHUB_EVENT_PATH', 'WF_RESOLVE_TEST']) delete env[k]; return env; };
 const cli = (args, env = {}) => new Promise(done => {
   const p = spawn(process.execPath, [bin, ...args], { env: { ...cleanEnv(), ...env } });
   let out = '', err = '';
@@ -77,7 +77,7 @@ test('a forged or missing signature is refused', async t => {
   w.assets.set('channel-stable.json', good);
   w.assets.set('channel-stable.json.sig', Buffer.from('not a signature'));
   await refusal(w.call({ channel: 'stable' }), /not signed/);
-  // the canary's record and signature served as stable: valid signature, wrong channel (below), never accepted as-is
+  // the stable signature deleted: the record is then reported missing (the canary's record served as stable is the test below)
   w.assets.delete('channel-stable.json.sig');
   await refusal(w.call({ channel: 'stable' }), /channel-stable\.json or its signature is missing from the channels release/);
 });
@@ -202,16 +202,79 @@ test('the config: one of channel and revision, a channel needs a valid key', () 
   assert.equal(readWorkflow(cfg({ channel: 'canary-3', channel_key: KEY.text })).major, 3);
 });
 
+const body = (...parts) => new Response(Buffer.concat(parts.map(p => Buffer.from(p))), { status: 200 });
+
 test('records are read from the channels release download URL, with no token', async () => {
   const seen = [];
-  const fetchImpl = async (url, opts) => { seen.push({ url, opts }); return url.endsWith('.sig') ? { status: 404, ok: false } : { status: 200, ok: true, arrayBuffer: async () => new TextEncoder().encode('{}').buffer }; };
+  const fetchImpl = async (url, opts) => { seen.push({ url, opts }); return url.endsWith('.sig') ? new Response(null, { status: 404 }) : body('{}'); };
   const read = githubRecords('acme/workflow', fetchImpl);
   assert.equal((await read('channel-stable.json')).toString(), '{}');
   assert.equal(await read('channel-stable.json.sig'), null);
   assert.equal(seen[0].url, 'https://github.com/acme/workflow/releases/download/channels/channel-stable.json');
   assert.equal(seen[0].opts.headers.Authorization, undefined);
-  const failing = githubRecords('acme/workflow', async () => ({ status: 502, ok: false }));
+  const failing = githubRecords('acme/workflow', async () => new Response(null, { status: 502 }));
   await refusal(failing('channel-stable.json'), /HTTP 502/);
+});
+
+test('an oversized asset body is dropped once past the cap, not buffered', async () => {
+  let pulls = 0, cancelled = false;
+  const endless = new ReadableStream({
+    pull(c) { pulls++; c.enqueue(new Uint8Array(4096)); },
+    cancel() { cancelled = true; },
+  });
+  const read = githubRecords('acme/workflow', async () => new Response(endless, { status: 200 }));
+  await refusal(read('channel-stable.json'), /channel-stable\.json is larger than 8192 bytes/);
+  assert.equal(cancelled, true);
+  assert.ok(pulls <= 6, `the stream was read ${pulls} times; it should stop just past 8192 bytes`);
+  // an exactly-8192-byte body is within the cap
+  const edge = githubRecords('acme/workflow', async () => body(Buffer.alloc(8192)));
+  assert.equal((await edge('channel-stable.json')).length, 8192);
+  // a declared length over the cap is refused without reading
+  const declared = githubRecords('acme/workflow', async () => new Response('x', { status: 200, headers: { 'content-length': '999999' } }));
+  await refusal(declared('channel-stable.json'), /larger than 8192 bytes/);
+});
+
+test('an error while reading the body is a fetch failure with its real reason', async () => {
+  const broken = new ReadableStream({
+    start(c) { c.enqueue(new TextEncoder().encode('{"v"')); },
+    pull(c) { c.error(new Error('connection reset mid-body')); },
+  });
+  const read = githubRecords('acme/workflow', async () => new Response(broken, { status: 200 }));
+  await assert.rejects(read('channel-stable.json'), e => e instanceof ResolveError && /could not read channel-stable\.json: connection reset mid-body/.test(e.message) && !/JSON/.test(e.message));
+  // end to end: the resolver reports the fetch failure, not "not signed" or "not valid JSON"
+  const w = world({ after() {} });
+  const resolver = githubRecords('acme/workflow', async () => new Response(new ReadableStream({ pull(c) { c.error(new Error('socket hang up')); } }), { status: 200 }));
+  await refusal(resolve({ config: w.config({ channel: 'stable' }), readRecord: resolver, gitUrl: w.repo, retryMs: 0 }), /could not read channel-stable\.json: socket hang up/);
+  fs.rmSync(w.temp, { recursive: true, force: true });
+});
+
+test('git runs with a clean environment: the caller\'s GIT_* variables have no effect', async t => {
+  const w = world(t);
+  const env = gitEnv({ PATH: '/bin', HOME: '/h', SSL_CERT_FILE: '/c', https_proxy: 'p', GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_CONFIG_COUNT: '1', GIT_OBJECT_DIRECTORY: '/z', GIT_ALTERNATE_OBJECT_DIRECTORIES: '/a', SECRET: 's' });
+  assert.deepEqual(env, { PATH: '/bin', HOME: '/h', SSL_CERT_FILE: '/c', https_proxy: 'p', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' });
+  const saved = { ...process.env };
+  t.after(() => { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); });
+  Object.assign(process.env, {
+    GIT_DIR: path.join(w.temp, 'no-such-git-dir'), GIT_WORK_TREE: w.temp, GIT_OBJECT_DIRECTORY: path.join(w.temp, 'no-objects'),
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url.file:///nowhere/.insteadOf', GIT_CONFIG_VALUE_0: w.repo,
+  });
+  assert.equal((await w.call({ channel: 'stable' })).revision, w.c1);
+});
+
+test('a failed tag fetch is a fetch failure, not "the tag does not exist"', async t => {
+  const w = world(t);
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const shims = path.join(w.temp, 'shims');
+  fs.mkdirSync(shims);
+  // a git that clones fine but cannot fetch (a network failure after the clone)
+  fs.writeFileSync(path.join(shims, 'git'), `#!/bin/sh\nfor a in "$@"; do if [ "$a" = fetch ]; then echo "fatal: unable to access 'x': Could not resolve host" >&2; exit 128; fi; done\nexec ${real} "$@"\n`, { mode: 0o755 });
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${shims}:${savedPath}`;
+  t.after(() => { process.env.PATH = savedPath; });
+  await refusal(w.call({ channel: 'stable' }), /fetching tag v2\.0\.0 failed: fatal: unable to access .*Could not resolve host/);
+  process.env.PATH = savedPath;
+  w.put('stable', { tag: 'v2.2.0', version: '2.2.0', revision: w.c3 });
+  await refusal(w.call({ channel: 'stable' }), /the tag does not exist/); // a real missing tag still reads as one
 });
 
 test('command line: --base required, test-only options gated, the candidate refused as base', async t => {
@@ -220,6 +283,7 @@ test('command line: --base required, test-only options gated, the candidate refu
   fs.mkdirSync(path.join(project, 'docs/workflow'), { recursive: true });
   git(project, 'init', '-q', '-b', 'main');
   const writeConfig = workflow => { fs.writeFileSync(path.join(project, 'docs/workflow/config.json'), JSON.stringify(w.config(workflow))); git(project, 'add', '-A'); git(project, 'commit', '-qm', 'c'); return git(project, 'rev-parse', 'HEAD'); };
+  const older = writeConfig({ channel: 'stable', note: 'older' });
   const base = writeConfig({ channel: 'stable' });
   const candidate = writeConfig({ revision: 'c'.repeat(40), channel_key: undefined }); // the candidate tries a hold
   const records = path.join(w.temp, 'records');
@@ -244,7 +308,36 @@ test('command line: --base required, test-only options gated, the candidate refu
   assert.equal(r.status, 2); assert.match(r.err, /is the candidate \(HEAD\) in a pull_request run/);
   r = await cli(['--project', project, '--base', candidate], { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request' });
   assert.equal(r.status, 2); assert.match(r.err, /is the candidate/);
-  r = await cli(['--project', project, '--base', base, ...opts], { ...test, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request' });
+  // The base must be exactly the event's pull_request.base.sha: the PR's own head commit (not HEAD, which is the merge
+  // commit in a real run) or any other commit is refused. A missing or unreadable event refuses too.
+  const eventFile = (name, payload) => { const f = path.join(w.temp, name); fs.writeFileSync(f, typeof payload === 'string' ? payload : JSON.stringify(payload)); return f; };
+  const pr = (event, file, extra = {}) => ({ ...test, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: event, ...(file ? { GITHUB_EVENT_PATH: file } : {}), ...extra });
+  const matching = eventFile('event-ok.json', { pull_request: { base: { sha: base } } });
+  for (const event of ['pull_request', 'pull_request_target']) {
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, matching));
+    assert.equal(r.status, 0, r.err);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, eventFile('event-upper.json', { pull_request: { base: { sha: base.toUpperCase() } } })));
+    assert.equal(r.status, 0, r.err);
+    r = await cli(['--project', project, '--base', older, ...opts], pr(event, matching)); // some other commit, not HEAD
+    assert.equal(r.status, 2); assert.match(r.err, /is not the event's pull_request\.base\.sha/);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, eventFile('event-other.json', { pull_request: { base: { sha: older } } })));
+    assert.equal(r.status, 2); assert.match(r.err, /is not the event's pull_request\.base\.sha/);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, eventFile('event-nosha.json', { pull_request: { base: {} } })));
+    assert.equal(r.status, 2); assert.match(r.err, /no pull_request\.base\.sha/);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, eventFile('event-bad.json', 'not json')));
+    assert.equal(r.status, 2); assert.match(r.err, /cannot read the .* event/);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event, path.join(w.temp, 'no-event.json')));
+    assert.equal(r.status, 2); assert.match(r.err, /cannot read the .* event/);
+    r = await cli(['--project', project, '--base', base, ...opts], pr(event));
+    assert.equal(r.status, 2); assert.match(r.err, /GITHUB_EVENT_PATH is not set/);
+  }
+  // Other events (push, schedule) and runs outside Actions keep the plain rule: any commit but HEAD-in-PR-runs.
+  r = await cli(['--project', project, '--base', older, ...opts], pr('push', matching));
+  assert.equal(r.status, 0, r.err);
+  r = await cli(['--project', project, '--base', older, ...opts], test);
+  assert.equal(r.status, 0, r.err);
+  // A caller's GIT_DIR cannot point the CLI's git at another repository.
+  r = await cli(['--project', project, '--base', base, ...opts], { ...test, GIT_DIR: path.join(w.temp, 'no-such-git-dir'), GIT_WORK_TREE: w.temp });
   assert.equal(r.status, 0, r.err);
   // --config is a copy of unknown origin: not in GitHub Actions.
   const copy = path.join(w.temp, 'config.json');

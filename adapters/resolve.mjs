@@ -46,7 +46,16 @@ const RECORD_KEYS = ['v', 'channel', 'major', 'tag', 'revision', 'version', 'seq
 export class ResolveError extends Error {}
 const refuse = message => { throw new ResolveError(message); };
 
-const run = (args, { cwd } = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 180000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' } });
+// git runs with a clean environment: none of the caller's GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY,
+// GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG_*, ...) can point it at another repository or change its configuration.
+// Kept: PATH, HOME and what git needs to reach an HTTPS remote (certificates, proxies).
+const KEEP_ENV = /^(?:PATH|HOME|USER|LOGNAME|TMPDIR|TMP|TEMP|SYSTEMROOT|XDG_CONFIG_HOME|SSL_CERT_FILE|SSL_CERT_DIR|CURL_CA_BUNDLE|(?:ALL|HTTPS?|NO)_PROXY)$/i;
+export const gitEnv = (source = process.env) => {
+  const env = {};
+  for (const [k, v] of Object.entries(source)) if (v !== undefined && KEEP_ENV.test(k)) env[k] = v;
+  return { ...env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+};
+export const run = (args, { cwd } = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 180000, env: gitEnv() });
 const gitOut = (what, args) => {
   const r = run(args);
   if (r.error || r.status !== 0) refuse(`${what} failed: ${(r.error?.message ?? r.stderr).trim().split('\n').pop()}`);
@@ -92,9 +101,30 @@ export function githubRecords(repo, fetchImpl = globalThis.fetch) {
     let res;
     try { res = await fetchImpl(url, { headers: { 'User-Agent': 'agent-workflow-wf-resolve' }, redirect: 'follow', signal: AbortSignal.timeout(30000) }); }
     catch (e) { refuse(`could not read ${name}: ${e.message}`); }
-    if (res.status === 404) return null;
-    if (!res.ok) refuse(`could not read ${name}: HTTP ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    if (res.status === 404) { await res.body?.cancel?.().catch(() => {}); return null; }
+    if (!res.ok) { await res.body?.cancel?.().catch(() => {}); refuse(`could not read ${name}: HTTP ${res.status}`); }
+    // The body is counted as it arrives and dropped past the cap: an oversized asset is never held in memory, and a
+    // failure while reading it (reset, timeout) is a fetch failure with its real reason.
+    const declared = Number(res.headers?.get?.('content-length'));
+    if (declared > MAX_BYTES) { await res.body?.cancel?.().catch(() => {}); refuse(`${name} is larger than ${MAX_BYTES} bytes`); }
+    const chunks = [];
+    let size = 0;
+    try {
+      if (res.body) {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_BYTES) { await reader.cancel().catch(() => {}); refuse(`${name} is larger than ${MAX_BYTES} bytes`); }
+          chunks.push(value);
+        }
+      }
+    } catch (e) {
+      if (e instanceof ResolveError) throw e;
+      refuse(`could not read ${name}: ${e.message}`);
+    }
+    return Buffer.concat(chunks);
   };
 }
 
@@ -141,6 +171,8 @@ function inspect({ gitUrl, commit, tag }) {
   try {
     gitOut('fetching main', ['clone', '-q', '--bare', '--filter=blob:none', '--no-tags', '--single-branch', '--branch', 'main', '--', gitUrl, dir]);
     const got = run(['-C', dir, 'fetch', '-q', '--no-tags', '--filter=blob:none', 'origin', `+refs/tags/${tag}:refs/tags/${tag}`]);
+    // Only "the remote has no such tag" means the tag does not exist; any other failure is a failed fetch.
+    if (got.error || (got.status !== 0 && !/couldn't find remote ref/i.test(got.stderr))) refuse(`fetching tag ${tag} failed: ${(got.error?.message ?? got.stderr).trim().split('\n').pop()}`);
     const tagged = got.status === 0 ? run(['-C', dir, 'rev-parse', '--verify', '-q', `refs/tags/${tag}^{commit}`]).stdout.trim() : '';
     const is = run(['-C', dir, 'merge-base', '--is-ancestor', commit, 'refs/heads/main']);
     if (is.status === 1 || (is.status !== 0 && /not a valid|bad object|no such commit/i.test(is.stderr))) return { onMain: false, tagged };

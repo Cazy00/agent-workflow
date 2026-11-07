@@ -351,7 +351,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
   // MAINT-0018: a milestone authorised here names the workflow release it will run under, the candidate's pin, so its work
   // can be traced to that release; a mismatched one is refused by the records check (lib/records.js).
   let pinNow = null;
-  try { pinNow = loadConfig(candidate).workflow?.version ?? null; } catch { /* reported by the records check */ }
+  try { { const w = loadConfig(candidate).workflow; pinNow = w?.channel || w?.version || null; } } catch { /* reported by the records check */ }
   if (pinNow) for (const { data: m } of candidateRecords.milestones.values()) {
     const before = m?.id ? baselineRecords.milestones.get(m.id)?.data?.status : null;
     if (m?.id && IN_PROGRESS.includes(m.status) && (before == null || before === 'Draft') && (m.workflow_version == null || m.workflow_version === '')) { findings.push(`${m.id} is authorised here without workflow_version: set workflow_version: ${pinNow} in its record, the workflow release it will run under (templates/milestone.md)`); fail = true; }

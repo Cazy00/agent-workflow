@@ -6,7 +6,9 @@
 // The config names either `workflow.revision` (a hold: the full hash, returned as it stands, channel "hold") or
 // `workflow.channel` (a branch `channel/<name>` in the workflow repository). A channel resolves only when, at the
 // commit the branch points at: a tag `vX.Y.Z` exists, that tag's GitHub release exists, is published and was made by
-// the release identity, and the commit is reachable from `main`. The contract changes only on a major release
+// the release identity, GitHub's own ref for that tag points at that same commit (so a moved tag does not inherit the
+// release, and a mirror cannot map a tag elsewhere), and the commit is reachable from `main`. A mirror (`gitUrl`) is
+// trusted only for where the channel branch points and for main's ancestry; tags are always checked against the API. The contract changes only on a major release
 // (docs/proposals/2026-11-07-central-release-channel.md). This module only reads: it writes nothing but a scratch
 // repository it removes.
 import { spawnSync } from 'node:child_process';
@@ -16,9 +18,13 @@ import path from 'node:path';
 
 export const DEFAULT_API = 'https://api.github.com';
 const REPO = /^[\w.-]+\/[\w.-]+$/;
+const MAX_TAGS = 5; // release candidates checked per resolution, highest first: bounds the API calls whatever tags exist
 const CHANNEL = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+// The token for the API: GITHUB_TOKEN, else GH_TOKEN (an empty one counts as unset).
+export const pickToken = (env = process.env) => env.GITHUB_TOKEN || env.GH_TOKEN || '';
 
 export class ResolveError extends Error {}
 const refuse = message => { throw new ResolveError(message); };
@@ -35,7 +41,7 @@ const byVersionDesc = (a, b) => { const x = a.match(TAG).slice(1).map(Number), y
 export function readWorkflow(config) {
   const w = config?.workflow;
   if (!w || typeof w !== 'object') refuse('the base config has no workflow section');
-  if (typeof w.repo !== 'string' || !REPO.test(w.repo)) refuse('the base config needs workflow.repo as owner/name');
+  if (typeof w.repo !== 'string' || !REPO.test(w.repo) || w.repo.split('/').some(part => part === '.' || part === '..')) refuse('the base config needs workflow.repo as owner/name');
   const hasChannel = w.channel !== undefined && w.channel !== null && w.channel !== '';
   const hasRevision = w.revision !== undefined && w.revision !== null && w.revision !== '';
   if (hasChannel && hasRevision) refuse('the base config sets both workflow.channel and workflow.revision; it names one');
@@ -48,21 +54,44 @@ export function readWorkflow(config) {
   return { kind: 'channel', repo: w.repo, channel: w.channel };
 }
 
-// What a release must be: published (not a draft or prerelease), for this tag, made by the release identity.
-async function checkRelease({ api, repo, tag, identity, token, fetchImpl }) {
-  const url = `${api}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+// One GET of the API as JSON: { status, body }. Only a read; the token goes to GitHub itself, never to a mirror or a test server.
+async function getJson({ url, api, token, fetchImpl, what }) {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'agent-workflow-wf-resolve', 'X-GitHub-Api-Version': '2022-11-28' };
-  if (token && api === DEFAULT_API) headers.Authorization = `Bearer ${token}`; // never to a mirror or a test server
+  if (token && api === DEFAULT_API) headers.Authorization = `Bearer ${token}`;
   let res;
   try { res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(30000) }); }
-  catch (e) { refuse(`could not read the release of ${tag}: ${e.message}`); }
-  if (res.status === 404) return `${tag} has no GitHub release`;
-  if (!res.ok) refuse(`could not read the release of ${tag}: HTTP ${res.status}`);
-  let release;
-  try { release = await res.json(); } catch { refuse(`the release of ${tag} is not readable JSON`); }
+  catch (e) { refuse(`could not read ${what}: ${e.message}`); }
+  if (res.status === 404) return { status: 404 };
+  if (!res.ok) refuse(`could not read ${what}: HTTP ${res.status}`);
+  try { return { status: 200, body: await res.json() }; } catch { refuse(`${what} is not readable JSON`); }
+}
+
+// The commit GitHub says the tag points at: its ref, then (for an annotated tag) the tag objects down to a commit.
+async function apiTagCommit({ api, repo, tag, token, fetchImpl }) {
+  const base = `${api}/repos/${repo}/git`;
+  const ref = await getJson({ url: `${base}/ref/tags/${encodeURIComponent(tag)}`, api, token, fetchImpl, what: `the ref of ${tag}` });
+  if (ref.status === 404 || ref.body?.ref !== `refs/tags/${tag}`) return null;
+  let obj = ref.body.object;
+  for (let depth = 0; obj?.type === 'tag' && depth < 5; depth++) {
+    const next = await getJson({ url: `${base}/tags/${encodeURIComponent(String(obj.sha))}`, api, token, fetchImpl, what: `the tag object of ${tag}` });
+    if (next.status === 404) return null;
+    obj = next.body?.object;
+  }
+  return obj?.type === 'commit' && typeof obj.sha === 'string' ? obj.sha : null;
+}
+
+// What a release must be: published (not a draft or prerelease), for this tag, made by the release identity, and the tag
+// must be at `commit` on GitHub itself. Returns null when it is, else the reason it is not.
+async function checkRelease({ api, repo, tag, commit, identity, token, fetchImpl }) {
+  const rel = await getJson({ url: `${api}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`, api, token, fetchImpl, what: `the release of ${tag}` });
+  if (rel.status === 404) return `${tag} has no GitHub release`;
+  const release = rel.body;
   if (release?.tag_name !== tag) return `the release found for ${tag} is for ${String(release?.tag_name)}`;
   if (release.draft || release.prerelease) return `the release of ${tag} is a ${release.draft ? 'draft' : 'prerelease'}`;
   if (release.author?.login !== identity) return `the release of ${tag} was made by ${String(release.author?.login)}, not the release identity ${identity}`;
+  const onApi = await apiTagCommit({ api, repo, tag, token, fetchImpl });
+  if (!onApi) return `${tag} has no tag ref on the API`;
+  if (onApi !== commit) return `${tag} points at ${onApi.slice(0, 12)} on the API, not at the channel commit ${commit.slice(0, 12)}`;
   return null;
 }
 
@@ -106,12 +135,13 @@ export async function resolve({ config, releaseIdentity, gitUrl, api = DEFAULT_A
   if (!tags.length) refuse(`channel/${w.channel} (${commit.slice(0, 12)}) is not at any release tag vX.Y.Z`);
   const why = [];
   let version = null;
-  for (const tag of tags.sort(byVersionDesc)) {
-    const problem = await checkRelease({ api, repo: w.repo, tag, identity: releaseIdentity, token, fetchImpl });
+  const sorted = tags.sort(byVersionDesc);
+  for (const tag of sorted.slice(0, MAX_TAGS)) {
+    const problem = await checkRelease({ api, repo: w.repo, tag, commit, identity: releaseIdentity, token, fetchImpl });
     if (!problem) { version = tag; break; }
     why.push(problem);
   }
-  if (!version) refuse(`channel/${w.channel} (${commit.slice(0, 12)}) has no release made by the release identity: ${why.join('; ')}`);
+  if (!version) refuse(`channel/${w.channel} (${commit.slice(0, 12)}) has no release made by the release identity: ${why.join('; ')}${sorted.length > MAX_TAGS ? `; ${sorted.length - MAX_TAGS} lower tags were not checked` : ''}`);
   if (!checkOnMain({ gitUrl: url, channel: w.channel, commit })) refuse(`channel/${w.channel} (${commit.slice(0, 12)}, ${version}) is not on main`);
   return { channel: w.channel, revision: commit, version };
 }

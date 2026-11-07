@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolve, readWorkflow, ResolveError } from '../../adapters/resolve.mjs';
+import { resolve, readWorkflow, pickToken, DEFAULT_API, ResolveError } from '../../adapters/resolve.mjs';
 
 // bin/wf-resolve (channel-resolve v1): the base config's channel or hold -> {channel, revision, version}, or a refusal.
 // Each test builds a workflow repository in a scratch directory, and a local server standing in for GitHub's release API;
@@ -24,7 +24,7 @@ const cli = (args, env = {}) => new Promise(done => {
 
 // A workflow repository: main with v1.0.0 and v1.1.0 (annotated), a side commit no tag reaches main from, and the
 // releases the fake API will report.
-async function world(t, { releases } = {}) {
+async function world(t, { releases, apiTags } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-resolve-test-'));
   const repo = path.join(temp, 'workflow');
   fs.mkdirSync(repo); git(repo, 'init', '-q', '-b', 'main');
@@ -35,15 +35,30 @@ async function world(t, { releases } = {}) {
   const c3 = commit('three, untagged');
   const table = releases ?? { 'v1.0.0': { author: IDENTITY }, 'v1.1.0': { author: IDENTITY } };
   const seen = [];
+  // The fake API answers like GitHub: the release by tag name, the tag's ref (a tag object for an annotated tag, which
+  // /git/tags/<sha> dereferences), all read from the repository. `apiTags` {tag: commit} overrides where the API says a tag points.
+  const rg = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   const server = http.createServer((req, res) => {
     seen.push({ url: req.url, auth: req.headers.authorization });
-    const m = req.url.match(/^\/repos\/acme\/workflow\/releases\/tags\/(.+)$/);
-    const tag = m && decodeURIComponent(m[1]);
-    if (table.__status) { res.statusCode = table.__status; return res.end('{}'); }
-    const r = tag && table[tag];
-    if (!r) { res.statusCode = 404; return res.end('{"message":"Not Found"}'); }
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ tag_name: r.tag_name ?? tag, draft: Boolean(r.draft), prerelease: Boolean(r.prerelease), author: { login: r.author } }));
+    const send = (status, body) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(body)); };
+    if (table.__status) return send(table.__status, {});
+    let m = req.url.match(/^\/repos\/acme\/workflow\/releases\/tags\/(.+)$/);
+    if (m) {
+      const tag = decodeURIComponent(m[1]), r = table[tag];
+      return r ? send(200, { tag_name: r.tag_name ?? tag, draft: Boolean(r.draft), prerelease: Boolean(r.prerelease), author: { login: r.author } }) : send(404, { message: 'Not Found' });
+    }
+    if ((m = req.url.match(/^\/repos\/acme\/workflow\/git\/ref\/tags\/(.+)$/))) {
+      const tag = decodeURIComponent(m[1]);
+      if (apiTags?.[tag]) return send(200, { ref: `refs/tags/${tag}`, object: { type: 'commit', sha: apiTags[tag] } });
+      const sha = rg('rev-parse', '--verify', '-q', `refs/tags/${tag}`).stdout.trim();
+      if (!sha) return send(404, { message: 'Not Found' });
+      return send(200, { ref: `refs/tags/${tag}`, object: { type: rg('cat-file', '-t', sha).stdout.trim(), sha } });
+    }
+    if ((m = req.url.match(/^\/repos\/acme\/workflow\/git\/tags\/([0-9a-f]+)$/))) {
+      const sha = rg('rev-parse', '--verify', '-q', `${m[1]}^{commit}`).stdout.trim();
+      return sha ? send(200, { object: { type: 'commit', sha } }) : send(404, { message: 'Not Found' });
+    }
+    send(404, { message: 'Not Found' });
   });
   await new Promise(ok => server.listen(0, '127.0.0.1', ok));
   t.after(() => { server.close(); fs.rmSync(temp, { recursive: true, force: true }); });
@@ -77,6 +92,7 @@ test('the config must name exactly one of a channel and a full revision, and nam
   bad({ repo: 'acme/workflow', revision: 'A'.repeat(40) }, /not a full hash/);
   bad({ repo: 'acme', channel: 'stable' }, /workflow\.repo/);
   bad({ channel: 'stable' }, /workflow\.repo/);
+  for (const repo of ['acme/..', '../workflow', './workflow', 'acme/.']) bad({ repo, channel: 'stable' }, /workflow\.repo/); // no dot segments
   for (const name of ['hold', '../main', 'a/b', 'Stable', '-x', 'x-', 'a--b', 'x y']) bad({ repo: 'acme/workflow', channel: name }, /not a channel name/);
   bad({ repo: 'acme/workflow', channel: 3 }, /not a channel name/);
   assert.throws(() => readWorkflow({}), /no workflow section/);
@@ -129,11 +145,94 @@ test('a release commit that is not on main is refused', async t => {
   await refusal(w.call({ channel: 'stable' }), /is not on main/);
 });
 
+test('the release is tied to the commit: the API\'s tag must point at the channel commit, else the release counts for nothing', async t => {
+  // a release exists for v1.0.0 and the mirror agrees with the channel, but the API says the tag now points elsewhere
+  const moved = await world(t, { apiTags: { 'v1.0.0': 'f'.repeat(40) } });
+  moved.channel('stable', moved.c1);
+  await refusal(moved.call({ channel: 'stable' }), /v1\.0\.0 points at f{12}.* on the API, not at the channel commit/);
+  // an annotated tag is dereferenced through its tag object; a lightweight one is read directly
+  const w = await world(t);
+  w.channel('stable', w.c1); await w.call({ channel: 'stable' });
+  assert.ok(w.seen.some(s => /\/git\/ref\/tags\/v1\.0\.0$/.test(s.url)) && w.seen.some(s => /\/git\/tags\/[0-9a-f]+$/.test(s.url)), 'annotated: ref, then tag object');
+  w.seen.length = 0; w.channel('canary', w.c2); await w.call({ channel: 'canary' });
+  assert.ok(w.seen.every(s => !/\/git\/tags\//.test(s.url)), 'lightweight: no tag object');
+  // the API has no such tag ref at all
+  const none = await world(t);
+  none.channel('stable', none.c1);
+  await refusal(none.call({ channel: 'stable' }, { fetchImpl: async (url, o) => /\/git\/ref\//.test(url) ? { ok: false, status: 404 } : fetch(url, o) }), /v1\.0\.0 has no tag ref on the API/);
+});
+
+test('a mirror (--git-url) cannot map a tag to another commit: the API\'s tag commit is compared with the mirror\'s', async t => {
+  // GitHub says v1.0.0 -> c1 (with its release). The mirror serves v1.0.0 -> c3 and channel/stable -> c3.
+  const apiTags = {};
+  const w = await world(t, { releases: { 'v1.0.0': { author: IDENTITY } }, apiTags });
+  apiTags['v1.0.0'] = w.c1;
+  w.git('tag', '-f', 'v1.0.0', w.c3);
+  w.channel('stable', w.c3);
+  await refusal(w.call({ channel: 'stable' }), /v1\.0\.0 points at .* on the API, not at the channel commit/);
+  w.channel('stable', w.c1); // an honest mirror resolves
+  w.git('tag', '-f', 'v1.0.0', w.c1);
+  assert.equal((await w.call({ channel: 'stable' })).revision, w.c1);
+});
+
+test('many tags at the channel commit cost a bounded number of API calls, then refuse', async t => {
+  const w = await world(t, { releases: {} });
+  for (let i = 0; i < 100; i++) w.git('tag', `v99.0.${i}`, w.c1);
+  w.channel('stable', w.c1);
+  await refusal(w.call({ channel: 'stable' }), /no release made by the release identity/);
+  assert.ok(w.seen.length <= 10, `${w.seen.length} API calls`);
+  // a genuine release among the highest few still resolves
+  const ok = await world(t, { releases: { 'v1.0.0': { author: IDENTITY }, 'v1.0.1': { author: IDENTITY } } });
+  ok.git('tag', 'v1.0.1', ok.c1); ok.git('tag', 'v9.0.0', ok.c1);
+  ok.channel('stable', ok.c1);
+  assert.equal((await ok.call({ channel: 'stable' })).version, 'v1.0.1');
+});
+
 test('the API token goes only to GitHub, never to another host', async t => {
   const w = await world(t);
   w.channel('stable', w.c1);
   await w.call({ channel: 'stable' }, { token: 'secret-token' });
   assert.ok(w.seen.length > 0 && w.seen.every(s => s.auth === undefined));
+});
+
+test('the token IS sent to the default GitHub API, on every call', async t => {
+  const w = await world(t);
+  w.channel('stable', w.c1);
+  const calls = [];
+  const fetchImpl = async (url, o) => { calls.push({ url, auth: o.headers.Authorization }); return fetch(url.replace(DEFAULT_API, w.api), { headers: o.headers }); };
+  assert.equal((await resolve({ config: w.config({ channel: 'stable' }), releaseIdentity: IDENTITY, gitUrl: w.repo, token: 'secret-token', fetchImpl })).version, 'v1.0.0');
+  assert.ok(calls.length >= 3 && calls.every(c => c.url.startsWith(`${DEFAULT_API}/`) && c.auth === 'Bearer secret-token'));
+  calls.length = 0;
+  await resolve({ config: w.config({ channel: 'stable' }), releaseIdentity: IDENTITY, gitUrl: w.repo, fetchImpl });
+  assert.ok(calls.length > 0 && calls.every(c => c.auth === undefined), 'no token, no header');
+});
+
+test('the token is GITHUB_TOKEN, else GH_TOKEN, and an empty one counts as unset', () => {
+  assert.equal(pickToken({ GITHUB_TOKEN: '', GH_TOKEN: 'x' }), 'x');
+  assert.equal(pickToken({ GITHUB_TOKEN: 'a', GH_TOKEN: 'x' }), 'a');
+  assert.equal(pickToken({}), '');
+});
+
+test('an unexpected error exits 3, apart from a refusal (2)', async t => {
+  const w = await world(t);
+  w.channel('stable', w.c1);
+  const file = path.join(w.temp, 'config.json');
+  fs.writeFileSync(file, JSON.stringify(w.config({ channel: 'stable' })));
+  const stub = path.join(w.temp, 'stub.mjs');
+  fs.writeFileSync(stub, 'globalThis.fetch = async () => undefined;\n'); // a bug-shaped answer: not a refusal
+  const r = await new Promise(done => {
+    const p = spawn(process.execPath, ['--import', stub, bin, '--config', file, '--git-url', w.repo, '--release-identity', IDENTITY]);
+    let err = ''; p.stderr.on('data', d => { err += d; }); p.on('close', status => done({ status, err }));
+  });
+  assert.equal(r.status, 3); assert.match(r.err, /^wf-resolve: unexpected: /);
+});
+
+test('--base is a revision, never an option', async t => {
+  const w = await world(t);
+  const r = await cli(['--project', w.repo, '--base', '-p', '--git-url', w.repo]);
+  assert.equal(r.status, 2); assert.match(r.err, /--base -p is not a revision/);
+  const g = spawnSync('git', ['-C', w.repo, 'show', '--end-of-options', '-p:docs/workflow/config.json'], { encoding: 'utf8' });
+  assert.notEqual(g.status, 0); assert.doesNotMatch(g.stderr, /unrecognized|unknown option/i);
 });
 
 test('the command prints the three fields as JSON and refuses with exit status 2', async t => {

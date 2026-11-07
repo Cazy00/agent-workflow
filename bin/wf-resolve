@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 // Resolves a project's workflow channel (or hold) to the tagged release that judges its runs: contract channel-resolve v1,
 // adapters/resolve.mjs. Read-only. It prints {channel, revision, version} as JSON, or refuses with the reason on stderr
-// and exit status 2; it never falls back to main or to a cache.
+// and exit status 2; it never falls back to main or to a cache. Exit statuses: 0 resolved, 2 refused or bad usage, 3 an
+// unexpected error (a bug, not a decision: callers must not read it as a refusal).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { resolve, ResolveError } from '../adapters/resolve.mjs';
+import { resolve, pickToken, ResolveError } from '../adapters/resolve.mjs';
 
 const USAGE = `usage: wf-resolve (--config FILE | --project DIR [--base REV]) [--release-identity LOGIN] [--git-url URL] [--api-url URL]
   Reads the workflow section of the BASE branch's docs/workflow/config.json: FILE is a copy of it, or --project DIR with
   --base REV (default HEAD) reads it from that commit with git. A hold (workflow.revision) is returned as it stands. A
   channel (workflow.channel) resolves to the commit of the branch channel/<name> in the workflow repository only if a tag
   vX.Y.Z is there, its GitHub release was made by the release identity (--release-identity, or WF_RELEASE_IDENTITY) and
-  the commit is on main. --git-url and --api-url replace GitHub (mirrors, tests). Output: {channel, revision, version}.`;
-const fail = message => { console.error(`wf-resolve: ${message}`); process.exit(2); };
+  the commit is on main. Exit status: 0 resolved, 2 refused or bad usage, 3 unexpected error. --git-url and --api-url replace GitHub (mirrors, tests). Output: {channel, revision, version}.`;
+const fail = (message, status = 2) => { console.error(`wf-resolve: ${message}`); process.exit(status); };
 const o = {};
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -28,7 +29,8 @@ let text;
 if (o.config) {
   try { text = fs.readFileSync(path.resolve(o.config), 'utf8'); } catch (e) { fail(`cannot read ${o.config}: ${e.message}`); }
 } else {
-  const r = spawnSync('git', ['-C', path.resolve(o.project), 'show', `${o.base ?? 'HEAD'}:docs/workflow/config.json`], { encoding: 'utf8' });
+  if ((o.base ?? '').startsWith('-')) fail(`--base ${o.base} is not a revision`);
+  const r = spawnSync('git', ['-C', path.resolve(o.project), 'show', '--end-of-options', `${o.base ?? 'HEAD'}:docs/workflow/config.json`], { encoding: 'utf8' });
   if (r.status !== 0) fail(`cannot read docs/workflow/config.json at ${o.base ?? 'HEAD'}: ${(r.stderr || r.error?.message || '').trim()}`);
   text = r.stdout;
 }
@@ -40,7 +42,7 @@ try {
     releaseIdentity: o['release-identity'] ?? process.env.WF_RELEASE_IDENTITY ?? '',
     gitUrl: o['git-url'],
     api: o['api-url'] ?? undefined,
-    token: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''
+    token: pickToken()
   });
   console.log(JSON.stringify(out));
-} catch (e) { fail(e instanceof ResolveError ? e.message : `unexpected: ${e.stack ?? e.message}`); }
+} catch (e) { e instanceof ResolveError ? fail(e.message) : fail(`unexpected: ${e.stack ?? e.message}`, 3); }

@@ -1,0 +1,32 @@
+# Project status on GitHub: the thin caller of the shared status entry (v2.19.0). Written by bin/wf-upgrade
+# --to-channel; delete this file to opt out. The entry, Cazy00/agent-workflow/.github/workflows/wf-status.yml, named
+# here at an immutable release tag and repeated as `entry`, resolves the trusted branch's config (a channel or a hold),
+# renders `wf status` with that release and publishes it as the one open issue labelled wf-status, with the line saying
+# which release judged. It runs only on the trusted branch and never runs candidate code. The daily schedule and
+# repository_dispatch (type wf-channel, sent by the release broker after a channel move) keep a canary project's soak
+# fresh. The repository's Actions policy must allow workflows from Cazy00/agent-workflow.
+name: wf-status
+on:
+  push:
+    branches: [__TRUSTED_BRANCH__]
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [wf-channel]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: write # the check run `wf resolved`: which release judged
+concurrency:
+  group: wf-status
+  cancel-in-progress: true
+jobs:
+  status:
+    uses: Cazy00/agent-workflow/.github/workflows/wf-status.yml@__ENTRY__
+    with:
+      entry: __ENTRY__
+      trusted_branch: __TRUSTED_BRANCH__
+    secrets:
+      WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}

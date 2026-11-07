@@ -1,0 +1,143 @@
+# The shared gate (v2.19.0, docs/proposals/2026-11-07-central-release-channel.md): the reusable entry a project's thin
+# caller (templates/github/channel/wf-ci.yml) names at an immutable release tag, `uses: …/wf-gate.yml@vX.Y.Z` with
+# `entry: vX.Y.Z` repeated. It never runs on this repository: its only trigger is workflow_call.
+#
+# The entry chooses nothing about the rules. It runs bin/wf-resolve FROM ITS OWN TAG over the BASE commit's
+# docs/workflow/config.json (pull request: the event's pull_request.base.sha; a trusted-branch run: that branch's head),
+# which names a channel (resolved through its signed record) or a hold (the pinned revision), records the result as the
+# check run `wf resolved` on the judged commit, then runs bin/wf-gate-ci FROM THE RESOLVED REVISION, which runs that
+# revision's validator. A legacy pinned base (workflow.revision) is a hold, so the opt-in pull request, whose base is still
+# pinned, is judged by its pin; a pin older than v2.19.0 has no bin/wf-gate-ci and is refused with the first opt-in step.
+#
+# The caller holds the triggers, permissions (contents: read, checks: write; pull-requests: read is not needed) and
+# concurrency, as GitHub requires; its check is reported as `<caller job name> / gate`. A pull request still runs its
+# own copy of the caller, so code-owner review of `.github/` (enforced mode) or the owner's check of every `.github/`
+# change (owner-merge mode) protects it, as procedures/setup.md step 6 says.
+name: wf-gate
+on:
+  workflow_call:
+    inputs:
+      entry:
+        description: The release tag the caller names in its uses line (vX.Y.Z); the resolver is read from it.
+        type: string
+        required: true
+      trusted_branch:
+        description: The project's trusted branch.
+        type: string
+        required: true
+      entry_repo:
+        description: The workflow repository that holds this entry.
+        type: string
+        required: false
+        default: Cazy00/agent-workflow
+    secrets:
+      WF_READ_TOKEN:
+        description: A read-only token for a private workflow repository named by a hold (MAINT-0017); unset, fetches are anonymous.
+        required: false
+jobs:
+  gate:
+    name: gate
+    # The project's gate runner (MAINT-0017) for pull requests into the trusted branch and runs on it when WF_GATE is on.
+    runs-on: ${{ vars.WF_GATE == 'on' && (github.event_name != 'pull_request' || github.event.pull_request.base.ref == inputs.trusted_branch) && 'wf-gate' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - name: Refuse any event, base or ref but the expected ones
+        # GitHub compares strings ignoring case in expressions, so this is checked exactly, before anything is fetched.
+        env:
+          EVENT: ${{ github.event_name }}
+          TRUSTED: ${{ inputs.trusted_branch }}
+          GATE: ${{ vars.WF_GATE }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request)
+              # runs-on sent a pull request into a branch that differs from the trusted one only in case to the gate.
+              if [ "$GATE" = on ] && [ "${GITHUB_BASE_REF,,}" = "${TRUSTED,,}" ] && [ "$GITHUB_BASE_REF" != "$TRUSTED" ]; then echo "::error::wf ci on the gate is only for pull requests into $TRUSTED."; exit 1; fi ;;
+            push|schedule|workflow_dispatch|repository_dispatch)
+              [ "$GITHUB_REF" = "refs/heads/$TRUSTED" ] || { echo "::error::A $EVENT run of the gate judges only $TRUSTED, not $GITHUB_REF."; exit 1; } ;;
+            *) echo "::error::The gate does not run on $EVENT."; exit 1 ;;
+          esac
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0 # the gate diffs the base against the head and checks the head contains the base
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Resolve the release that judges
+        id: resolve
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          ENTRY: ${{ inputs.entry }}
+          ENTRY_REPO: ${{ inputs.entry_repo }}
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$ENTRY" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::entry $ENTRY is not a release tag vX.Y.Z"; exit 2; }
+          [[ "$ENTRY_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::entry_repo $ENTRY_REPO is not owner/name"; exit 2; }
+          # The entry's own resolver, from the immutable tag the caller names.
+          git init -q "$RUNNER_TEMP/entry"
+          git -C "$RUNNER_TEMP/entry" fetch -q --depth 1 "https://github.com/$ENTRY_REPO.git" "refs/tags/$ENTRY"
+          git -C "$RUNNER_TEMP/entry" checkout -q --detach FETCH_HEAD
+          node "$RUNNER_TEMP/entry/bin/wf-resolve" --project "$GITHUB_WORKSPACE" --base "$BASE" > "$RUNNER_TEMP/resolved.json"
+          git -C "$GITHUB_WORKSPACE" show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/base-config.json"
+          out="$(node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const repo = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).workflow.repo;
+            r.resolved_at = new Date().toISOString();
+            fs.writeFileSync(process.argv[1], JSON.stringify(r));
+            console.log(repo, r.revision, r.channel, r.version ?? r.declared_version ?? "unknown")' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/base-config.json")"
+          read -r REPO REV CHANNEL VERSION <<< "$out"
+          cat "$RUNNER_TEMP/resolved.json"; echo
+          # The resolved revision: its validator and its gate script judge.
+          if [ -n "$WF_READ_TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          git init -q "$RUNNER_TEMP/wf"
+          git -C "$RUNNER_TEMP/wf" fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C "$RUNNER_TEMP/wf" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/wf" rev-parse HEAD)" = "$REV" ] || { echo "::error::the fetched workflow is not at $REV"; exit 2; }
+          [ -f "$RUNNER_TEMP/wf/bin/wf-gate-ci" ] || { echo "::error::the base config resolves to $VERSION ($REV), which has no bin/wf-gate-ci: move the pin to v2.19.0 or later first, with today's copied workflow files (the first of the two opt-in pull requests), then opt in"; exit 2; }
+          { echo "channel=$CHANNEL"; echo "revision=$REV"; echo "version=$VERSION"; } >> "$GITHUB_OUTPUT"
+      - name: Record what judged (check run `wf resolved`)
+        # Kept with the commit after the run's logs expire; the channel soak and wf channel audit read it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JUDGED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const record = { channel: r.channel, revision: r.revision, version: r.version ?? r.declared_version ?? null, ...(r.seq ? { seq: r.seq } : {}), resolved_at: r.resolved_at };
+            fs.writeFileSync(process.argv[2], JSON.stringify({ name: "wf resolved", head_sha: process.env.JUDGED, status: "completed", conclusion: "neutral",
+              output: { title: `${record.channel}: ${record.version} (${record.revision.slice(0, 12)})`, summary: "```json\n" + JSON.stringify(record) + "\n```" } }));
+          ' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/check-run.json"
+          gh api --method POST "repos/$GH_REPO/check-runs" --input "$RUNNER_TEMP/check-run.json" > /dev/null || echo "::warning::Could not record the check run wf resolved (the caller needs checks: write); the run's log has the resolution."
+      - name: Run the gate
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          ENTRY_REPO: ${{ inputs.entry_repo }}
+          # Untrusted text: passed through the environment into a file, never into the script itself.
+          DESCRIPTION: ${{ github.event.pull_request.body }}
+          # Whether auto-merge is on (MAINT-0016), read by wf ci from the environment.
+          WF_PR_AUTO_MERGE: ${{ github.event.pull_request.auto_merge && 'on' || 'off' }}
+          # A draft is judged and reported, never failed (MAINT-0027): the caller names its job `wf ci (draft)` then.
+          WF_DRAFT: ${{ github.event.pull_request.draft && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          gate=(node "$RUNNER_TEMP/wf/bin/wf-gate-ci" --repo "$GITHUB_WORKSPACE" --base "$BASE" --candidate "$HEAD_SHA" --resolved "$RUNNER_TEMP/resolved.json")
+          if [ "$EVENT" = pull_request ]; then
+            printf '%s' "$DESCRIPTION" > "$RUNNER_TEMP/pr-description.md"
+            gate+=(--pull-request --branch "$HEAD_REF" --description "$RUNNER_TEMP/pr-description.md" --entry-repo "$ENTRY_REPO")
+            [ "$WF_DRAFT" = true ] && gate+=(--draft)
+          fi
+          "${gate[@]}"

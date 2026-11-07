@@ -1,0 +1,36 @@
+# The workflow's check, reported as `wf ci / gate`: the thin caller of the shared gate (v2.19.0). Written by
+# bin/wf-upgrade --to-channel; a change to this file is a workflow change. Everything but the triggers, the permissions
+# and the concurrency lives in the entry, Cazy00/agent-workflow/.github/workflows/wf-gate.yml, named here at an
+# immutable release tag and repeated as `entry`: it resolves the BASE branch's docs/workflow/config.json (a channel
+# through its signed record, or a hold) and runs the resolved release's gate, so a pull request cannot choose the rules
+# that judge it. The tag changes only when the entry's contract does, on a major release.
+#
+# A pull request runs its own copy of this file and could rewrite it: code-owner review of `.github/` (enforced mode)
+# or the owner's check of every change under `.github/` (owner-merge mode) protects it. On a draft the job is named
+# `wf ci (draft)` and never fails (MAINT-0027). The schedule and repository_dispatch (type wf-channel, sent by the
+# release broker after a channel move) judge the trusted branch's head, which keeps a canary project's soak fresh.
+# The repository's Actions policy must allow workflows from Cazy00/agent-workflow.
+name: wf
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, auto_merge_enabled, auto_merge_disabled]
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [wf-channel]
+permissions:
+  contents: read
+  checks: write # the check run `wf resolved`: which release judged
+concurrency:
+  group: wf-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    name: ${{ github.event.pull_request.draft && 'wf ci (draft)' || 'wf ci' }}
+    uses: Cazy00/agent-workflow/.github/workflows/wf-gate.yml@__ENTRY__
+    with:
+      entry: __ENTRY__
+      trusted_branch: __TRUSTED_BRANCH__
+    secrets:
+      WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}

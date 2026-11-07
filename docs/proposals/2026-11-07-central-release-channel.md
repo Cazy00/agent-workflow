@@ -2,7 +2,7 @@
 
 Owner's request, 7 November 2026: "now it's put individually in each project and if we have 5 projects in development we need to update all of them one by one, why is it not central? how can we do that? it will be easier and instant."
 Workflow version and immutable revision: v2.18.3, `2bf2a63` (main).
-Status: proposal for the owner's approval, revised after its one plan review (last section). It changes POLICY (§ *Central workflow repository*: "each project adopts a tagged version and records its immutable revision"; "projects adopt released changes deliberately"), so it is a policy change (`procedures/maintenance.md`, *Changing the workflow during a project*). A MAINT number is assigned when it is approved; its plan is reviewed once before building.
+Status: proposal; the owner decided its three open points on 7 November 2026 (*Owner decisions*), revised after its one plan review (last section). It changes POLICY (§ *Central workflow repository*: "each project adopts a tagged version and records its immutable revision"; "projects adopt released changes deliberately"), so it is a policy change (`procedures/maintenance.md`, *Changing the workflow during a project*). A MAINT number is assigned when it is approved; its plan is reviewed once before building.
 
 ## Why the pin exists, and what it costs
 
@@ -88,11 +88,11 @@ A milestone's `workflow_version` becomes the channel name for a project on a cha
 
 ### Shared repositories
 
-A repository with two or more `owners` stays on a hold by default. It opts in only when every owner approves the opt-in PR (the config is approved by the person whose agent did not write it, `procedures/shared.md`), and its profile's *Authority* then records that channel moves by this repository's owner apply to it. A collaborator can leave the channel at any time with a hold PR.
+A repository with two or more `owners` may switch to a channel when its owner decides (the owner of this workflow repository, whose channel moves then apply to it). Its collaborators are told before the switch: the opt-in PR names them and the new rule, and its profile's *Authority* records that channel moves by this repository's owner apply to it. Nobody else's approval is a condition, so no collaborator can hold up a switch; the config remains the project's own file and is approved as `procedures/shared.md` says. A collaborator can leave the channel at any time with a hold PR, and tells the owner.
 
 ### Opting in
 
-Two PRs per project, both on its normal merge route (for a shared repository, as above):
+Two PRs per project, both on its normal merge route (for a shared repository, with its collaborators told, as above):
 
 1. **Pin to v2.19.0 or later**, an ordinary pin-move PR on today's copied files. It is needed because on `pull_request` GitHub runs the head's workflow file, so the opt-in PR's thin caller runs against the base config, and a v2.18.3 pin has no `bin/wf-gate-ci`.
 2. **Opt in:** `bin/wf-upgrade --project PATH --to-channel stable --apply` replaces `workflow.revision` with `workflow.channel`, replaces the three copied workflow files with the thin callers where the project has not changed them (else lists them), sets each active milestone's `workflow_version` to the channel and runs `wf records`.
@@ -111,7 +111,7 @@ To replace the channel mechanism (for example with route C's file, or a signed m
 4. Workspace side (list below) ships the move op.
 5. One single-owner project goes to `canary` (its last pin-move PR) and holds through at least one release.
 6. The other single-owner projects go to `stable`, one opt-in PR each.
-7. Shared repositories: offered to their owners; on a hold until each approves.
+7. Shared repositories: the owner switches each one when they decide, after telling its collaborators.
 
 ## What the owner's workspace must change (for its own plan)
 
@@ -124,15 +124,19 @@ To replace the channel mechanism (for example with route C's file, or a signed m
 
 ## Owner decisions
 
-Promotion to stable is automatic after the soak (24 hours and the passing runs above), and a release needs one deep review, not the owner's merge, following the owner's decision of 7 November 2026 to keep taps for permanent deletion and money only. What remains:
+Promotion to stable is automatic after the soak (24 hours and the passing runs above), and a release needs one deep review, not the owner's merge, following the owner's decision of 7 November 2026 to keep taps for permanent deletion and money only. The owner decided the three open points on 7 November 2026:
 
-1. Approve the POLICY wording: adopting a channel is the deliberate adoption, and channel moves reach active milestones, logged.
-2. Which project is the canary.
-3. Shared repositories stay on a hold until every owner opts in (recommended).
+1. **POLICY wording: approved.** Adopting a channel is the deliberate adoption, and channel moves reach active milestones, logged on every run. `POLICY.md` § *Central workflow repository* carries the matching wording in this pull request (below).
+2. **The canary** is the single-owner project that has used the workflow longest without a collaborator (a client project; this public repository does not name it, and the owner's records do). It has no collaborator to disturb and the longest history to expose a regression.
+3. **Shared repositories** may switch to the channel when their owner decides; their collaborators are told. This replaces the earlier default of holding until every owner opts in.
+
+### POLICY wording (approved)
+
+In § *Central workflow repository*, "Each project adopts a tagged version and records its immutable revision." becomes: "Each project adopts a tagged version and records its immutable revision, or adopts a release channel, which always resolves to a tagged release and is logged on every run." And "Projects adopt released changes deliberately; updates must not silently change the rules of an active milestone." gains: "Adopting a channel is the deliberate adoption; after it, rules reach an active milestone only through a channel move, which is announced and recorded in every run."
 
 ## Size
 
-No procedure text changes in this proposal. The implementation's maintenance record will report the corpus word counts before and after (`procedures/maintenance.md`); `procedures/operate.md` *Updates and upgrades* is expected to get shorter.
+No procedure text changes in this proposal; `POLICY.md` changes only by the two sentences above. The implementation's maintenance record will report the corpus word counts before and after (`procedures/maintenance.md`); `procedures/operate.md` *Updates and upgrades* is expected to get shorter.
 
 ## Plan review (2026-11-07, FAIL) and what changed
 

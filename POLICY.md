@@ -657,11 +657,11 @@ Maintain a central workflow repository containing:
 - Runner, when adopted.
 - Verification fixtures.
 
-Each project adopts a tagged version and records its immutable revision.
+Each project adopts a tagged version and records its immutable revision, or adopts a release channel, which always resolves to a tagged release and is logged on every run.
 
 Project-specific choices belong in the profile. Workflow deviations are explicit and approved.
 
-Reusable improvements return to the workflow repository. Projects adopt released changes deliberately; updates must not silently change the rules of an active milestone.
+Reusable improvements return to the workflow repository. Projects adopt released changes deliberately; updates must not silently change the rules of an active milestone. Adopting a channel is the deliberate adoption; after it, rules reach an active milestone only through a channel move, which is announced and recorded in every run.
 
 ### Initial setup budget
 

@@ -340,7 +340,7 @@ test('a move into Released from Authorised or Verified needs the acceptance evid
 // v2.19.0 review finding 5: under notice, what waits for the acceptance is told on the pull request that defers it, and the
 // acceptance's evidence must list it.
 test('checkpoint notice with defer_to_acceptance: deferred items are notices, and the acceptance evidence lists them', t => {
-  const paths = { acceptance_tests: ['src/acceptance/**'] };
+  const paths = { acceptance_tests: ['tests/acceptance-map.json', 'src/acceptance/**'] };
   const p = setup(t, { checkpoint: 'notice', configEdit: c => ({ ...c, paths: { ...c.paths, ...paths }, approval: { ...c.approval, defer_to_acceptance: true } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'); } });
   const r = p.run('ci', { evidence: evidence(p.candidate) });
   assert.equal(r.status, 0, r.stdout + r.stderr);

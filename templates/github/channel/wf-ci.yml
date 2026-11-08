@@ -9,6 +9,15 @@
 # or the owner's check of every change under `.github/` (owner-merge mode) protects it. On a draft the job is named
 # `wf ci (draft)` and never fails (MAINT-0027). The schedule and repository_dispatch (type wf-channel, sent by the
 # release broker after a channel move) judge the trusted branch's head, which keeps a canary project's soak fresh.
+# The job's `if:` (v2.19.1) runs anything but a pull request only on the trusted branch (the entry's first step refuses
+# any other ref again, exactly: GitHub compares strings in `if:` ignoring case), and the schedule only when WF_GATE is
+# `on`: without a gate runner a scheduled run would spend GitHub's minutes daily (MAINT-0023); the broker's
+# repository_dispatch keeps the canary fresh then. checks: write reaches only the entry's `record` job, which posts the
+# check run `wf resolved` and runs no code of the project or the resolved release; the job that judges reads only.
+# The tag's trust rests on three things: the tag ruleset harbor-wf-tags, which forbids updating, deleting or
+# force-pushing any v* tag (only repository admins bypass it); the release, which the broker's executor authors, tagging
+# main's head; and the host's merge gate, which checks at merge time that this file is the release's own blob and names
+# that release's tag.
 # The concurrency group is the pull request plus its draft state (`-draft` or `-gate`), so a draft run never cancels a `wf ci` run: `edited`
 # (draft payload) and `ready_for_review` (ready payload) fire moments apart when the agent writes the evidence and runs `gh pr ready`, and
 # one shared group let the draft run cancel `wf ci`. A ready or later run still supersedes older ones of its pull request; `converted_to_draft`
@@ -25,13 +34,14 @@ on:
     types: [wf-channel]
 permissions:
   contents: read
-  checks: write # the check run `wf resolved`: which release judged
+  checks: write # only for the entry's record job: the check run `wf resolved`, which release judged
 concurrency:
   group: wf-ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'gate' }}
   cancel-in-progress: true
 jobs:
   ci:
     name: ${{ github.event.pull_request.draft && 'wf ci (draft)' || 'wf ci' }}
+    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || vars.WF_GATE == 'on'))
     uses: Cazy00/agent-workflow/.github/workflows/wf-gate.yml@__ENTRY__
     with:
       entry: __ENTRY__

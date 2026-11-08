@@ -170,6 +170,8 @@ export function planUpgrade({ project, workflowRepo, rev }) {
 export const CHANNEL_CALLERS = [
   { path: '.github/workflows/wf-ci.yml', template: 'templates/github/channel/wf-ci.yml', copied: 'templates/github/wf-ci.yml', always: true },
   { path: '.github/workflows/wf-status.yml', template: 'templates/github/channel/wf-status.yml', copied: 'templates/github/wf-status.yml' },
+  // Only where the project publishes the page, and only from an entry that has the shared client page (part 5).
+  { path: '.github/workflows/wf-client-page.yml', template: 'templates/github/channel/wf-client-page.yml', copied: 'templates/github/wf-client-page.yml', optional: true },
 ];
 const FIRST_CHANNEL_RELEASE = 'v2.19.0';
 export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
@@ -215,8 +217,10 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
   }
   const branch = config.trusted_branch ?? 'main';
   const fill = text => text.replaceAll('__TRUSTED_BRANCH__', branch).replaceAll('__ENTRY__', entryTag);
+  let noPage = false;
   for (const item of CHANNEL_CALLERS) {
     const template = show(workflowRepo, entryTag, item.template);
+    if (template === null && item.optional) { if (fs.existsSync(path.join(project, item.path))) noPage = true; continue; }
     if (template === null) throw new Error(`${entryTag} has no ${item.template}`);
     const want = fill(template);
     const full = path.join(project, item.path);
@@ -224,7 +228,7 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
     const have = fs.readFileSync(full, 'utf8');
     if (have === want) continue;
     const copied = SHA.test(from ?? '') ? show(workflowRepo, from, item.copied) : null;
-    const knownCaller = /uses:\s*\S+\/\.github\/workflows\/wf-(?:gate|status)\.yml@v\d+\.\d+\.\d+/.test(have) && have.replace(/v\d+\.\d+\.\d+/g, 'vX') === want.replace(/v\d+\.\d+\.\d+/g, 'vX');
+    const knownCaller = /uses:\s*\S+\/\.github\/workflows\/wf-(?:gate|status|client-page)\.yml@v\d+\.\d+\.\d+/.test(have) && have.replace(/v\d+\.\d+\.\d+/g, 'vX') === want.replace(/v\d+\.\d+\.\d+/g, 'vX');
     if ((copied !== null && have.replaceAll('__TRUSTED_BRANCH__', branch) === copied.replaceAll('__TRUSTED_BRANCH__', branch)) || knownCaller) changes.push({ path: item.path, action: 'update', content: want, why: `still the pinned release's copy: the thin caller of the shared entry at ${entryTag} replaces it` });
     else left.push({ path: item.path, why: `changed in this project; replace it with ${item.template} at ${entryTag} (fill __TRUSTED_BRANCH__ and __ENTRY__) and keep your additions by hand` });
   }
@@ -232,7 +236,7 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
     `required check: the gate now reports as \`wf ci / gate\` (a reusable workflow's job is named <caller job> / <called job>): move the required check and the merge route to that name when this merges`,
     'Actions policy: the repository must allow workflows from Cazy00/agent-workflow (Settings, Actions, General)',
   ];
-  if (fs.existsSync(path.join(project, '.github/workflows/wf-client-page.yml'))) notes.push('.github/workflows/wf-client-page.yml still reads workflow.revision and has no shared entry yet: it fails on a channel config until one is released; delete it or keep the project on a hold');
+  if (noPage) notes.push(`.github/workflows/wf-client-page.yml still reads workflow.revision and the entry ${entryTag} has no shared client page: it fails on a channel config until one is released; delete it or keep the project on a hold, or pass --entry with a release that has it`);
   if (fs.existsSync(path.join(project, 'scripts/wf'))) notes.push('scripts/wf, the local launcher, still needs workflow.revision, so it refuses a channel config until it resolves channels (a later part of v2.19.0); CI does not use it');
   return { project, from: from ?? null, to: `channel ${channel}`, from_version: fromVersion, to_version: `channel ${channel}`, entry: entryTag, current: false, changes, notes, left, removed_config: ['workflow.revision', 'workflow.version'].filter(k => k.split('.')[1] in w) };
 }

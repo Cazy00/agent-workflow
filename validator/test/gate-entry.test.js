@@ -16,7 +16,7 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts });
 const git = (dir, ...args) => { const r = sh('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args]); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
-const steps = file => Object.values(parseYaml(read(file)).jobs)[0].steps;
+const steps = file => Object.values(parseYaml(read(file)).jobs).flatMap(j => j.steps ?? []);
 const stepRun = (file, name) => steps(file).find(s => s.name?.startsWith(name)).run;
 const KEY = (() => { const { publicKey, privateKey } = generateKeyPairSync('ed25519'); return { privateKey, text: `ed25519:${Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url').toString('base64')}` }; })();
 
@@ -236,4 +236,26 @@ test('both entries are reusable only, and resolve and record what judged with th
   assert.match(stepRun('.github/workflows/wf-gate.yml', 'Run the gate'), /"\$RUNNER_TEMP\/wf\/bin\/wf-gate-ci"/, 'the gate script comes from the resolved revision');
   assert.match(read('.github/workflows/wf-gate.yml'), /BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/);
   assert.match(stepRun('.github/workflows/wf-gate.yml', 'Record what judged'), /name: "wf resolved"/);
+});
+
+test('the shared client page: a thin caller, and an entry that resolves and records like the gate, then renders from the resolved revision', () => {
+  const y = parseYaml(read('templates/github/channel/wf-client-page.yml'));
+  const jobs = Object.values(y.jobs);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].uses, 'Cazy00/agent-workflow/.github/workflows/wf-client-page.yml@__ENTRY__');
+  assert.equal(jobs[0].with.entry, '__ENTRY__'); assert.equal(jobs[0].with.trusted_branch, '__TRUSTED_BRANCH__');
+  assert.ok(!jobs[0].steps);
+  assert.deepEqual(y.on.repository_dispatch.types, ['wf-channel']);
+  for (const k of ['checks', 'actions', 'pages', 'id-token']) assert.equal(y.permissions[k], 'write', k);
+  assert.equal(y.permissions.contents, 'read');
+  const entry = parseYaml(read('.github/workflows/wf-client-page.yml'));
+  assert.deepEqual(Object.keys(entry.on), ['workflow_call']);
+  assert.equal(entry.on.workflow_call.inputs.entry.required, true);
+  for (const name of ['Resolve the release that judges', 'Record what judged']) {
+    assert.equal(stepRun('.github/workflows/wf-client-page.yml', name), stepRun('.github/workflows/wf-gate.yml', name), name);
+  }
+  assert.match(stepRun('.github/workflows/wf-client-page.yml', 'Render the client page'), /"\$RUNNER_TEMP\/wf\/validator\/cli\.js" --repo "\$GITHUB_WORKSPACE" status --client --live/, 'rendered by the resolved revision');
+  assert.match(entry.jobs.build.if, /github\.event_name != 'pull_request'/, 'a pull request never builds or deploys');
+  assert.deepEqual(entry.jobs.deploy.needs, 'build');
+  assert.equal(entry.jobs.dispatch.permissions.actions, 'write');
 });

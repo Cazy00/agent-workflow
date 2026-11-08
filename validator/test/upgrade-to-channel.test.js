@@ -148,3 +148,17 @@ test('a workflow file the project changed is listed, not replaced; a milestone i
   assert.ok(plan.changes.some(c => c.path === 'docs/workflow/milestones/M-0001.md' && /channel moves reach it/.test(c.why)));
   assert.ok(plan.notes.some(n => /scripts\/wf/.test(n)), 'the launcher limitation is said');
 });
+
+test('--to-channel replaces the copied client page with its thin caller, and adds none where the project has no page', t => {
+  const w = world(t); if (!w) return t.skip('not a Git checkout');
+  const project = w.adopt('v2.19.0');
+  const plain = JSON.parse(w.up(project, '--to-channel', 'stable', '--key', K1, '--json').stdout);
+  assert.ok(!plain.changes.some(c => c.path === '.github/workflows/wf-client-page.yml'), 'no page, no caller');
+  const page = path.join(project, '.github/workflows/wf-client-page.yml');
+  fs.writeFileSync(page, fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8').replaceAll('__TRUSTED_BRANCH__', 'main'));
+  git(project, 'add', '-A'); git(project, 'commit', '-qm', 'client page');
+  const applied = w.up(project, '--to-channel', 'stable', '--key', K1, '--apply');
+  assert.equal(applied.status, 0, applied.stdout + applied.stderr);
+  assert.equal(fs.readFileSync(page, 'utf8'), w.caller('wf-client-page.yml'));
+  assert.doesNotMatch(applied.stdout, /has no shared client page/);
+});

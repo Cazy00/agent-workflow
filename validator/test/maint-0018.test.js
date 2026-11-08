@@ -266,3 +266,83 @@ test('MAINT-0018: a milestone authorised in a pull request names its workflow re
   p.edit(milestonePath, x => x.replace('limits: one bounded task session', 'limits: two sessions')); const limits = p.commit('the milestone\'s limits change');
   assert.equal(governingChanged({ baseline: gitSource(p.repo, limits), revision: moved, recordsDir: 'docs/workflow', task, previous: task }), true);
 });
+
+// v2.19.0 part 5: the launcher runs a channel project from the per-user installation (bin/wf-install), and wf next names
+// the channel and the revision it is at. The installation is used only when its resolution was made for this project's
+// repository and keys, has not expired, and names the revision the link points at; a session pinned to a revision stays.
+function channelProject(t, resolution = {}) {
+  const dir = adopted(t);
+  const install = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-launcher-install-'));
+  t.after(() => { spawnSync('chmod', ['-R', 'u+w', install]); fs.rmSync(install, { recursive: true, force: true }); });
+  const rev = head();
+  const config = JSON.parse(fs.readFileSync(path.join(dir, 'docs/workflow/config.json'), 'utf8'));
+  const key = `ed25519:${Buffer.alloc(32, 7).toString('base64')}`;
+  const put = (revision, over = {}) => {
+    const rd = path.join(install, 'revisions', revision);
+    fs.mkdirSync(rd, { recursive: true }); fs.mkdirSync(path.join(install, 'channels'), { recursive: true }); fs.mkdirSync(path.join(install, 'resolutions'), { recursive: true });
+    const tar = spawnSync('bash', ['-c', `git -C "${root}" archive HEAD | tar -x -C "${rd}"`], { encoding: 'utf8' });
+    assert.equal(tar.status, 0, tar.stderr);
+    fs.writeFileSync(path.join(rd, '.wf-complete'), `${revision}\n`);
+    const res = JSON.stringify({ channel: 'stable', revision, version: 'v2.19.0', repo: config.workflow.repo, keys: [key], expires_at: new Date(Date.now() + 3600e3).toISOString(), ...resolution, ...over });
+    fs.writeFileSync(path.join(install, 'resolutions', `stable.${revision}.json`), res);
+    return res;
+  };
+  const point = (revision, res) => {
+    fs.rmSync(path.join(install, 'channels/stable'), { force: true });
+    fs.symlinkSync(path.join('..', 'revisions', revision), path.join(install, 'channels/stable'));
+    fs.writeFileSync(path.join(install, 'channels/stable.json'), res);
+  };
+  const configPath = path.join(dir, 'docs/workflow/config.json');
+  config.workflow = { repo: config.workflow.repo, channel: 'stable', channel_key: key };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  fs.rmSync(path.join(dir, '.cache'), { recursive: true, force: true }); // nothing pinned to fall back to
+  const wf = (args, env = {}) => spawnSync('bash', [path.join(dir, 'scripts/wf'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, WF_INSTALL_ROOT: install, WF_SESSION_REVISION: '', ...env } });
+  const setConfig = w => { const c = JSON.parse(fs.readFileSync(configPath, 'utf8')); Object.assign(c.workflow, w); fs.writeFileSync(configPath, JSON.stringify(c, null, 2)); };
+  return { dir, install, rev, put, point, wf, setConfig, config, key };
+}
+const clones = ctx => fs.existsSync(path.join(ctx.dir, '.cache'));
+
+test('the launcher runs a channel project from the installed channel, and wf next names it', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const c = channelProject(t);
+  c.point(c.rev, c.put(c.rev));
+  const next = c.wf(['next', '--json']);
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.deepEqual(JSON.parse(next.stdout).workflow, { repo: c.config.workflow.repo, channel: 'stable', version: 'v2.19.0', revision: c.rev });
+  assert.equal(clones(c), false, 'no clone when the channel is installed');
+  assert.ok(fs.existsSync(path.join(c.install, 'uses', c.rev)), 'the run marks the revision used');
+  const text = c.wf(['next']);
+  assert.match(text.stdout, new RegExp(`^Workflow: \\S+ channel stable, now v2\\.19\\.0 \\(${c.rev}\\)`, 'm'));
+});
+
+test('the launcher does not trust an installation made for another repository or key, an expired one, or a torn pair', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const c = channelProject(t);
+  const unusable = (what, res) => {
+    c.point(c.rev, res);
+    // The fall-through resolves the signed record, which cannot be reached here (no network): it fails closed, and the installed tree is not run.
+    const r = c.wf(['next', '--json'], { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url./nonexistent/.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/' });
+    assert.notEqual(r.status, 0, `${what}: ran the installed tree`);
+    assert.doesNotMatch(r.stdout, /"workflow"/, what);
+    fs.rmSync(path.join(c.dir, '.cache'), { recursive: true, force: true });
+  };
+  unusable('another repository', c.put(c.rev, { repo: 'someone/else' }));
+  unusable('another key', c.put(c.rev, { keys: [`ed25519:${Buffer.alloc(32, 9).toString('base64')}`] }));
+  unusable('expired', c.put(c.rev, { expires_at: new Date(Date.now() - 1000).toISOString() }));
+  unusable('a resolution naming another revision than the link', c.put(c.rev, { revision: 'f'.repeat(40) }));
+  const good = c.put(c.rev);
+  fs.rmSync(path.join(c.install, 'revisions', c.rev, '.wf-complete'), { force: true });
+  unusable('a revision without its completion marker', good);
+});
+
+test('a session pinned with WF_SESSION_REVISION stays on its revision across a channel move', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const c = channelProject(t);
+  const other = 'e'.repeat(40);
+  c.put(c.rev); c.point(c.rev, c.put(c.rev));
+  c.point(other, c.put(other, { version: 'v2.19.1' })); // the channel moves
+  const pinned = JSON.parse(c.wf(['next', '--json'], { WF_SESSION_REVISION: c.rev }).stdout).workflow;
+  assert.equal(pinned.revision, c.rev); assert.equal(pinned.version, 'v2.19.0');
+  const moved = JSON.parse(c.wf(['next', '--json']).stdout).workflow;
+  assert.equal(moved.revision, other); assert.equal(moved.version, 'v2.19.1'); // a new session takes the new one
+});

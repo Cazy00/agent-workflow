@@ -1,0 +1,37 @@
+# The client page on GitHub Pages: the thin caller of the shared client-page entry (v2.19.0). Written by bin/wf-upgrade
+# --to-channel where the project had the copied wf-client-page.yml; delete this file to stop publishing. The entry,
+# Cazy00/agent-workflow/.github/workflows/wf-client-page.yml, named here at an immutable release tag and repeated as
+# `entry`, resolves the trusted branch's config (a channel or a hold), renders `wf status --client --live` with that
+# release and deploys it from the trusted branch only; a pull-request event only asks for a rebuild there. A GitHub Pages
+# site is PUBLIC; leave stages out with `client.exclude` in docs/workflow/config.json. The repository's Actions policy
+# must allow workflows from Cazy00/agent-workflow.
+name: wf-client-page
+on:
+  push:
+    branches: [__TRUSTED_BRANCH__]
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [wf-channel]
+  schedule:
+    - cron: '17 3 * * *'
+    - cron: '*/15 * * * *'
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write # a pull-request event asks for a rebuild on the trusted branch
+  pages: write
+  id-token: write
+# As the copied file: a build on the trusted branch is never cancelled; pull-request runs and other refs cancel in progress.
+concurrency:
+  group: wf-client-page-${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || github.event.schedule == '17 3 * * *' || vars.WF_GATE == 'on') && 'build' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/__TRUSTED_BRANCH__' }}
+jobs:
+  page:
+    uses: Cazy00/agent-workflow/.github/workflows/wf-client-page.yml@__ENTRY__
+    with:
+      entry: __ENTRY__
+      trusted_branch: __TRUSTED_BRANCH__
+    secrets:
+      WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}

@@ -1,0 +1,133 @@
+# The client page on GitHub Pages, shared (v2.19.0, docs/proposals/2026-11-07-central-release-channel.md): the reusable
+# entry a project's thin caller (templates/github/channel/wf-client-page.yml) names at an immutable release tag. It never
+# runs on this repository: its only trigger is workflow_call. It builds and deploys only from the trusted branch and never
+# runs candidate code; a pull-request event only asks for a rebuild there (Pages refuses a deploy from it, MAINT-0015).
+#
+# Like the gate and status entries (whose resolve step it repeats word for word: npm test checks that), it resolves the
+# trusted branch's config with the entry's own bin/wf-resolve and renders `wf status --client --live` with the RESOLVED revision's validator. The page shows stage
+# titles, outcomes and progress only, as the copied wf-client-page.yml did; a GitHub Pages site is public. The caller
+# grants contents: read, pull-requests: read, actions: write (the rebuild request), pages: write and
+# id-token: write (the deploy); each job here narrows them. It records no `wf resolved` check run: a page build is not a
+# judgment, and the channel soak and `wf channel audit` read those records as judgments only.
+name: wf-client-page
+on:
+  workflow_call:
+    inputs:
+      entry:
+        description: The release tag the caller names in its uses line (vX.Y.Z); the resolver is read from it.
+        type: string
+        required: true
+      trusted_branch:
+        description: The project's trusted branch.
+        type: string
+        required: true
+      entry_repo:
+        description: The workflow repository that holds this entry.
+        type: string
+        required: false
+        default: Cazy00/agent-workflow
+    secrets:
+      WF_READ_TOKEN:
+        description: A read-only token for a private workflow repository named by a hold (MAINT-0017); unset, fetches are anonymous.
+        required: false
+jobs:
+  dispatch:
+    # A pull-request run only asks for a rebuild on the trusted branch; a merged one does nothing, since the merge's push
+    # rebuilds. A fork's pull request and Dependabot get a read-only token.
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork
+    runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
+    name: dispatch
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Ask for a rebuild on the trusted branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED: ${{ inputs.trusted_branch }}
+        run: gh workflow run wf-client-page.yml --ref "$TRUSTED" --repo "$GITHUB_REPOSITORY"
+  build:
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', inputs.trusted_branch) && (github.event_name != 'schedule' || github.event.schedule == '17 3 * * *' || vars.WF_GATE == 'on')
+    runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
+    name: build
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Refuse any ref but exactly the trusted branch
+        # GitHub compares strings ignoring case, so the job's `if:` also passes a run on a branch named `MAIN`.
+        env:
+          TRUSTED: ${{ inputs.trusted_branch }}
+        run: '[ "$GITHUB_REF" = "refs/heads/$TRUSTED" ] || { echo "::error::This runs only on $TRUSTED."; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: List the open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json headRefName,isDraft,isCrossRepository > "$RUNNER_TEMP/pull-requests.json"
+      - name: Resolve the release that judges
+        id: resolve
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          ENTRY: ${{ inputs.entry }}
+          ENTRY_REPO: ${{ inputs.entry_repo }}
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$ENTRY" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::entry $ENTRY is not a release tag vX.Y.Z"; exit 2; }
+          [[ "$ENTRY_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::entry_repo $ENTRY_REPO is not owner/name"; exit 2; }
+          # The entry's own resolver, from the immutable tag the caller names.
+          git init -q "$RUNNER_TEMP/entry"
+          git -C "$RUNNER_TEMP/entry" fetch -q --depth 1 "https://github.com/$ENTRY_REPO.git" "refs/tags/$ENTRY"
+          git -C "$RUNNER_TEMP/entry" checkout -q --detach FETCH_HEAD
+          node "$RUNNER_TEMP/entry/bin/wf-resolve" --project "$GITHUB_WORKSPACE" --base "$BASE" > "$RUNNER_TEMP/resolved.json"
+          git -C "$GITHUB_WORKSPACE" show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/base-config.json"
+          out="$(node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const repo = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).workflow.repo;
+            r.resolved_at = new Date().toISOString();
+            fs.writeFileSync(process.argv[1], JSON.stringify(r));
+            console.log(repo, r.revision, r.channel, r.version ?? r.declared_version ?? "unknown")' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/base-config.json")"
+          read -r REPO REV CHANNEL VERSION <<< "$out"
+          cat "$RUNNER_TEMP/resolved.json"; echo
+          # The resolved revision: its validator and its gate script judge.
+          if [ -n "${WF_READ_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          git init -q "$RUNNER_TEMP/wf"
+          git -C "$RUNNER_TEMP/wf" fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C "$RUNNER_TEMP/wf" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/wf" rev-parse HEAD)" = "$REV" ] || { echo "::error::the fetched workflow is not at $REV"; exit 2; }
+          [ -f "$RUNNER_TEMP/wf/bin/wf-gate-ci" ] || { echo "::error::the base config resolves to $VERSION ($REV), which has no bin/wf-gate-ci: move the pin to v2.19.0 or later first, with today's copied workflow files (the first of the two opt-in pull requests), then opt in"; exit 2; }
+          { echo "channel=$CHANNEL"; echo "revision=$REV"; echo "version=$VERSION"; } >> "$GITHUB_OUTPUT"
+      - name: Render the client page
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/site"
+          node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" status --client --live --candidate "$GITHUB_SHA" --pull-requests "$RUNNER_TEMP/pull-requests.json" > "$RUNNER_TEMP/site/index.html"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+  deploy:
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
+    name: deploy
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

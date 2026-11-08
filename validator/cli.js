@@ -493,7 +493,7 @@ async function main() {
       const deadline = Date.now() + CHECK_RUNS_SECONDS * 1000; // one allowance for every commit read, not one per call
       runsFor = sha => workflowRuns({ repository: config.repository, sha, deadline });
     }
-    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null, runsFor });
+    const view = evaluateNext({ baseline, candidate, trustedBranch, pullRequests, latestRelease: process.env.WF_LATEST_RELEASE || null, channelResolved: /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(process.env.WF_CHANNEL_REVISION ?? '') ? { revision: process.env.WF_CHANNEL_REVISION, version: process.env.WF_CHANNEL_VERSION || null } : null, runsFor });
     if (baselineNote) view.note = baselineNote;
     console.log(o.json ? JSON.stringify(view, null, 2) : renderNext(view));
     return 0;

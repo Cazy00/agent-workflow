@@ -1,20 +1,67 @@
 #!/usr/bin/env bash
-# Local convenience launcher: runs the workflow validator at the revision pinned in docs/workflow/config.json.
+# Local convenience launcher: runs the workflow validator at the revision pinned in docs/workflow/config.json, or at the
+# release its channel resolves to (v2.19.0): the per-user installation's (bin/wf-install) when it has the channel, else
+# resolved here with the installation's own bin/wf-resolve, which verifies the signed channel record.
 # Feedback only. Authoritative gates use the owner-installed launcher outside this checkout (procedures/setup.md step 6).
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CONFIG="$ROOT/docs/workflow/config.json"
 [ -f "$CONFIG" ] || { echo "wf: $CONFIG not found" >&2; exit 2; }
-read -r REPO REV < <(node -e '
+read -r REPO REV CHANNEL < <(node -e '
   const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workflow;
-  if (!c.repo || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(c.revision)) { console.error("wf: workflow.repo and a full workflow.revision must be set"); process.exit(2); }
-  console.log(c.repo, c.revision)' "$CONFIG")
+  const hash = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
+  if (c?.repo && c.channel && !c.revision && /^(stable|canary)(-[1-9][0-9]*)?$/.test(c.channel)) console.log(c.repo, "-", c.channel);
+  else if (!c?.repo || !hash.test(c.revision)) { console.error("wf: workflow.repo and a full workflow.revision, or a workflow.channel, must be set"); process.exit(2); }
+  else console.log(c.repo, c.revision, "-")' "$CONFIG")
 CACHE="$ROOT/.cache/agent-workflow"
+if [ "$CHANNEL" != - ]; then
+  IROOT="${WF_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-workflow}"
+  INSTALLED="$IROOT/channels/$CHANNEL"
+  # The installed channel is used only when its resolution was made for this project's own repository and keys and has not
+  # expired, and names the revision the link points at; otherwise the signed record is resolved below. A session pinned
+  # with `wf-install --use NAME --shell` (WF_SESSION_REVISION) stays on that revision, checked the same way except for
+  # expiry, so one task never mixes two releases.
+  PIN="${WF_SESSION_REVISION:-}"
+  if [ -n "$PIN" ] && [[ "$PIN" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+    DIR="$IROOT/revisions/$PIN"; RESFILE="$IROOT/resolutions/$CHANNEL.$PIN.json"; WANT="$PIN"; EXPIRY=0
+  else
+    PIN=""; DIR="$INSTALLED"; RESFILE="$INSTALLED.json"; EXPIRY=1
+    WANT="$(basename "$(readlink "$INSTALLED" 2>/dev/null)" 2>/dev/null || true)"
+  fi
+  if [ -f "$DIR/validator/cli.js" ] && [ -f "$DIR/.wf-complete" ] && WF_CHANNEL_VERSION="$(node -e '
+    const fs = require("fs");
+    const [config, file, channel, want, expiry] = process.argv.slice(1);
+    const w = JSON.parse(fs.readFileSync(config, "utf8")).workflow;
+    const r = JSON.parse(fs.readFileSync(file, "utf8"));
+    const keys = Array.isArray(w.channel_key) ? w.channel_key : [w.channel_key];
+    const ok = r.repo === w.repo && r.channel === channel && r.revision === want && Array.isArray(r.keys) && r.keys.length > 0 && r.keys.every(k => keys.includes(k))
+      && (expiry !== "1" || Date.parse(r.expires_at) > Date.now());
+    if (!ok) process.exit(1);
+    console.log(r.version ?? "")' "$CONFIG" "$RESFILE" "$CHANNEL" "$WANT" "$EXPIRY" 2>/dev/null)"; then
+    DIR="$(cd "$DIR" && pwd -P)"
+    WF_CHANNEL_REVISION="$(basename "$DIR")"
+    { mkdir -p "$IROOT/uses" && touch "$IROOT/uses/$WF_CHANNEL_REVISION"; } 2>/dev/null || true
+    export WF_CHANNEL_REVISION WF_CHANNEL_VERSION
+    for arg in "$@"; do
+      if [ "$arg" = --repo ]; then exec node "$DIR/validator/cli.js" "$@"; fi
+    done
+    exec node "$DIR/validator/cli.js" --repo "$ROOT" "$@"
+  fi
+  unset WF_CHANNEL_VERSION
+  [ -d "$CACHE/.git" ] || git clone --quiet "https://github.com/$REPO.git" "$CACHE"
+  if [ ! -f "$CACHE/bin/wf-resolve" ]; then
+    git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet --detach origin/main
+  fi
+  RESOLVED="$(node "$CACHE/bin/wf-resolve" --config "$CONFIG")" || { echo "wf: channel $CHANNEL did not resolve (above); CI fails closed the same way" >&2; exit 2; }
+  read -r REV WF_CHANNEL_VERSION < <(node -e 'const r = JSON.parse(process.argv[1]); console.log(r.revision, r.version)' "$RESOLVED")
+  WF_CHANNEL_REVISION="$REV"
+  export WF_CHANNEL_REVISION WF_CHANNEL_VERSION
+fi
 [ -d "$CACHE/.git" ] || git clone --quiet "https://github.com/$REPO.git" "$CACHE"
 if [ "$(git -C "$CACHE" rev-parse HEAD)" != "$REV" ]; then
   git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet --detach "$REV"
 fi
-[ "$(git -C "$CACHE" rev-parse HEAD)" = "$REV" ] || { echo "wf: installation is not at the pinned revision $REV" >&2; exit 2; }
+[ "$(git -C "$CACHE" rev-parse HEAD)" = "$REV" ] || { echo "wf: installation is not at the revision $REV" >&2; exit 2; }
 # The newest release the installation knows, which `wf next` mentions when it is newer than the pin (MAINT-0018). Its
 # tags are fetched at most once a day, never prompting; a failed fetch leaves them as they were and is not retried until
 # the next day. A read-only installation is only read, never fetched.

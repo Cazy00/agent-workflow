@@ -125,7 +125,7 @@ function main(argv) {
   }
   if (result.notices?.length) {
     lines.push('**For the owner’s notice** (checkpoint notice: the agent merges):', ...result.notices.map(x => `- notice: ${x}`));
-    console.log(`::notice title=For the owner's notice::${result.notices.join('; ').replace(/[\r\n%]/g, ' ')}`);
+    console.log(`::notice title=For the owner’s notice::${result.notices.join('; ').replace(/[\r\n%]/g, ' ')}`);
   }
   if (result.deferred?.length) lines.push('**For the owner at the milestone’s acceptance:**', ...result.deferred.map(x => `- ${x}`));
   lines.push(judged);

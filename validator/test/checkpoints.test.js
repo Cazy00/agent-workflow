@@ -411,7 +411,7 @@ test('the wf ci workflow summary names who merges, lists failing reasons and nev
   assert.match(notice.summary, /the agent may merge this/);
   assert.match(notice.summary, /- notice: it changes the plan or requirements: docs\/specs\/a\.md/);
   assert.doesNotMatch(notice.summary + notice.out, /The owner merges this|\*\*Merge:\*\* the owner/);
-  assert.equal(notice.out.trim(), "::notice title=For the owner's notice::it changes the plan or requirements: docs/specs/a.md ::warning::x");
+  assert.equal(notice.out.trim(), "::notice title=For the owner’s notice::it changes the plan or requirements: docs/specs/a.md ::warning::x");
   assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [], deferred: ['it changes acceptance tests: a'] }).summary, /\*\*For the owner at the milestone’s acceptance:\*\*\n- it changes acceptance tests: a/);
   const failed = run({ verdict: 'fail', findings: ['production: src/a.js', 'production path src/a.js must belong to exactly one selected task (found 0)', 'readiness T-0001: Needs discovery or resolution', '  readiness is stale', 'unverified: x', 'note: y'] }).summary;
   assert.match(failed, /- production path src\/a\.js must belong/);

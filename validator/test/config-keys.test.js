@@ -23,7 +23,7 @@ test('auto_merge and defer_to_acceptance are true or false, and true only where 
     assert.equal(configWith(t, c => ownerMerge(c, { checkpoint: 'plan', [key]: true }))().approval[key], true);
     assert.equal(configWith(t, c => ownerMerge(c, { checkpoint: 'change', [key]: false }))().approval[key], false, 'false is allowed anywhere');
     assert.throws(configWith(t, c => ownerMerge(c, { [key]: 'yes' })), new RegExp(`approval\\.${key} must be true or false`));
-    assert.throws(configWith(t, c => ownerMerge(c, { checkpoint: 'change', [key]: true })), /needs owner-merge approval with checkpoint milestone or plan/);
+    assert.throws(configWith(t, c => ownerMerge(c, { checkpoint: 'change', [key]: true })), /needs owner-merge approval with checkpoint milestone, plan or notice/);
     assert.throws(configWith(t, c => ({ ...c, approval: { ...c.approval, [key]: true } })), /needs owner-merge approval/, 'manual mode');
   }
 });

@@ -64,7 +64,7 @@
     ]
   },
   "v2.4.2": {
-    "notes": []
+    "remove_config": []
   },
   "v2.5.0": {
     "notes": [
@@ -242,5 +242,8 @@
     "notes": [
       "Nothing is required: pinned projects keep working and only the pin moves. This release adds release channels. A project that wants one opts in with two pull requests on its normal merge route: move the pin to v2.19.0 or later, then run bin/wf-upgrade --project PATH --to-channel stable --key ed25519:<the broker's public key> --apply (canary for a project that soaks releases). That replaces workflow.revision with workflow.channel and workflow.channel_key and wf-ci.yml and wf-status.yml with the thin callers of the shared gate; the required check is then named wf ci / gate, and the Actions policy and a changed copy of scripts/wf or wf-client-page.yml stay by hand (the command lists them). A project that stays on a pin is a hold and is not moved. approval.checkpoint: notice is opt-in (the default stays milestone) and needs a host merge gate that requires an independent review of workflow and enforcement paths; without one, keep milestone. Releases of this repository are tagged by the host's release broker, not by a workflow: .github/workflows/release-tag.yml is gone."
     ]
+  },
+  "v2.19.1": {
+    "remove_config": []
   }
 }

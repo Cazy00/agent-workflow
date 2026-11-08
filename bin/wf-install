@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+// The per-user installation of the workflow that sessions read instead of a copy per project: contract channel-install
+// v1, adapters/install.mjs. It resolves a channel with the resolver (channel-resolve v3) and never chooses a revision
+// itself. Exit statuses: 0 done, 2 refused or bad usage, 3 an unexpected error.
+import path from 'node:path';
+import { install, use, prune, defaultRoot, InstallError } from '../adapters/install.mjs';
+
+const TEST_ENV = 'WF_RESOLVE_TEST';
+const USAGE = `usage: wf-install --channel NAME --key ed25519:BASE64 [--key …] [--repo OWNER/NAME] [--min-seq N] [--root DIR]
+       wf-install --revision HASH [--repo OWNER/NAME] [--root DIR]
+       wf-install --use NAME|HASH [--root DIR]
+       wf-install --prune [--days N] [--root DIR]
+  --channel resolves NAME (stable, canary, stable-N, canary-N) through its signed record, verified with each --key, writes
+  the verified revision once to ROOT/revisions/<hash> (read-only), then switches ROOT/channels/NAME to it atomically.
+  --revision installs a hold's full hash (a revision on main) with no pointer. --use is a session's start: it prints
+  the revision directory to read until the session ends and marks it used. --prune removes revisions no pointer names
+  and no session used in the last N days (default 7). ROOT defaults to ${defaultRoot()}.
+  Output is JSON. Tests only (refused unless ${TEST_ENV}=1): --git-url URL, --record-url DIR.`;
+const fail = (message, status = 2) => { console.error(`wf-install: ${message}`); process.exit(status); };
+const o = {};
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
+  else if (a === '--prune') o.prune = true;
+  else if (a === '--key' && argv[i + 1] && !argv[i + 1].startsWith('--')) (o.keys ??= []).push(argv[++i]);
+  else if (['--channel', '--revision', '--use', '--repo', '--min-seq', '--root', '--days', '--git-url', '--record-url'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+    if (o[a.slice(2)] !== undefined) fail(`${a} given twice`);
+    o[a.slice(2)] = argv[++i];
+  } else fail(`invalid option or missing value: ${a}\n${USAGE}`);
+}
+const testing = process.env[TEST_ENV] === '1';
+for (const k of ['git-url', 'record-url']) if (o[k] !== undefined && !testing) fail(`--${k} is for tests only and needs ${TEST_ENV}=1`);
+const modes = ['channel', 'revision', 'use', 'prune'].filter(k => o[k] !== undefined);
+if (modes.length !== 1) fail(`give exactly one of --channel, --revision, --use and --prune\n${USAGE}`);
+if (o.keys && !o.channel) fail('--key goes with --channel');
+if (o['min-seq'] !== undefined && !o.channel) fail('--min-seq goes with --channel');
+if (o.days !== undefined && !o.prune) fail('--days goes with --prune');
+if (o.repo !== undefined && !/^[\w.-]+\/[\w.-]+$/.test(o.repo)) fail(`--repo ${o.repo} is not owner/name`);
+let minSeq, days = 7;
+if (o['min-seq'] !== undefined) { minSeq = Number(o['min-seq']); if (!/^[1-9]\d*$/.test(o['min-seq']) || !Number.isSafeInteger(minSeq)) fail(`--min-seq ${o['min-seq']} is not a positive integer`); }
+if (o.days !== undefined) { days = Number(o.days); if (!/^\d+$/.test(o.days)) fail(`--days ${o.days} is not a whole number`); }
+const root = path.resolve(o.root ?? defaultRoot());
+let readRecord;
+if (o['record-url'] !== undefined) {
+  const fs = await import('node:fs');
+  const dir = path.resolve(o['record-url']);
+  readRecord = async name => { try { return fs.readFileSync(path.join(dir, path.basename(name))); } catch { return null; } };
+}
+try {
+  let out;
+  if (o.use) out = use({ root, name: o.use });
+  else if (o.prune) out = prune({ root, days });
+  else out = await install({ root, channel: o.channel, keys: o.keys, revision: o.revision, repo: o.repo, gitUrl: o['git-url'], readRecord, minSeq, retryMs: testing ? 0 : undefined });
+  console.log(JSON.stringify(out));
+} catch (e) { e instanceof InstallError ? fail(e.message) : fail(`unexpected: ${e.stack ?? e.message}`, 3); }

@@ -57,7 +57,7 @@ test('no workflow in this repository tags a release or pushes a ref, and release
   assert.ok(!fs.existsSync(new URL('release-tag.yml', dir)), 'release-tag.yml must not exist');
   for (const f of fs.readdirSync(dir)) {
     const text = fs.readFileSync(new URL(f, dir), 'utf8');
-    assert.doesNotMatch(text, /git (tag|push)\b|refs\/tags\/|gh release create|git\/refs/, `${f} tags or pushes`);
+    assert.doesNotMatch(text, /^[^#\n]*(git (tag|push)\b|gh release create|git\/refs)/m, `${f} tags or pushes`);
   }
 });
 

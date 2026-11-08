@@ -75,6 +75,7 @@ export function planUpgrade({ project, workflowRepo, rev }) {
   const configText = fs.readFileSync(configPath, 'utf8');
   const config = JSON.parse(configText);
   const from = config.workflow?.revision;
+  if (!SHA.test(from ?? '') && typeof config.workflow?.channel === 'string' && config.workflow.channel) return planChannelCallers({ project, workflowRepo, rev, config });
   if (!SHA.test(from ?? '')) throw new Error('the project pins no full workflow revision (workflow.revision)');
   if (git(workflowRepo, ['cat-file', '-e', `${from}^{commit}`], true).status !== 0) throw new Error(`the workflow repository does not hold the project's pinned revision ${from.slice(0, 12)}: fetch its full history and tags (git fetch --tags)`);
   const target = rev ?? releaseTags(workflowRepo)[0];
@@ -191,7 +192,11 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
     if (show(workflowRepo, from, 'bin/wf-gate-ci') === null) throw new Error(`the pin ${fromVersion ?? from.slice(0, 12)} has no shared gate: first move the pin to ${FIRST_CHANNEL_RELEASE} or later with bin/wf-upgrade --rev (its own pull request), merge it, then opt in; the opt-in pull request is judged by the base branch's pin`);
   } else if (typeof w.channel === 'string' && w.channel) fromVersion = `channel ${w.channel}`;
   else throw new Error('the project names neither a full workflow.revision nor a channel');
-  const entryTag = entry ?? (SHA.test(from ?? '') ? releaseOf(workflowRepo, from).tag : null) ?? releaseTags(workflowRepo).find(t => compareVersions(t, FIRST_CHANNEL_RELEASE) >= 0 && show(workflowRepo, t, CHANNEL_CALLERS[0].template) !== null);
+  // The entry: --entry as given, else the newest release tag at or above the pin (and the first channel release) that has
+  // the callers, so a fresh opt-in takes the newest callers and entries, never an older pin's.
+  const floor = SHA.test(from ?? '') && parseVersion(fromVersion).length === 3 && compareVersions(fromVersion, FIRST_CHANNEL_RELEASE) > 0 ? fromVersion : FIRST_CHANNEL_RELEASE;
+  const entryTag = entry ?? newestEntry(workflowRepo, floor);
+  if (!entryTag && !entry) throw new Error(`no release tag ${floor} or later with ${CHANNEL_CALLERS[0].template} in ${workflowRepo}: fetch the tags (git fetch --tags) or pass --entry vX.Y.Z`);
   if (parseVersion(entryTag).length !== 3 || compareVersions(entryTag, FIRST_CHANNEL_RELEASE) < 0) throw new Error(`the entry must be a release tag ${FIRST_CHANNEL_RELEASE} or later (--entry vX.Y.Z), not ${entryTag ?? 'none'}`);
   if (git(workflowRepo, ['rev-parse', '--verify', '-q', '--end-of-options', `refs/tags/${entryTag}^{commit}`], true).status !== 0) throw new Error(`the entry tag ${entryTag} is not in ${workflowRepo}: fetch the tags (git fetch --tags)`);
 
@@ -241,8 +246,51 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
   return { project, from: from ?? null, to: `channel ${channel}`, from_version: fromVersion, to_version: `channel ${channel}`, entry: entryTag, current: false, changes, notes, left, removed_config: ['workflow.revision', 'workflow.version'].filter(k => k.split('.')[1] in w) };
 }
 
+// The newest release tag at or above `floor` whose own templates hold the channel callers: the entry callers name.
+const newestEntry = (repo, floor) => releaseTags(repo).find(t => compareVersions(t, floor) >= 0 && show(repo, t, CHANNEL_CALLERS[0].template) !== null) ?? null;
+const CALLER_ENTRY = /^\s*uses:\s*\S+\/\.github\/workflows\/wf-(?:gate|status|client-page)\.yml@(v\d+\.\d+\.\d+)\s*$/m;
+
+// A project on a channel: the channel moves the shared gate, not the project's thin callers, which name their entry tag.
+// The plain upgrade (no --to-channel) refreshes each caller that is still exactly a released caller template (its
+// trusted branch and its own entry filled in) to the target release's template at that release's tag; a caller the
+// project changed is left as it is and listed. The target is --rev (a release tag) or the newest release tag with the
+// callers. It writes no config: the channel and its keys stay; a channel move is --to-channel.
+function planChannelCallers({ project, workflowRepo, rev, config }) {
+  const w = config.workflow;
+  const target = rev ?? newestEntry(workflowRepo, FIRST_CHANNEL_RELEASE);
+  if (!target) throw new Error(`no release tag ${FIRST_CHANNEL_RELEASE} or later with the channel callers in ${workflowRepo}: fetch the tags (git fetch --tags)`);
+  if (parseVersion(target).length !== 3 || compareVersions(target, FIRST_CHANNEL_RELEASE) < 0) throw new Error(`a channel project's callers move to a release tag ${FIRST_CHANNEL_RELEASE} or later (--rev vX.Y.Z), not ${target}`);
+  if (git(workflowRepo, ['rev-parse', '--verify', '-q', '--end-of-options', `refs/tags/${target}^{commit}`], true).status !== 0) throw new Error(`the release tag ${target} is not in ${workflowRepo}: fetch the tags (git fetch --tags)`);
+  const branch = config.trusted_branch ?? 'main';
+  const fill = (text, tag) => text.replaceAll('__TRUSTED_BRANCH__', branch).replaceAll('__ENTRY__', tag);
+  // Every released shape of each caller, from the first channel release up to the target, to tell an unchanged caller.
+  const released = releaseTags(workflowRepo).filter(t => compareVersions(t, FIRST_CHANNEL_RELEASE) >= 0 && compareVersions(t, target) <= 0);
+  const changes = [], left = [], notes = [], entries = [];
+  for (const item of CHANNEL_CALLERS) {
+    const full = path.join(project, item.path);
+    if (!fs.existsSync(full)) continue;
+    const have = fs.readFileSync(full, 'utf8');
+    const at = have.match(CALLER_ENTRY)?.[1] ?? null;
+    if (at) entries.push(at);
+    const template = show(workflowRepo, target, item.template);
+    if (template === null) { left.push({ path: item.path, why: `${target} has no ${item.template}: keep it as it is or pass --rev with a release that has it` }); continue; }
+    const want = fill(template, target);
+    if (have === want) continue;
+    if (at && compareVersions(at, target) >= 0) { notes.push(`${item.path} names the entry ${at}, not older than ${target}: left as it is (a caller moves forward only)`); continue; }
+    const unchanged = at && released.some(t => { const old = show(workflowRepo, t, item.template); return old !== null && fill(old, at) === have; });
+    if (unchanged) changes.push({ path: item.path, action: 'update', content: want, why: `still a released caller (entry ${at}): the thin caller of the shared entry at ${target} replaces it` });
+    else left.push({ path: item.path, why: `changed in this project; by hand: replace it with ${item.template} at ${target} (fill __TRUSTED_BRANCH__ with ${branch} and __ENTRY__ with ${target}) and keep your additions` });
+  }
+  if (!entries.length && !left.length) throw new Error(`the project follows channel ${w.channel} but has no thin caller naming an entry (${CHANNEL_CALLERS[0].path}): run bin/wf-upgrade --to-channel ${w.channel} --key … to write them`);
+  const fromEntry = entries.sort(compareVersions)[0] ?? 'unknown';
+  const base = { project, from: null, to: `channel ${w.channel}`, from_version: `channel ${w.channel}, entry ${fromEntry}`, to_version: `channel ${w.channel}, entry ${target}`, entry: target, channel: w.channel, notes, left, removed_config: [] };
+  if (!changes.length && !left.length) return { ...base, current: true, changes };
+  return { ...base, current: false, changes, steps_from: null };
+}
+
 // Writes the plan. Refuses when a file it would change has uncommitted edits, so nothing of the owner's is overwritten.
 export function applyUpgrade(plan) {
+  if (!plan.changes.length) return;
   const dirty = git(plan.project, ['status', '--porcelain', '--', ...plan.changes.map(c => c.path)], true);
   if (dirty.status !== 0) throw new Error('cannot tell whether the files it would change have uncommitted edits (git status failed): --apply needs the project\'s Git checkout');
   if (dirty.stdout.trim()) throw new Error(`commit or stash these first; the upgrade would change them:\n${dirty.stdout.trimEnd()}`);
@@ -269,7 +317,7 @@ export function validateWith({ workflowRepo, rev, project }) {
 }
 
 export function renderPlan(plan, { applied = false, validation = null } = {}) {
-  if (plan.current) return `Already at ${plan.to_version} (${plan.to.slice(0, 12)}); nothing to do.\n${plan.notes.map(n => `  - ${n}\n`).join('')}`;
+  if (plan.current) return `Already at ${plan.to_version}${plan.channel ? '' : ` (${plan.to.slice(0, 12)})`}; nothing to do.\n${plan.notes.map(n => `  - ${n}\n`).join('')}`;
   const lines = [`${applied ? 'Upgraded' : 'Upgrade plan for'} ${plan.project}: ${plan.from_version} → ${plan.to_version}${plan.steps_from ? ` (steps from upgrades.json in ${plan.steps_from})` : ''}`, ''];
   lines.push(applied ? 'Changed:' : 'Would change (run again with --apply):');
   for (const c of plan.changes) lines.push(`  ${c.action.padEnd(6)} ${c.path}: ${c.why}`);

@@ -15,6 +15,9 @@ import { fixtureTrust, integrationClaims } from './helpers.js';
 //   2. the previous release's validator over the candidate's new fixtures: what the candidate passes, it passes too
 //      (forward tolerance, so a rollback accepts what the new release wrote);
 //   3. upgrades.json: a release after v2.19.0 within major 2 carries automated cleanup only, never a step for a person.
+//      No release is exempt: what a project must merge by hand because it changed a file the scaffold installed (a copied
+//      wf-ci.yml, a thin caller) is listed by bin/wf-upgrade's plan itself, which also moves unchanged callers, so a
+//      release that changes them needs no note.
 // The previous release is the newest release tag merged into HEAD that does not point at HEAD itself. A shallow checkout
 // is deepened first (tags included); when there is still no such tag the test is skipped locally, but fails in CI
 // (GITHUB_ACTIONS set), so the release's compatibility guard never passes there without running.

@@ -50,15 +50,15 @@ test('the status workflow fetches the full history that readiness previews check
   assert.equal(text.match(/^ {10}fetch-depth: 0\b/gm)?.length, text.match(/actions\/checkout@/g).length);
 });
 
-// The release tag workflow (IDEA-18): main only, one permission, pinned actions, and it never moves an existing tag.
-test('the release tag workflow tags only an untagged release version, on main, and moves no tag', () => {
-  const text = fs.readFileSync(new URL('../../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
-  assert.match(text, /^on:\n  push:\n    branches: \[main\]\n/m);
-  assert.doesNotMatch(text, /pull_request/, 'no pull_request trigger');
-  assert.match(text, /^permissions:\n  contents: write\n(?!  )/m);
-  for (const use of text.match(/uses: .*/g)) assert.match(use, /@[0-9a-f]{40} /, use);
-  assert.match(text, /ls-remote --exit-code --tags origin "refs\/tags\/\$tag"[^\n]*exit 0/);
-  assert.doesNotMatch(text, /--force|-f /);
+// Releases are tagged by the host's release broker (wf-release, v2.19.0), which does not run while release-tag.yml exists.
+// No workflow here may tag a release or push a ref.
+test('no workflow in this repository tags a release or pushes a ref, and release-tag.yml is gone', () => {
+  const dir = new URL('../../.github/workflows/', import.meta.url);
+  assert.ok(!fs.existsSync(new URL('release-tag.yml', dir)), 'release-tag.yml must not exist');
+  for (const f of fs.readdirSync(dir)) {
+    const text = fs.readFileSync(new URL(f, dir), 'utf8');
+    assert.doesNotMatch(text, /git (tag|push)\b|refs\/tags\/|gh release create|git\/refs/, `${f} tags or pushes`);
+  }
 });
 
 // MAINT-0023 P1: the publish step keeps exactly one open status issue. It runs here against a fake `gh` and `sleep`.

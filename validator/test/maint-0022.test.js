@@ -264,11 +264,12 @@ test('MAINT-0022: the plan review is asked only of an authorised or active miles
 });
 
 // Deep review S1 / Codex R3: under the cadence a milestone that goes straight to Released carries the acceptance evidence too, which
-// holds its one review; without the cadence v2.10.0 holds.
+// holds its one review. v2.19.0 review finding 2: so it does under the task cadence, where only the owner's merge of the milestone
+// record stood in for it, and checkpoint notice makes that the agent's merge.
 test('MAINT-0022: release without acceptance still needs the milestone review', t => {
   const released = p => { p.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Released')); return p.commit('M-0001 released'); };
   const ci = p => { const head = released(p); return p.run(['ci', '--baseline', p.baseline, '--candidate', head]); };
   const missing = /the acceptance evidence for M-0001 is missing/;
   assert.match(findings(ci(project(t, { configEdit: diet(), baselineEdit: withLink }))), missing);
-  assert.doesNotMatch(findings(ci(project(t, { configEdit: c => ({ ...c, acceptance_evidence: true }) }))), missing);
+  assert.match(findings(ci(project(t, { configEdit: c => ({ ...c, acceptance_evidence: true }) }))), missing);
 });

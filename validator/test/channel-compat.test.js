@@ -14,7 +14,8 @@ import { fixtureTrust, integrationClaims } from './helpers.js';
 //      this release changes (a declared tightening, listed by name);
 //   2. the previous release's validator over the candidate's new fixtures: what the candidate passes, it passes too
 //      (forward tolerance, so a rollback accepts what the new release wrote);
-//   3. upgrades.json: a release after v2.19.0 within major 2 carries automated cleanup only, never a step for a person.
+//   3. upgrades.json: a release after v2.19.0 within major 2 carries automated cleanup only, never a step for a person
+//      (v2.19.1's notes are the one declared exception).
 // The previous release is the newest release tag merged into HEAD that does not point at HEAD itself. A shallow checkout
 // is deepened first (tags included); when there is still no such tag the test is skipped locally, but fails in CI
 // (GITHUB_ACTIONS set), so the release's compatibility guard never passes there without running.
@@ -88,7 +89,10 @@ test('upgrades.json: a release on a channel carries automated cleanup only', () 
     const v = parse(tag);
     assert.equal(v.length, 3, `${tag} is not vX.Y.Z`);
     if (v[0] !== FIRST_CHANNEL_RELEASE[0] || cmp(v, FIRST_CHANNEL_RELEASE) <= 0) continue;
-    const steps = Object.keys(entry).filter(k => !['remove_config', 'add_files'].includes(k));
+    // v2.19.1 is a declared exception: its notes tell a customised wf-ci.yml and a channel project's callers what to change
+    // by hand, and bin/wf-upgrade prints them; no other key and no later release may carry a step for a person.
+    const allowed = tag === 'v2.19.1' ? ['remove_config', 'add_files', 'notes'] : ['remove_config', 'add_files'];
+    const steps = Object.keys(entry).filter(k => !allowed.includes(k));
     assert.deepEqual(steps, [], `${tag} is a release within major ${v[0]} after the channel began: a step a person must do (${steps.join(', ')}) makes it a major`);
   }
 });

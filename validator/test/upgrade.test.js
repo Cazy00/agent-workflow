@@ -211,3 +211,14 @@ test('MAINT-0016: the v2.4.0 step adds the trial walker, and the upgrade install
   assert.ok(manifest['v2.4.0'].notes.some(n => /wf-protect --apply/.test(n)) && manifest['v2.4.0'].notes.some(n => /AGENTS\.md/.test(n)));
   assert.match(fs.readFileSync(new URL('../../adapters/upgrade.mjs', import.meta.url), 'utf8'), /\{ path: '\.claude\/agents\/trial-walker\.md', template: 'templates\/claude\/agents\/trial-walker\.md' \}/);
 });
+
+test('v2.19.1: the entry carries the by-hand steps as notes, which the upgrade plan lists (a step through the real entry)', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../../upgrades.json', import.meta.url), 'utf8'));
+  const notes = manifest['v2.19.1']?.notes;
+  assert.ok(Array.isArray(notes) && notes.some(n => /customised/.test(n) && /group:/.test(n)) && notes.some(n => /channel/.test(n) && /thin callers/.test(n) && /newest release tag/.test(n)), 'v2.19.1 notes');
+  assert.doesNotMatch(manifest['v2.19.0'].notes.join(' '), /move the pin to v2\.19\.0 or later/);
+  // adapters/upgrade.mjs turns each step's notes into `<version>: <note>` lines that renderPlan prints under "By hand".
+  const src = fs.readFileSync(new URL('../../adapters/upgrade.mjs', import.meta.url), 'utf8');
+  assert.match(src, /\(s\.notes \?\? \[\]\)\.map\(n => `\$\{v\}: \$\{n\}`\)/);
+  assert.match(src, /By hand, where it applies to this project:/);
+});

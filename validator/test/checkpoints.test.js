@@ -244,6 +244,50 @@ test('the checkpoint comes from the baseline: a candidate cannot give itself the
   assert.match(out(r).owner_reasons.join(' | '), /the owner merges every change \(checkpoint change\)/);
 });
 
+// v2.19.0: checkpoint notice. Each reason owner-merge holds a pull request for stays the owner's merge under milestone,
+// and under notice is the owner's notice instead: a `notice:` line on the check, and the agent merges.
+test('checkpoint notice: what milestone leaves to the owner is a notice, and the agent merges', t => {
+  const tests = { paths: { acceptance_tests: ['tests/acceptance-map.json', 'src/acceptance/**'] } };
+  const reasons = [
+    ['the plan or requirements', {}, q => q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`), /it changes the plan or requirements: docs\/specs\/feature\.md/],
+    ['a milestone plan', { records: true }, q => q.edit('docs/workflow/milestones/M-0001.md', x => `${x}\nOne more line of plan.\n`), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/],
+    ['an acceptance', { records: true }, q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/],
+    ['the workflow', {}, q => q.write('.github/workflows/extra.yml', 'name: extra\n'), /it changes the workflow: \.github\/workflows\/extra\.yml/],
+    ['acceptance tests', { configEdit: c => ({ ...c, paths: { ...c.paths, ...tests.paths } }) }, q => q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'), /it changes acceptance tests: src\/acceptance\/a\.test\.js/],
+    ['an accepted finding', { evidence: { review: { findings: [{ id: 'F2', severity: 'medium', status: 'accepted', resolution: 'kept: the cost of fixing outweighs the risk' }] } } }, () => {}, /review findings accepted rather than fixed: F2/],
+  ];
+  for (const [name, { records, configEdit, evidence: over = {} }, extra, reason] of reasons) {
+    for (const checkpoint of ['milestone', 'notice']) {
+      const p = setup(t, { checkpoint, configEdit, change: q => { if (!records) q.write('src/a.js', 'export const result = 1;\n'); extra(q); } });
+      const r = records ? p.run('ci') : p.run('ci', { evidence: evidence(p.candidate, over) });
+      const label = `${name}/${checkpoint}: ${r.stdout}${r.stderr}`;
+      assert.equal(r.status, 0, label);
+      const o = out(r);
+      assert.equal(o.verdict, 'pass', label);
+      if (checkpoint === 'milestone') {
+        assert.equal(o.merge, 'owner', label);
+        assert.match(o.owner_reasons.join(' | '), reason, label);
+        assert.equal(o.notices, undefined, label);
+        assert.ok(!o.findings.some(f => f.startsWith('notice: ')), label);
+      } else {
+        assert.equal(o.merge, 'agent', label);
+        assert.deepEqual(o.owner_reasons, [], label);
+        assert.match(o.notices.join(' | '), reason, label);
+        assert.ok(o.findings.some(f => f.startsWith('notice: ') && reason.test(f)), label);
+        assert.doesNotMatch(r.stdout, /The owner merges this|"merge": "owner"/, label);
+      }
+    }
+  }
+});
+
+test('checkpoint notice: auto-merge may stay on for a pull request that changes the plan', t => {
+  const p = setup(t, { checkpoint: 'notice', configEdit: c => ({ ...c, approval: { ...c.approval, auto_merge: true } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`); } });
+  const r = p.run('ci', { evidence: evidence(p.candidate), env: { WF_PR_AUTO_MERGE: 'on' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(out(r).merge, 'agent');
+  assert.ok(!out(r).findings.some(f => /auto-merge is on, but the owner merges/.test(f)), out(r).findings.join(' | '));
+});
+
 test('enforced mode also requires the evidence, and leaves merging to its code-owner route', t => {
   const p = setup(t, { label: 'enforced' });
   const missing = p.run('ci');
@@ -277,8 +321,8 @@ test('parseDeliveryEvidence reads JSON, a marked comment or a marked fence, and 
   assert.throws(() => parseDeliveryEvidence(`${marker}\n\`\`\`json\n{not json\n\`\`\``), /not valid JSON/);
 });
 
-test('approval.checkpoint takes change, milestone or plan, and only with owner-merge approval', t => {
-  for (const [label, checkpoint, pattern] of [['owner-merge', 'sometimes', /change, milestone or plan/], ['manual', 'milestone', /only to owner-merge/], ['enforced', 'plan', /only to owner-merge/]]) {
+test('approval.checkpoint takes change, milestone, plan or notice, and only with owner-merge approval', t => {
+  for (const [label, checkpoint, pattern] of [['owner-merge', 'sometimes', /change, milestone, plan or notice/], ['owner-merge', 'Notice', /change, milestone, plan or notice/], ['manual', 'milestone', /only to owner-merge/], ['enforced', 'plan', /only to owner-merge/], ['manual', 'notice', /only to owner-merge/]]) {
     const p = setup(t, { label, change: q => q.edit('docs/workflow/config.json', x => { const c = JSON.parse(x); c.approval.checkpoint = checkpoint; return JSON.stringify(c); }) });
     const r = spawnSync(process.execPath, [cli, 'records', '--repo', p.repo, '--json'], { encoding: 'utf8' });
     assert.notEqual(r.status, 0, `${label}/${checkpoint}`);
@@ -363,6 +407,11 @@ test('the wf ci workflow summary names who merges, lists failing reasons and nev
   assert.match(owner.summary, /\*\*Merge:\*\* the owner\./);
   assert.equal(owner.out.trim(), '::notice title=The owner merges this::it changes acceptance tests: a ::warning::x y', 'a path cannot start a workflow command of its own');
   assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [] }).summary, /the agent may merge this once every required check has passed/);
+  const notice = run({ verdict: 'pass', findings: ['notice: it changes the plan or requirements: docs/specs/a.md'], merge: 'agent', owner_reasons: [], notices: ['it changes the plan or requirements: docs/specs/a.md\n::warning::x'] });
+  assert.match(notice.summary, /the agent may merge this/);
+  assert.match(notice.summary, /- notice: it changes the plan or requirements: docs\/specs\/a\.md/);
+  assert.doesNotMatch(notice.summary + notice.out, /The owner merges this|\*\*Merge:\*\* the owner/);
+  assert.equal(notice.out.trim(), "::notice title=For the owner's notice::it changes the plan or requirements: docs/specs/a.md ::warning::x");
   assert.match(run({ verdict: 'pass', findings: [], merge: 'agent', owner_reasons: [], deferred: ['it changes acceptance tests: a'] }).summary, /\*\*For the owner at the milestone’s acceptance:\*\*\n- it changes acceptance tests: a/);
   const failed = run({ verdict: 'fail', findings: ['production: src/a.js', 'production path src/a.js must belong to exactly one selected task (found 0)', 'readiness T-0001: Needs discovery or resolution', '  readiness is stale', 'unverified: x', 'note: y'] }).summary;
   assert.match(failed, /- production path src\/a\.js must belong/);

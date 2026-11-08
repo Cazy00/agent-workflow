@@ -40,7 +40,7 @@ if [ "$CHANNEL" != - ]; then
     console.log(r.version ?? "")' "$CONFIG" "$RESFILE" "$CHANNEL" "$WANT" "$EXPIRY" 2>/dev/null)"; then
     DIR="$(cd "$DIR" && pwd -P)"
     WF_CHANNEL_REVISION="$(basename "$DIR")"
-    touch "$IROOT/uses/$WF_CHANNEL_REVISION" 2>/dev/null || true
+    { mkdir -p "$IROOT/uses" && touch "$IROOT/uses/$WF_CHANNEL_REVISION"; } 2>/dev/null || true
     export WF_CHANNEL_REVISION WF_CHANNEL_VERSION
     for arg in "$@"; do
       if [ "$arg" = --repo ]; then exec node "$DIR/validator/cli.js" "$@"; fi

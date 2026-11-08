@@ -320,8 +320,8 @@ test('the launcher does not trust an installation made for another repository or
   const c = channelProject(t);
   const unusable = (what, res) => {
     c.point(c.rev, res);
-    // The fall-through resolves the signed record, which cannot be reached here: it fails closed, and the installed tree is not run.
-    const r = c.wf(['next', '--json'], { HOME: c.install });
+    // The fall-through resolves the signed record, which cannot be reached here (no network): it fails closed, and the installed tree is not run.
+    const r = c.wf(['next', '--json'], { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url./nonexistent/.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/' });
     assert.notEqual(r.status, 0, `${what}: ran the installed tree`);
     assert.doesNotMatch(r.stdout, /"workflow"/, what);
     fs.rmSync(path.join(c.dir, '.cache'), { recursive: true, force: true });

@@ -146,7 +146,7 @@ test('a workflow file the project changed is listed, not replaced; a milestone i
   assert.ok(plan.left.some(l => l.path === '.github/workflows/wf-status.yml' && /changed in this project/.test(l.why)));
   assert.ok(!plan.changes.some(c => c.path === '.github/workflows/wf-status.yml'));
   assert.ok(plan.changes.some(c => c.path === 'docs/workflow/milestones/M-0001.md' && /channel moves reach it/.test(c.why)));
-  assert.ok(plan.notes.some(n => /scripts\/wf/.test(n)), 'the launcher limitation is said');
+  assert.ok(!plan.notes.some(n => /scripts\/wf/.test(n)), 'the launcher of a v2.19.0 pin resolves channels: nothing to say');
 });
 
 test('--to-channel replaces the copied client page with its thin caller, and adds none where the project has no page', t => {

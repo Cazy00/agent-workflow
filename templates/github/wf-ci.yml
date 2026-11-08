@@ -23,8 +23,18 @@
 # a draft run is information, not a gate. On a draft this job is named `wf ci (draft)`, runs the same gate, writes the verdict and the
 # findings to the run's summary and always exits 0. The name differs on purpose: a green draft run must never be the required `wf ci`
 # check, and GitHub refuses to merge a draft anyway. `gh pr ready` fires `ready_for_review`, which reruns this job as `wf ci`, judged and
-# failing as before; converting back to a draft fires `converted_to_draft`, whose run supersedes (cancels) the ready one. A repository
-# with no required `wf ci` check relies on its merge route to require `wf ci` by name, because the draft run's name is different.
+# failing as before. A repository with no required `wf ci` check relies on its merge route to require `wf ci` by name, because the draft
+# run's name is different.
+#
+# Concurrency: the group is the pull request plus its draft state (`-draft` or `-gate`), so a run supersedes (cancels) only older runs of the
+# same state. A draft run can never cancel a `wf ci` run. Writing the delivery evidence into the description and then `gh pr ready` fires
+# `edited` (draft payload) and `ready_for_review` (ready payload) moments apart, and with one group for both, a draft run queued second
+# cancelled the `wf ci` run, so the head's latest `wf ci` was cancelled and the pull request stayed blocked until someone reran it. The
+# job's name and the group's suffix read the same field, so a run named `wf ci (draft)` is always in a `-draft` group. A ready or later
+# run still supersedes the older runs of its pull request (opened, synchronize, edited, ready_for_review, auto-merge events). The price:
+# `converted_to_draft` no longer cancels a ready run that is still running or queued; that run can finish and post `wf ci` on what is now a
+# draft. That is harmless, because GitHub refuses to merge a draft, and `gh pr ready` fires `ready_for_review`, which runs the gate again
+# and supersedes it. A required `wf ci` is therefore only ever as fresh as the last ready run, never silently replaced by a draft one.
 name: wf
 on:
   pull_request:
@@ -32,7 +42,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: wf-ci-${{ github.event.pull_request.number || github.ref }}
+  group: wf-ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'gate' }}
   cancel-in-progress: true
 jobs:
   ci:

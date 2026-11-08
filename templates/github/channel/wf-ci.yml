@@ -9,6 +9,10 @@
 # or the owner's check of every change under `.github/` (owner-merge mode) protects it. On a draft the job is named
 # `wf ci (draft)` and never fails (MAINT-0027). The schedule and repository_dispatch (type wf-channel, sent by the
 # release broker after a channel move) judge the trusted branch's head, which keeps a canary project's soak fresh.
+# The concurrency group is the pull request plus its draft state (`-draft` or `-gate`), so a draft run never cancels a `wf ci` run: `edited`
+# (draft payload) and `ready_for_review` (ready payload) fire moments apart when the agent writes the evidence and runs `gh pr ready`, and
+# one shared group let the draft run cancel `wf ci`. A ready or later run still supersedes older ones of its pull request; `converted_to_draft`
+# no longer cancels a ready run, which may finish and post `wf ci` on a draft (GitHub refuses to merge it; `gh pr ready` runs the gate again).
 # The repository's Actions policy must allow workflows from Cazy00/agent-workflow.
 name: wf
 on:
@@ -23,7 +27,7 @@ permissions:
   contents: read
   checks: write # the check run `wf resolved`: which release judged
 concurrency:
-  group: wf-ci-${{ github.event.pull_request.number || github.ref }}
+  group: wf-ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'gate' }}
   cancel-in-progress: true
 jobs:
   ci:

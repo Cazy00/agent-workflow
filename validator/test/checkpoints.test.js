@@ -850,6 +850,46 @@ test('MAINT-0016: under auto_merge, wf next says to turn on auto-merge for a fin
   }
 });
 
+// v2.19.0: `wf next` follows the checkpoint. Under milestone the finished task waits for the gate and the owner's
+// acceptance stops the agent; under notice the agent merges and nothing it names is a wait for the owner.
+test('checkpoint notice: wf next tells the agent to merge, and the held reasons are notices; milestone is unchanged', t => {
+  for (const [checkpoint, auto] of [['milestone', false], ['milestone', true], ['notice', false], ['notice', true]]) {
+    const p = setup(t, { checkpoint, configEdit: c => ({ ...c, approval: { ...c.approval, auto_merge: auto } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit(taskPath, x => x.replace('status: Ready', 'status: Done')); } });
+    const view = evaluateNext({ baseline: gitSource(p.repo, p.baseline), candidate: gitSource(p.repo, p.candidate) });
+    const label = `${checkpoint} auto_merge ${auto}`;
+    assert.equal(view.next.kind, 'pr', label);
+    const text = [view.next.do, ...view.next.run].join(' | ');
+    if (checkpoint === 'notice') {
+      assert.match(view.next.do, /Merge the pull request for T-0001 yourself once the gates pass; do not wait for the owner/, label);
+      assert.match(text, /merge it yourself once that reports merge: agent and every required check has passed; do not wait for the owner/, label);
+      assert.match(text, /reported as notice: lines/, label);
+      assert.doesNotMatch(text, /otherwise it waits for the owner|merged by the owner|auto-merge/, label);
+    } else {
+      assert.equal(view.next.do, 'Merge the pull request for T-0001 once the gate lets you', label);
+      assert.match(text, auto ? /turn on auto-merge \(gh pr merge --auto\).*otherwise it waits for the owner/ : /merge it yourself only when that reports merge: agent and every required check has passed; otherwise it waits for the owner/, label);
+      assert.doesNotMatch(text, /notice/, label);
+    }
+  }
+});
+
+test('checkpoint notice: a verified milestone is merged by the agent, not waited on; milestone still waits for the owner', t => {
+  const milestone = twoMilestones(t, 'milestone', 'Verified');
+  const waits = evaluateNext({ baseline: milestone, candidate: milestone });
+  assert.equal(waits.next.kind, 'stop', JSON.stringify(waits.next));
+  assert.ok(waits.owner.some(w => w.kind === 'acceptance' && w.item === 'M-0001'));
+  assert.match(waits.next.why, /waiting on the owner: acceptance M-0001/);
+  const notice = twoMilestones(t, 'notice', 'Verified');
+  const n = evaluateNext({ baseline: notice, candidate: notice });
+  const accept = [n.next, ...n.also].find(a => a.kind === 'accept');
+  assert.ok(accept, JSON.stringify(n));
+  assert.equal(accept.item, 'M-0001');
+  assert.match(accept.do, /yourself once the gates pass; do not wait for the owner's acceptance/);
+  assert.match(accept.run.join(' | '), /reported as notice: lines/);
+  assert.ok(!n.owner.some(w => ['acceptance', 'review'].includes(w.kind)), JSON.stringify(n.owner));
+  assert.equal(n.held.length, 0, 'nothing is held between milestones under notice');
+  assert.ok(!/waits for the owner/.test(JSON.stringify(n.held)));
+});
+
 test('MAINT-0016 review C1: deleting reviewed work after the review needs a new review', t => {
   const p = setup(t, { checkpoint: 'milestone', change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/guard.js', 'export const guard = true;\n'); } });
   p.git('rm', '-q', 'src/guard.js'); p.git('commit', '-qm', 'T-0001: drop the guard'); const head = p.git('rev-parse', 'HEAD');

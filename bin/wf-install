@@ -14,7 +14,7 @@ const USAGE = `usage: wf-install --channel NAME --key ed25519:BASE64 [--key …]
   the verified revision once to ROOT/revisions/<hash> (read-only), then switches ROOT/channels/NAME to it atomically.
   --revision installs a hold's full hash (a revision on main) with no pointer. --use is a session's start: it prints
   the revision directory to read until the session ends and marks it used; with --shell it prints
-  `export WF_SESSION_REVISION=HASH` instead, which keeps scripts/wf on that revision for the whole task. --prune removes revisions no pointer names
+  "export WF_SESSION_REVISION=HASH" instead, which keeps scripts/wf on that revision for the whole task. --prune removes revisions no pointer names
   and no session used in the last N days (default 7). ROOT defaults to ${defaultRoot()}.
   Output is JSON. Tests only (refused unless ${TEST_ENV}=1): --git-url URL, --record-url DIR.`;
 const fail = (message, status = 2) => { console.error(`wf-install: ${message}`); process.exit(status); };

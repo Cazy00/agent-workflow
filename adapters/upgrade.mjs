@@ -230,7 +230,7 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
     const copied = SHA.test(from ?? '') ? show(workflowRepo, from, item.copied) : null;
     const knownCaller = /uses:\s*\S+\/\.github\/workflows\/wf-(?:gate|status|client-page)\.yml@v\d+\.\d+\.\d+/.test(have) && have.replace(/v\d+\.\d+\.\d+/g, 'vX') === want.replace(/v\d+\.\d+\.\d+/g, 'vX');
     if ((copied !== null && have.replaceAll('__TRUSTED_BRANCH__', branch) === copied.replaceAll('__TRUSTED_BRANCH__', branch)) || knownCaller) changes.push({ path: item.path, action: 'update', content: want, why: `still the pinned release's copy: the thin caller of the shared entry at ${entryTag} replaces it` });
-    else left.push({ path: item.path, why: `changed in this project; replace it with ${item.template} at ${entryTag} (fill __TRUSTED_BRANCH__ and __ENTRY__) and keep your additions by hand` });
+    else left.push({ path: item.path, why: `changed in this project; replace it with ${item.template} at ${entryTag} (fill __TRUSTED_BRANCH__ and __ENTRY__) and keep your additions by hand${/client-page/.test(item.path) ? '; until then it still reads workflow.revision and fails on a channel config' : ''}` });
   }
   const notes = [
     `required check: the gate now reports as \`wf ci / gate\` (a reusable workflow's job is named <caller job> / <called job>): move the required check and the merge route to that name when this merges`,

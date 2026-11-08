@@ -130,3 +130,39 @@ test('the CLI installs, uses and refuses test overrides outside tests', async t 
   assert.match(run(['--use', 'stable', '--key', KEY]).stderr, /--key goes with --channel/);
   assert.equal(JSON.parse(run(['--prune', '--root', w.home]).stdout).kept.length, 1);
 });
+
+test('an interrupted removal is never trusted: a revision without its completion marker is extracted again', async t => {
+  const w = world(t);
+  w.put('stable', 'v2.19.0', w.c1);
+  fs.mkdirSync(path.join(w.home, 'revisions', w.c1, 'validator'), { recursive: true }); // what a killed prune leaves
+  assert.throws(() => use({ root: w.home, name: w.c1 }), /not installed/);
+  const out = await install(w.opts({ channel: 'stable' }));
+  assert.equal(out.fresh, true);
+  assert.equal(fs.readFileSync(path.join(w.home, 'revisions', w.c1, 'procedures/operate.md'), 'utf8'), 'rules of 2.19.0\n');
+  assert.ok(fs.existsSync(path.join(w.home, 'revisions', w.c1, '.wf-complete')));
+  assert.deepEqual(fs.readdirSync(path.join(w.home, 'revisions')), [w.c1]);
+});
+
+test('prune renames a revision out of the way before deleting it, and sweeps what an interrupted removal left', async t => {
+  const w = world(t);
+  w.put('stable', 'v2.19.0', w.c1); await install(w.opts({ channel: 'stable' }));
+  w.put('stable', 'v2.19.1', w.c2); await install(w.opts({ channel: 'stable' }));
+  fs.mkdirSync(path.join(w.home, 'revisions', `.removing-${w.c1}-1-1`, 'x'), { recursive: true });
+  const real = fs.rmSync; // a delete that dies partway must leave nothing under a revision name
+  t.mock.method(fs, 'rmSync', (p, o) => { if (String(p).includes('.removing-') && String(p).includes(w.c1) && !String(p).endsWith('-1-1')) throw new Error('killed'); return real(p, o); });
+  assert.throws(() => prune({ root: w.home, now: w.now + 13 * 24 * HOUR }), /killed/);
+  assert.equal(fs.existsSync(path.join(w.home, 'revisions', w.c1)), false, 'not left under the revision name');
+  t.mock.restoreAll();
+  prune({ root: w.home, now: w.now + 13 * 24 * HOUR });
+  assert.deepEqual(fs.readdirSync(path.join(w.home, 'revisions')), [w.c2]);
+});
+
+test('the pointer is switched before its resolution, which readers check against the link; each revision keeps its own', async t => {
+  const w = world(t);
+  w.put('stable', 'v2.19.0', w.c1); await install(w.opts({ channel: 'stable' }));
+  const res = JSON.parse(fs.readFileSync(path.join(w.home, 'channels/stable.json'), 'utf8'));
+  assert.equal(res.repo, 'acme/workflow'); assert.deepEqual(res.keys, [KEY]); assert.ok(res.expires_at);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(w.home, 'resolutions', `stable.${w.c1}.json`), 'utf8')).revision, w.c1);
+  const out = spawnSync(process.execPath, [bin, '--use', 'stable', '--shell', '--root', w.home], { encoding: 'utf8' });
+  assert.equal(out.stdout.trim(), `export WF_SESSION_REVISION=${w.c1}`);
+});

@@ -14,10 +14,11 @@
 # narrow what the caller grants, so (v2.19.1) the gate job, which runs the resolved revision's code, narrows to
 # contents: read and cannot post a check run (a fake `test` or `wf ci`); the `record` job alone has checks: write and
 # posts `wf resolved` from the JSON the gate job prepared before that code ran. It is reported as
-# `<caller job name> / record`. A scheduled run does nothing unless WF_GATE is `on` (MAINT-0023), as the caller's `if:`
-# also says. A pull request still runs its
-# own copy of the caller, so code-owner review of `.github/` (enforced mode) or the owner's check of every `.github/`
-# change (owner-merge mode) protects it, as procedures/setup.md step 6 says.
+# `<caller job name> / record`. The record job always runs on `ubuntu-latest`, a fresh VM, never on the gate runner: a
+# process left behind on a persistent runner could read the token of a job that follows it there. A scheduled run does
+# nothing unless WF_GATE is `on` (MAINT-0023), as the caller's `if:` also says. A pull request still runs its own copy
+# of the caller, so code-owner review of `.github/` (enforced mode) or the owner's check of every `.github/` change
+# (owner-merge mode) protects it, as procedures/setup.md step 6 says.
 name: wf-gate
 on:
   workflow_call:
@@ -152,10 +153,12 @@ jobs:
   record:
     name: record
     # The only job that can write check runs (v2.19.1): it posts the record the gate job prepared before any code of the
-    # resolved revision ran, and checks out and runs nothing else. A failed post is a warning, as before.
+    # resolved revision ran, and checks out and runs nothing else. A failed post is a warning, as before. It always runs on
+    # a GitHub-hosted runner (a fresh VM, about one minute): on a persistent gate runner a process the resolved revision
+    # left behind could read this job's token from /proc.
     needs: gate
     if: ${{ !cancelled() && needs.gate.outputs.check_run != '' }}
-    runs-on: ${{ vars.WF_GATE == 'on' && (github.event_name != 'pull_request' || github.event.pull_request.base.ref == inputs.trusted_branch) && 'wf-gate' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       checks: write

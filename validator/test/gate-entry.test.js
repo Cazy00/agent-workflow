@@ -265,7 +265,8 @@ test('only the record job of each entry can write check runs; the job that judge
     assert.equal(y.jobs[main].steps.find(s => s.id === 'record').name, 'Prepare the record of what judged (check run `wf resolved`)', file);
     assert.equal(y.jobs.record.needs, main, file);
     assert.equal(y.jobs.record.if, `\${{ !cancelled() && needs.${main}.outputs.check_run != '' }}`, file);
-    assert.equal(y.jobs.record['runs-on'], y.jobs[main]['runs-on'], `${file}: the record job runs where the judging job ran`);
+    assert.equal(y.jobs.record['runs-on'], 'ubuntu-latest', `${file}: the record job always runs on a fresh GitHub-hosted VM, never where the judging job ran`);
+    assert.doesNotMatch(String(y.jobs.record['runs-on']), /wf-gate|WF_GATE/, `${file}: the record job never reaches the persistent gate runner`);
     assert.equal(y.jobs.record.steps.length, 1, `${file}: one step`);
     assert.ok(!y.jobs.record.steps[0].uses, `${file}: no action, no checkout`);
     assert.match(y.jobs.record.steps[0].run, /printf '%s' "\$CHECK_RUN" \| gh api --method POST "repos\/\$GH_REPO\/check-runs" --input -/, file);

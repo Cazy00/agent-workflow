@@ -55,7 +55,10 @@ export const gitEnv = (source = process.env) => {
   for (const [k, v] of Object.entries(source)) if (v !== undefined && KEEP_ENV.test(k)) env[k] = v;
   return { ...env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
 };
-export const run = (args, { cwd } = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 180000, env: gitEnv() });
+// No automatic gc or maintenance: a detached background gc after the fetch would still write into the scratch repository
+// while it is removed (seen in CI as ENOTEMPTY), and the resolver never needs one.
+const NO_BACKGROUND = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'fetch.writeCommitGraph=false'];
+export const run = (args, { cwd } = {}) => spawnSync('git', [...NO_BACKGROUND, ...args], { cwd, encoding: 'utf8', timeout: 180000, env: gitEnv() });
 const gitOut = (what, args) => {
   const r = run(args);
   if (r.error || r.status !== 0) refuse(`${what} failed: ${(r.error?.message ?? r.stderr).trim().split('\n').pop()}`);
@@ -181,7 +184,7 @@ function inspect({ gitUrl, commit, tag }) {
     let version;
     try { version = JSON.parse(text).version; } catch { refuse(`package.json at ${commit.slice(0, 12)} is not valid JSON`); }
     return { onMain: true, tagged, version: typeof version === 'string' ? version : null };
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  } finally { fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
 }
 
 // resolve({config, readRecord?, gitUrl?, now?, minSeq?, retryMs?}) -> the resolution, or a ResolveError.

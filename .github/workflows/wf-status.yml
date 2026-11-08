@@ -1,0 +1,160 @@
+# Project status on GitHub, shared (v2.19.0, docs/proposals/2026-11-07-central-release-channel.md): the reusable entry a
+# project's thin caller (templates/github/channel/wf-status.yml) names at an immutable release tag. It never runs on this
+# repository: its only trigger is workflow_call. It acts only on the trusted branch and never runs candidate code.
+#
+# Like the gate entry (wf-gate.yml, whose resolve and record steps it repeats word for word: npm test checks that), it
+# resolves the trusted branch's config with the entry's own bin/wf-resolve, records the check run `wf resolved` on the
+# branch's head, and renders `wf status` with the RESOLVED revision's validator, then publishes it as the body of the one
+# open issue labelled wf-status, with a line saying what judged. It grants no authority and approves nothing. The
+# caller's daily schedule and the broker's repository_dispatch (type wf-channel) keep a canary project's runs fresh for
+# the soak; the caller grants contents: read, issues: write, pull-requests: read and checks: write. The publish step
+# keeps one open issue, as the copied wf-status.yml did.
+name: wf-status
+on:
+  workflow_call:
+    inputs:
+      entry:
+        description: The release tag the caller names in its uses line (vX.Y.Z); the resolver is read from it.
+        type: string
+        required: true
+      trusted_branch:
+        description: The project's trusted branch.
+        type: string
+        required: true
+      entry_repo:
+        description: The workflow repository that holds this entry.
+        type: string
+        required: false
+        default: Cazy00/agent-workflow
+    secrets:
+      WF_READ_TOKEN:
+        description: A read-only token for a private workflow repository named by a hold (MAINT-0017); unset, fetches are anonymous.
+        required: false
+jobs:
+  status:
+    name: status
+    if: github.ref == format('refs/heads/{0}', inputs.trusted_branch)
+    runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Refuse any ref but exactly the trusted branch
+        # GitHub compares strings ignoring case, so the job's `if:` also passes a run on a branch named `MAIN`.
+        env:
+          TRUSTED: ${{ inputs.trusted_branch }}
+        run: '[ "$GITHUB_REF" = "refs/heads/$TRUSTED" ] || { echo "::error::This runs only on $TRUSTED."; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # readiness previews check each task's recorded revisions against the history
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: List the open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr list --state open --limit 500 --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision > "$RUNNER_TEMP/pull-requests.json"
+      - name: Resolve the release that judges
+        id: resolve
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          ENTRY: ${{ inputs.entry }}
+          ENTRY_REPO: ${{ inputs.entry_repo }}
+          WF_READ_TOKEN: ${{ secrets.WF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$ENTRY" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::entry $ENTRY is not a release tag vX.Y.Z"; exit 2; }
+          [[ "$ENTRY_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::entry_repo $ENTRY_REPO is not owner/name"; exit 2; }
+          # The entry's own resolver, from the immutable tag the caller names.
+          git init -q "$RUNNER_TEMP/entry"
+          git -C "$RUNNER_TEMP/entry" fetch -q --depth 1 "https://github.com/$ENTRY_REPO.git" "refs/tags/$ENTRY"
+          git -C "$RUNNER_TEMP/entry" checkout -q --detach FETCH_HEAD
+          node "$RUNNER_TEMP/entry/bin/wf-resolve" --project "$GITHUB_WORKSPACE" --base "$BASE" > "$RUNNER_TEMP/resolved.json"
+          git -C "$GITHUB_WORKSPACE" show "$BASE:docs/workflow/config.json" > "$RUNNER_TEMP/base-config.json"
+          out="$(node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const repo = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).workflow.repo;
+            r.resolved_at = new Date().toISOString();
+            fs.writeFileSync(process.argv[1], JSON.stringify(r));
+            console.log(repo, r.revision, r.channel, r.version ?? r.declared_version ?? "unknown")' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/base-config.json")"
+          read -r REPO REV CHANNEL VERSION <<< "$out"
+          cat "$RUNNER_TEMP/resolved.json"; echo
+          # The resolved revision: its validator and its gate script judge.
+          if [ -n "${WF_READ_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$WF_READ_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_VALUE_0
+          fi
+          git init -q "$RUNNER_TEMP/wf"
+          git -C "$RUNNER_TEMP/wf" fetch -q --depth 1 "https://github.com/$REPO.git" "$REV"
+          git -C "$RUNNER_TEMP/wf" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/wf" rev-parse HEAD)" = "$REV" ] || { echo "::error::the fetched workflow is not at $REV"; exit 2; }
+          [ -f "$RUNNER_TEMP/wf/bin/wf-gate-ci" ] || { echo "::error::the base config resolves to $VERSION ($REV), which has no bin/wf-gate-ci: move the pin to v2.19.0 or later first, with today's copied workflow files (the first of the two opt-in pull requests), then opt in"; exit 2; }
+          { echo "channel=$CHANNEL"; echo "revision=$REV"; echo "version=$VERSION"; } >> "$GITHUB_OUTPUT"
+      - name: Record what judged (check run `wf resolved`)
+        # Kept with the commit after the run's logs expire; the channel soak and wf channel audit read it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JUDGED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const record = { channel: r.channel, revision: r.revision, version: r.version ?? r.declared_version ?? null, ...(r.seq ? { seq: r.seq } : {}), resolved_at: r.resolved_at };
+            fs.writeFileSync(process.argv[2], JSON.stringify({ name: "wf resolved", head_sha: process.env.JUDGED, status: "completed", conclusion: "neutral",
+              output: { title: `${record.channel}: ${record.version} (${record.revision.slice(0, 12)})`, summary: "```json\n" + JSON.stringify(record) + "\n```" } }));
+          ' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/check-run.json"
+          gh api --method POST "repos/$GH_REPO/check-runs" --input "$RUNNER_TEMP/check-run.json" > /dev/null || echo "::warning::Could not record the check run wf resolved (the caller needs checks: write); the run's log has the resolution."
+      - name: Render the status view
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/wf/validator/cli.js" --repo "$GITHUB_WORKSPACE" status --baseline "$GITHUB_SHA" --candidate "$GITHUB_SHA" --pull-requests "$RUNNER_TEMP/pull-requests.json" > "$RUNNER_TEMP/view.md"
+          # The record of what judged, copied into the issue (proposal: the status workflow copies it).
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const channel = r.channel === "hold" ? "a hold (the pin)" : "channel " + r.channel;
+            const record = { channel: r.channel, revision: r.revision, version: r.version ?? r.declared_version ?? null, ...(r.seq ? { seq: r.seq } : {}), resolved_at: r.resolved_at };
+            fs.appendFileSync(process.argv[2], "\n_Judged by agent-workflow " + (record.version ?? "") + " (" + r.revision.slice(0, 12) + "), " + channel + ", resolved at " + r.resolved_at + "._ `wf resolved`: `" + JSON.stringify(record) + "`\n");
+          ' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/view.md"
+      - name: Publish the status issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/status.md"
+          {
+            echo "_Updated automatically from \`$GITHUB_REF_NAME\` on $(date -u '+%Y-%m-%d %H:%M UTC') by the shared \`wf-status\` entry. Each run replaces this text, so do not edit it._"
+            echo
+            cat "$RUNNER_TEMP/view.md"
+            echo
+            echo "History: [merged pull requests]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pulls?q=is%3Apr+is%3Amerged)"
+          } > "$body"
+          # An issue body holds at most 65,536 characters: cut at a line boundary well before that.
+          node -e 'const fs = require("fs"), f = process.argv[1], t = fs.readFileSync(f, "utf8");
+            if (t.length > 60000) fs.writeFileSync(f, t.slice(0, t.lastIndexOf("\n", 60000)) + "\n\n_Truncated: run `scripts/wf status` for the full view._\n");' "$body"
+          # Every open issue labelled wf-status that this workflow's own account wrote (github.token is the GitHub Actions app on
+          # GitHub's runners and on a self-hosted one), oldest first, pull requests left out (the issues endpoint lists them too). An
+          # issue someone else labelled is never edited or closed. A failed lookup stops the step: it must never look like "no issue"
+          # and create a duplicate.
+          lookup() { gh api --paginate "repos/$GH_REPO/issues?state=open&labels=wf-status&sort=created&direction=asc&per_page=100" --jq '.[] | select(.pull_request == null and .user.login == "github-actions[bot]") | .number'; }
+          numbers="$(lookup)"
+          if [ -z "$numbers" ]; then
+            # A run that overlaps another may have created the issue a moment ago: look once more before creating.
+            sleep 5
+            numbers="$(lookup)"
+          fi
+          if [ -n "$numbers" ]; then
+            keep="$(printf '%s\n' "$numbers" | head -n 1)"
+            gh issue edit "$keep" --body-file "$body"
+            for other in $(printf '%s\n' "$numbers" | tail -n +2); do
+              gh issue close "$other" --comment "Superseded by #$keep: the status view is kept in one issue." || echo "::warning::Could not close the extra status issue #$other."
+            done
+          else
+            gh label create wf-status --force --color BFD4F2 --description 'Project status from wf status, updated automatically'
+            gh issue create --title 'Project status' --label wf-status --body-file "$body"
+          fi

@@ -31,6 +31,7 @@ function setup(t, { label = 'owner-merge', checkpoint, configEdit = c => c, base
     const c = JSON.parse(text);
     c.approval.label = label; c.approval.mechanism = label === 'enforced' ? 'github-rulesets-codeowners' : label;
     if (checkpoint !== undefined) c.approval.checkpoint = checkpoint;
+    if (checkpoint === 'notice') c.acceptance_evidence = true; // required with notice (lib/records.js)
     c.repository = 'fixture/project';
     return JSON.stringify(configEdit(c));
   });
@@ -252,12 +253,12 @@ test('checkpoint notice: what milestone leaves to the owner is a notice, and the
     ['the plan or requirements', {}, q => q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`), /it changes the plan or requirements: docs\/specs\/feature\.md/],
     ['a milestone plan', { records: true }, q => q.edit('docs/workflow/milestones/M-0001.md', x => `${x}\nOne more line of plan.\n`), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/],
     ['an acceptance', { records: true }, q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/],
-    ['the workflow', {}, q => q.write('.github/workflows/extra.yml', 'name: extra\n'), /it changes the workflow: \.github\/workflows\/extra\.yml/],
+    ['the workflow', {}, q => q.write('CODEOWNERS', '* @owner\n'), /it changes the workflow: CODEOWNERS/],
     ['acceptance tests', { configEdit: c => ({ ...c, paths: { ...c.paths, ...tests.paths } }) }, q => q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'), /it changes acceptance tests: src\/acceptance\/a\.test\.js/],
     ['an accepted finding', { evidence: { review: { findings: [{ id: 'F2', severity: 'medium', status: 'accepted', resolution: 'kept: the cost of fixing outweighs the risk' }] } } }, () => {}, /review findings accepted rather than fixed: F2/],
   ];
   for (const [name, { records, configEdit, evidence: over = {} }, extra, reason] of reasons) {
-    for (const checkpoint of ['milestone', 'notice']) {
+    for (const checkpoint of name === 'an acceptance' ? ['milestone'] : ['milestone', 'notice']) {
       const p = setup(t, { checkpoint, configEdit, change: q => { if (!records) q.write('src/a.js', 'export const result = 1;\n'); extra(q); } });
       const r = records ? p.run('ci') : p.run('ci', { evidence: evidence(p.candidate, over) });
       const label = `${name}/${checkpoint}: ${r.stdout}${r.stderr}`;
@@ -279,6 +280,95 @@ test('checkpoint notice: what milestone leaves to the owner is a notice, and the
     }
   }
 });
+
+// v2.19.0 review finding 1: a pull request runs its own copy of .github/, so under notice one that changes it fails closed
+// unless the run is the trusted base branch's copy of the workflow; the notice is reported either way.
+test('checkpoint notice: a change under .github/ fails closed unless the run is the base\'s copy of the workflow', t => {
+  for (const file of ['.github/workflows/wf-ci.yml', '.github/workflows/extra.yml', '.github/CODEOWNERS']) {
+    const p = setup(t, { checkpoint: 'notice', change: q => q.write(file, 'name: wf\n') });
+    const own = p.run('ci');
+    assert.equal(own.status, 1, own.stdout + own.stderr);
+    const o = out(own);
+    assert.equal(o.verdict, 'fail');
+    assert.match(o.findings.join(' | '), /under checkpoint notice a pull request that changes \.github\/ runs its own copy of the workflow/);
+    assert.match(o.notices.join(' | '), new RegExp(`it changes the workflow: ${file.replace(/[./]/g, '\\$&')}`), 'the notice is still reported on a failing verdict');
+    const base = p.run('ci', { args: ['--trusted-workflow'] });
+    assert.equal(base.status, 0, base.stdout + base.stderr);
+    assert.equal(out(base).merge, 'agent');
+    assert.match(out(base).notices.join(' | '), /it changes the workflow/);
+  }
+  const config = setup(t, { checkpoint: 'notice', change: q => q.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), lanes: JSON.parse(x).lanes })) });
+  const r = config.run('ci');
+  assert.equal(r.status, 0, 'the workflow config outside .github/ is judged by the base\'s copy: ' + r.stdout + r.stderr);
+  const milestone = setup(t, { checkpoint: 'milestone', change: q => q.write('.github/workflows/extra.yml', 'name: extra\n') });
+  assert.equal(out(milestone.run('ci')).merge, 'owner', 'under milestone it stays the owner\'s merge');
+  assert.match(spawnSync(process.execPath, [cli, 'records', '--trusted-workflow'], { encoding: 'utf8' }).stderr, /--trusted-workflow is only for ci/);
+});
+
+// v2.19.0 review finding 3: notice needs acceptance_evidence, so the agent's acceptance carries a checked record and demo.
+test('checkpoint notice: needs acceptance_evidence, and an acceptance without its evidence fails', t => {
+  const refused = setup(t, { checkpoint: 'notice', configEdit: c => { const { acceptance_evidence: _, ...rest } = c; return rest; } });
+  const r = refused.run('ci', { evidence: evidence(refused.candidate) });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /approval\.checkpoint notice needs acceptance_evidence: true/);
+  const accept = q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted'));
+  const p = setup(t, { checkpoint: 'notice', change: accept });
+  const missing = p.run('ci');
+  assert.equal(missing.status, 1, missing.stdout);
+  assert.match(out(missing).findings.join(' | '), /acceptance evidence: the acceptance evidence for M-0001 is missing/);
+  const ok = p.run('ci', { raw: acceptanceRaw(p, []) });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.equal(out(ok).merge, 'agent');
+  assert.match(out(ok).notices.join(' | '), /records the owner approves: docs\/workflow\/milestones\/M-0001\.md/);
+});
+
+// v2.19.0 review finding 2: a move into Released from Authorised or Verified carries the acceptance evidence, at any cadence.
+test('a move into Released from Authorised or Verified needs the acceptance evidence, under every checkpoint and cadence', t => {
+  for (const [checkpoint, from, cadence] of [['notice', 'Authorised', undefined], ['notice', 'Verified', undefined], ['milestone', 'Authorised', undefined], ['plan', 'Verified', 'task']]) {
+    const p = setup(t, {
+      checkpoint, configEdit: c => ({ ...c, acceptance_evidence: true, ...(cadence ? { review: { ...c.review, cadence } } : {}) }),
+      baselineEdit: q => { if (from !== 'Authorised') q.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', `status: ${from}`)); },
+      change: q => q.edit('docs/workflow/milestones/M-0001.md', x => x.replace(`status: ${from}`, 'status: Released')),
+    });
+    const r = p.run('ci');
+    const label = `${checkpoint}/${from}/${cadence}: ${r.stdout}${r.stderr}`;
+    assert.equal(r.status, 1, label);
+    assert.match(out(r).findings.join(' | '), /acceptance evidence: the acceptance evidence for M-0001 is missing/, label);
+  }
+});
+
+// v2.19.0 review finding 5: under notice, what waits for the acceptance is told on the pull request that defers it, and the
+// acceptance's evidence must list it.
+test('checkpoint notice with defer_to_acceptance: deferred items are notices, and the acceptance evidence lists them', t => {
+  const paths = { acceptance_tests: ['src/acceptance/**'] };
+  const p = setup(t, { checkpoint: 'notice', configEdit: c => ({ ...c, paths: { ...c.paths, ...paths }, approval: { ...c.approval, defer_to_acceptance: true } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.write('src/acceptance/a.test.js', 'test("a", () => {});\n'); } });
+  const r = p.run('ci', { evidence: evidence(p.candidate) });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const o = out(r);
+  assert.equal(o.merge, 'agent');
+  assert.match(o.deferred.join(' | '), /it changes acceptance tests: src\/acceptance\/a\.test\.js/);
+  assert.match(o.notices.join(' | '), /for the milestone's acceptance notice: it changes acceptance tests: src\/acceptance\/a\.test\.js/);
+  const q = setup(t, {
+    checkpoint: 'notice', configEdit: c => ({ ...c, approval: { ...c.approval, defer_to_acceptance: true } }),
+    baselineEdit: b => b.edit(taskPath, x => x.replace('subset: []', 'subset: []\naccepted_findings: [R-0001/N1]')),
+    change: b => b.edit('docs/workflow/milestones/M-0001.md', x => x.replace('status: Authorised', 'status: Accepted')),
+  });
+  const hidden = q.run('ci', { raw: acceptanceRaw(q, []) });
+  assert.equal(hidden.status, 1, hidden.stdout);
+  assert.match(out(hidden).findings.join(' | '), /deferred must list the findings the milestone's tasks accepted rather than fixed: R-0001\/N1/);
+  const listed = q.run('ci', { raw: acceptanceRaw(q, ['R-0001/N1: kept, a test-helper note']) });
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+  assert.equal(out(listed).merge, 'agent');
+});
+
+function acceptanceRaw(p, deferred) {
+  const block = {
+    schema: 'agent-workflow/acceptance-evidence@1', milestone: 'M-0001', candidate: p.baseline,
+    review: { reviewer: 'codex exec', model: 'gpt-6.1-sol', revision: p.baseline, report: 'https://github.com/fixture/project/pull/9#issuecomment-1' },
+    walkthrough: { not_applicable: 'the fixture has no user interface' }, deferred, tests_changed: [],
+  };
+  return `Accept M-0001\n\n<!-- agent-workflow:acceptance-evidence@1 -->\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\`\n`;
+}
 
 test('checkpoint notice: auto-merge may stay on for a pull request that changes the plan', t => {
   const p = setup(t, { checkpoint: 'notice', configEdit: c => ({ ...c, approval: { ...c.approval, auto_merge: true } }), change: q => { q.write('src/a.js', 'export const result = 1;\n'); q.edit('docs/specs/feature.md', x => `${x}\nMore.\n`); } });
@@ -341,6 +431,7 @@ function twoMilestones(t, checkpoint, firstStatus = 'Active') {
   const config = JSON.parse(read('docs/workflow/config.json'));
   config.approval.label = 'owner-merge'; config.approval.mechanism = 'owner-merge';
   if (checkpoint !== undefined) config.approval.checkpoint = checkpoint;
+  if (checkpoint === 'notice') config.acceptance_evidence = true;
   write('docs/workflow/config.json', JSON.stringify(config));
   write('docs/workflow/profile.md', read('docs/workflow/profile.md').replace('approval_label: enforced', 'approval_label: owner-merge'));
   write('docs/workflow/milestones/M-0001.md', read('docs/workflow/milestones/M-0001.md').replace('status: Authorised', `status: ${firstStatus}\ntasks: [T-0001]`));
@@ -861,9 +952,9 @@ test('checkpoint notice: wf next tells the agent to merge, and the held reasons 
     const text = [view.next.do, ...view.next.run].join(' | ');
     if (checkpoint === 'notice') {
       assert.match(view.next.do, /Merge the pull request for T-0001 yourself once the gates pass; do not wait for the owner/, label);
-      assert.match(text, /merge it yourself once that reports merge: agent and every required check has passed; do not wait for the owner/, label);
+      assert.match(text, auto ? /turn on auto-merge \(gh pr merge --auto\) and carry on; do not wait for the owner/ : /merge it yourself once that reports merge: agent and every required check has passed; do not wait for the owner/, label);
       assert.match(text, /reported as notice: lines/, label);
-      assert.doesNotMatch(text, /otherwise it waits for the owner|merged by the owner|auto-merge/, label);
+      assert.doesNotMatch(text, /otherwise it waits for the owner|merged by the owner/, label);
     } else {
       assert.equal(view.next.do, 'Merge the pull request for T-0001 once the gate lets you', label);
       assert.match(text, auto ? /turn on auto-merge \(gh pr merge --auto\).*otherwise it waits for the owner/ : /merge it yourself only when that reports merge: agent and every required check has passed; otherwise it waits for the owner/, label);

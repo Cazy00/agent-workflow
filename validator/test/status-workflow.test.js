@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fakeExecutable } from './helpers.js';
+import { parseYaml } from '../lib/ci-lint.js';
 
 // templates/github/wf-status.yml holds a token that can write issues, so its triggers, branch guard and
 // permissions are part of the workflow's safety: this workflow must never run candidate code.
@@ -52,13 +53,67 @@ test('the status workflow fetches the full history that readiness previews check
 
 // Releases are tagged by the host's release broker (wf-release, v2.19.0), which does not run while release-tag.yml exists.
 // No workflow here may tag a release or push a ref.
-test('no workflow in this repository tags a release or pushes a ref, and release-tag.yml is gone', () => {
-  const dir = new URL('../../.github/workflows/', import.meta.url);
-  assert.ok(!fs.existsSync(new URL('release-tag.yml', dir)), 'release-tag.yml must not exist');
-  for (const f of fs.readdirSync(dir)) {
-    const text = fs.readFileSync(new URL(f, dir), 'utf8');
-    assert.doesNotMatch(text, /^[^#\n]*(git (tag|push)\b|gh release create|git\/refs)/m, `${f} tags or pushes`);
+// The guard checks capability, not one spelling: a workflow is parsed, and any job or workflow that can write contents, and any
+// step that can create or move a ref or a release, is a finding. No current workflow needs an exception, so there is no allow-list.
+const REF_WRITERS = [
+  /\bgit\b[^\n]*\b(tag|push|update-ref|send-pack)\b/,
+  /\bgh\s+release\s+(create|upload|edit)\b/,
+  /\bgh\s+api\b[^\n]*(git\/(refs|tags)|\/releases|\/tags|\/refs)/,
+  /\bgh\s+api\b[^\n]*(-X|--method)\s*(POST|PUT|PATCH|DELETE)\b[^\n]*\b(refs|releases|tags|contents)\b/i,
+  /\b(createRef|updateRef|createRelease|createTag|createCommit|createOrUpdateFileContents)\b/,
+];
+const REF_WRITING_ACTIONS = /^(actions\/create-release|actions\/upload-release-asset|actions\/github-script|softprops\/action-gh-release|ncipollo\/release-action|ad-m\/github-push-action|stefanzweifel\/git-auto-commit-action|peter-evans\/create-pull-request|mathieudutour\/github-tag-action|anothrNick\/github-tag-action|marvinpinto\/action-automatic-releases|svenstaro\/upload-release-action|EndBug\/add-and-commit|rickstaa\/action-create-tag|jacopocarlini\/action-tag)\b/i;
+
+function refWriters(source) {
+  const found = [];
+  const doc = parseYaml(source);
+  const grants = (perm, where) => {
+    if (perm === undefined || perm === null) return;
+    if (typeof perm === 'string') { if (/^write-all$/i.test(perm.trim())) found.push(`${where} permissions: write-all`); return; }
+    if (String(perm.contents ?? '').trim().toLowerCase() === 'write') found.push(`${where} grants contents: write`);
+  };
+  grants(doc.permissions, 'the workflow');
+  for (const [id, job] of Object.entries(doc.jobs ?? {})) {
+    grants(job.permissions, `job ${id}`);
+    for (const [i, step] of (job.steps ?? []).entries()) {
+      const where = `job ${id} step ${i + 1}`;
+      // Backslash continuations are joined first, so `git \` then `push` on the next line is one command; comments stay in the text.
+      const run = String(step.run ?? '').replace(/\\\r?\n\s*/g, ' ');
+      for (const re of REF_WRITERS) if (re.test(run)) found.push(`${where} runs ${re}`);
+      if (REF_WRITING_ACTIONS.test(String(step.uses ?? '').trim())) found.push(`${where} uses ${step.uses}`);
+    }
+    if (job.uses && REF_WRITING_ACTIONS.test(String(job.uses))) found.push(`job ${id} uses ${job.uses}`);
   }
+  return found;
+}
+
+function workflowFiles(dirUrl) {
+  return fs.readdirSync(dirUrl, { withFileTypes: true }).filter(e => e.isFile() && /\.ya?ml$/.test(e.name)).map(e => e.name);
+}
+
+test('no workflow in this repository tags a release or pushes a ref, and release-tag.yml is gone', () => {
+  const dirs = [new URL('../../.github/workflows/', import.meta.url), new URL('../../templates/github/', import.meta.url), new URL('../../templates/github/channel/', import.meta.url)];
+  assert.ok(!fs.existsSync(new URL('release-tag.yml', dirs[0])), 'release-tag.yml must not exist');
+  let seen = 0;
+  for (const dir of dirs) {
+    for (const f of workflowFiles(dir)) {
+      seen++;
+      assert.deepEqual(refWriters(fs.readFileSync(new URL(f, dir), 'utf8')), [], `${f} can create or push a ref`);
+    }
+  }
+  assert.ok(seen >= 8, `the guard read ${seen} workflow files`);
+});
+
+test('the capability guard catches the spellings a text match misses', () => {
+  const wf = run => `name: x\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n${run.split('\n').map(l => `          ${l}`).join('\n')}\n`;
+  for (const run of ['git -C . push origin refs/tags/v9.9.9', "echo '#'; git tag v9.9.9 && git push --tags", 'git \\\n  push origin main', 'gh api -X POST repos/o/r/releases', 'gh api repos/o/r/git/refs -f ref=x', 'gh release create v9']) {
+    assert.notEqual(refWriters(wf(run)).length, 0, run);
+  }
+  const action = 'name: x\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/github-script@abc\n        with:\n          script: github.rest.git.createRef({ref: "refs/tags/v9.9.9"})\n';
+  assert.notEqual(refWriters(action).length, 0);
+  assert.notEqual(refWriters('name: x\non: push\npermissions:\n  contents: write\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n').length, 0);
+  assert.notEqual(refWriters('name: x\non: push\njobs:\n  j:\n    permissions:\n      contents: write\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n').length, 0);
+  assert.deepEqual(refWriters(wf('gh api --method POST "repos/$GH_REPO/check-runs" --input x.json\ngh workflow run wf.yml --ref main')), []);
 });
 
 // MAINT-0023 P1: the publish step keeps exactly one open status issue. It runs here against a fake `gh` and `sleep`.

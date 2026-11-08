@@ -122,7 +122,7 @@ function claimedHere({ baseline, candidate, path }) {
 
 // `approved`: the trusted tip's records when the baseline is an intermediate revision (closeout), so the scenarios a gate
 // lets fail are also pending there (MAINT-0012).
-export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null, autoMerge = false, acceptanceEvidence = null, trustedWorkflow = false }) {
+export function evaluateCi({ baseline, candidate = baseline, task, changed = [], trust = null, deliveryEvidence = null, approved = null, autoMerge = false, acceptanceEvidence = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const findings = [];
@@ -484,14 +484,15 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     // evidence lists it (lib/acceptance-evidence.js), which acceptance_evidence, required with notice, makes wf ci check.
     if (checkpoint === 'notice') {
       notices.push(...ownerReasons.splice(0), ...deferred.map(d => `for the milestone's acceptance notice: ${d}`));
-      for (const n of notices) findings.push(`notice: ${n}`);
-      // v2.19.0 review finding 1: a pull request runs its own copy of every file under .github/, so one that changes them could
-      // rewrite or shadow this check, and the notice with it. Such a change fails closed here unless the run is the trusted base
-      // branch's copy of the workflow (--trusted-workflow, a pull_request_target-style run). Any other change, workflow config,
-      // procedures or AGENTS.md included, is already judged by the base's copy: the base's workflow file, the validator its pin
-      // fetches and the base's config.
+      // A pull request runs its own copy of every file under .github/, so one that changes them could rewrite or shadow this
+      // check, and no run of the pull request's own workflow can be trusted to judge a change to that workflow. wf ci does not
+      // claim to block it: it reports a notice, and the protection is the host's merge gate, which must require an independent
+      // review for workflow and enforcement paths before an agent may merge (POLICY § 7). Any other change, workflow config,
+      // procedures or AGENTS.md included, is judged by the base's copy: the base's workflow file, the validator its pin fetches
+      // and the base's config.
       const ownCopy = changed.map(p => p.replace(/\\/g, '/').replace(/^\.\//, '')).filter(p => p.startsWith('.github/'));
-      if (ownCopy.length && !trustedWorkflow) { findings.push(`under checkpoint notice a pull request that changes .github/ runs its own copy of the workflow, so this check cannot stand for the gate (${ownCopy.join(', ')}): the owner merges it, or a run of the trusted base branch's copy of the workflow judges it (wf ci --trusted-workflow)`); fail = true; }
+      if (ownCopy.length) notices.push(`enforcement path, host gate review required: ${ownCopy.join(', ')} (a pull request runs its own copy of the workflow, so wf ci cannot judge a change to it)`);
+      for (const n of notices) findings.push(`notice: ${n}`);
     }
     merge = ownerReasons.length ? 'owner' : 'agent';
   }

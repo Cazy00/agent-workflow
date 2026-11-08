@@ -281,28 +281,29 @@ test('checkpoint notice: what milestone leaves to the owner is a notice, and the
   }
 });
 
-// v2.19.0 review finding 1: a pull request runs its own copy of .github/, so under notice one that changes it fails closed
-// unless the run is the trusted base branch's copy of the workflow; the notice is reported either way.
-test('checkpoint notice: a change under .github/ fails closed unless the run is the base\'s copy of the workflow', t => {
+// v2.19.0 review finding 1: a pull request runs its own copy of .github/, so no run of the pull request's own workflow can be
+// trusted to judge a change to it. Under notice wf ci does not claim to block it: it reports a notice and merge: agent, and the
+// host's merge gate (an independent review for enforcement paths) is the protection. There is no --trusted-workflow flag.
+test('checkpoint notice: a change under .github/ is a notice, not a block; the host gate reviews it', t => {
   for (const file of ['.github/workflows/wf-ci.yml', '.github/workflows/extra.yml', '.github/CODEOWNERS']) {
     const p = setup(t, { checkpoint: 'notice', change: q => q.write(file, 'name: wf\n') });
     const own = p.run('ci');
-    assert.equal(own.status, 1, own.stdout + own.stderr);
+    assert.equal(own.status, 0, own.stdout + own.stderr);
     const o = out(own);
-    assert.equal(o.verdict, 'fail');
-    assert.match(o.findings.join(' | '), /under checkpoint notice a pull request that changes \.github\/ runs its own copy of the workflow/);
-    assert.match(o.notices.join(' | '), new RegExp(`it changes the workflow: ${file.replace(/[./]/g, '\\$&')}`), 'the notice is still reported on a failing verdict');
-    const base = p.run('ci', { args: ['--trusted-workflow'] });
-    assert.equal(base.status, 0, base.stdout + base.stderr);
-    assert.equal(out(base).merge, 'agent');
-    assert.match(out(base).notices.join(' | '), /it changes the workflow/);
+    assert.equal(o.verdict, 'pass');
+    assert.equal(o.merge, 'agent');
+    assert.deepEqual(o.owner_reasons, []);
+    assert.doesNotMatch(o.findings.join(' | '), /under checkpoint notice a pull request that changes \.github\//);
+    assert.ok(o.findings.some(f => f.startsWith('notice: enforcement path, host gate review required: ') && f.includes(file)), 'the notice line names the file');
+    assert.match(o.notices.join(' | '), new RegExp(`it changes the workflow: ${file.replace(/[./]/g, '\\$&')}`));
+    const flag = p.run('ci', { args: ['--trusted-workflow'] });
+    assert.notEqual(flag.status, 0, 'the flag is gone');
   }
   const config = setup(t, { checkpoint: 'notice', change: q => q.edit('docs/workflow/config.json', x => JSON.stringify({ ...JSON.parse(x), lanes: JSON.parse(x).lanes })) });
   const r = config.run('ci');
   assert.equal(r.status, 0, 'the workflow config outside .github/ is judged by the base\'s copy: ' + r.stdout + r.stderr);
   const milestone = setup(t, { checkpoint: 'milestone', change: q => q.write('.github/workflows/extra.yml', 'name: extra\n') });
   assert.equal(out(milestone.run('ci')).merge, 'owner', 'under milestone it stays the owner\'s merge');
-  assert.match(spawnSync(process.execPath, [cli, 'records', '--trusted-workflow'], { encoding: 'utf8' }).stderr, /--trusted-workflow is only for ci/);
 });
 
 // v2.19.0 review finding 3: notice needs acceptance_evidence, so the agent's acceptance carries a checked record and demo.

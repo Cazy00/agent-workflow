@@ -72,8 +72,6 @@ const USAGE = `usage: wf <${COMMANDS.join('|')}> --baseline REV [--repo DIR] [--
     status --client [--candidate REV] [--live [--pull-requests FILE]]: the same records as one plain-language HTML page for a client (no IDs, people or reasons); --live adds the parts moving on remote branches
     with the trust options it also reports whether the local trusted branch has moved past approval
     FILE holds the JSON of: gh pr list --json number,title,headRefName,author,isDraft,isCrossRepository,reviewDecision
-  ci: --trusted-workflow says the run is the trusted base branch's copy of the workflow (a pull_request_target-style run), which
-    alone may pass, under approval.checkpoint notice, a pull request that changes .github/ (v2.19.0).
   ci: --delivery-evidence EXTERNAL_FILE (JSON, or a pull request description holding the marked block) is required for a
     production change in enforced and owner-merge modes
   Enforced and owner-merge modes (baseline config and profile both carry the label) need no trust options; manual mode needs all three.
@@ -102,7 +100,6 @@ async function main() {
     if (a === '--outcome') { o.outcome = true; continue; }
     if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a === '--check-runs') { o['check-runs'] = true; continue; }
-    if (a === '--trusted-workflow') { o.trustedWorkflow = true; continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2);
       if (!OPTIONS.includes(name) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new WfError(`invalid option or missing value: ${a}`);
@@ -123,7 +120,6 @@ async function main() {
   if (o.full && cmd !== 'precheck') throw new WfError('--full is only for precheck');
   if ((o.emit || o.marker !== undefined) && cmd !== 'reuse') throw new WfError('--emit and --marker are only for reuse');
   if (o['delivery-evidence'] && cmd !== 'ci') throw new WfError('--delivery-evidence is only for ci');
-  if (o.trustedWorkflow && cmd !== 'ci') throw new WfError('--trusted-workflow is only for ci');
   if (o['acceptance-evidence'] !== undefined && (cmd !== 'usage' || o.milestone === undefined)) throw new WfError('--acceptance-evidence is only for usage, with --milestone');
   if (o.client && (cmd !== 'status' || o.json || o['trust-key'])) throw new WfError('--client is only for status, without --json or the trust options: it prints the client page as HTML');
   if (o.live && !o.client) throw new WfError('--live is only for status --client');
@@ -624,7 +620,7 @@ async function main() {
       // A file holding only the acceptance evidence's JSON reads as delivery evidence's raw form: move it over.
       if (deliveryEvidence?.schema === 'agent-workflow/acceptance-evidence@1') { acceptanceEvidence = deliveryEvidence; deliveryEvidence = null; }
     }
-    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, acceptanceEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on', trustedWorkflow: o.trustedWorkflow === true });
+    result = evaluateCi({ baseline, candidate, task: taskId(), trust, changed: paths, deliveryEvidence, acceptanceEvidence, autoMerge: process.env.WF_PR_AUTO_MERGE === 'on' });
     const branchState = trustedBranchState({ repo, branch: config.trusted_branch ?? 'main', trust });
     if (branchState && !branchState.approved) result.findings.push(`note: the local trusted branch ${branchState.branch} is at ${branchState.tip.slice(0, 12)}, ${branchState.ahead ?? 'an unknown number of'} commit(s) past its newest baseline receipt${branchState.newest_receipt ? ` ${branchState.newest_receipt.slice(0, 12)}` : ''}, and that tip is not approved; keep work on a task branch and fast-forward only after closeout (procedures/execute.md)`);
   }

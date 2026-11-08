@@ -8,7 +8,7 @@
 # against that base, so the pin a pull request carries cannot choose the code that judges it. A pull request does run
 # its own copy of this file, though, and could add another job named `wf ci`: only code-owner review of `.github/`
 # (enforced mode) protects against that; in owner-merge mode the owner checks every change under `.github/`
-# before merging. It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
+# before merging (under checkpoint notice, the host's merge gate must require an independent review for them). It runs with a read-only token, and no secret but WF_READ_TOKEN, which only the fetch step uses (any
 # account that can push can read it). In enforced and owner-merge modes it runs the integration gate (`wf ci`), which
 # needs the agent's delivery evidence for a production change: it reads it from the pull request description, so
 # `gh pr ready` reruns this check once the evidence is in the description: the task's pull request is a draft until then (below), pushed

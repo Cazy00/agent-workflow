@@ -183,6 +183,9 @@ export function loadConfig(source) {
     if (checkpoint !== undefined) {
       if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone, plan or notice');
       if (config.approval.label !== 'owner-merge') throw new Error('approval.checkpoint applies only to owner-merge approval; manual and enforced modes keep their own approval route');
+      // v2.19.0 review finding 3: under notice the agent accepts its own milestones, so wf ci checks each acceptance's record and
+      // demo (lib/acceptance-evidence.js), and a config that turns that off is refused, at the candidate too.
+      if (checkpoint === 'notice' && config.acceptance_evidence !== true) throw new Error('approval.checkpoint notice needs acceptance_evidence: true, so wf ci checks the acceptance record and demo the agent\'s acceptance carries');
     }
     // MAINT-0016: the agent's own pull requests merge themselves (auto_merge), and some of the owner's approvals wait for
     // the milestone's acceptance (defer_to_acceptance); both only where the checkpoint lets the agent merge at all.

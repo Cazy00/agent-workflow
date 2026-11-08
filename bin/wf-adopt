@@ -27,7 +27,8 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
   --checkpoint, with owner-merge, is where the agent stops for the owner: milestone (the default: the agent merges each
   task's pull request once the gates pass and stops when a milestone is finished, until the owner accepts it), change
   (the owner merges every pull request), plan (as milestone, without stopping between authorised milestones) or notice
-  (the agent merges every pull request once the gates pass; wf ci reports what the others leave to the owner as notices).
+  (the agent merges every pull request once the gates pass; wf ci reports what the others leave to the owner as notices,
+  and sets acceptance_evidence, so each acceptance's record and demo are checked).
   --worker: the agent's own GitHub account, when it has one; without it the agent works with the owner's account.
   --client-page: also install .github/workflows/wf-client-page.yml, which publishes the plain-language client page
   (wf status --client) to GitHub Pages. A Pages site is public, even for a private repository.
@@ -177,6 +178,8 @@ config.repository = o.repository;
 // Never an enforced label from a scaffold: that switch is the reviewed pull request after steps 5 and 9.
 const mechanism = approval === 'owner-merge' ? 'owner-merge' : 'manual-signed-receipts';
 config.approval = { ...(config.approval ?? {}), mechanism, label: approval, approver: ownerLogin ?? config.approval?.approver ?? '', agent_identity: o.worker ?? '', ...(checkpoint ? { checkpoint } : {}), ...(o.autoMerge ? { auto_merge: true } : {}), ...(o.deferToAcceptance ? { defer_to_acceptance: true } : {}) };
+// v2.19.0: under notice the agent's acceptance carries checked evidence (lib/records.js refuses notice without it).
+if (checkpoint === 'notice') config.acceptance_evidence = true;
 if (secondReviewer) config.review = { ...(config.review ?? {}), second_model: secondReviewer };
 config.paths ??= {};
 config.paths.production ??= [];

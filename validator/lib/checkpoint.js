@@ -1,15 +1,17 @@
 // Owner-merge checkpoints (MAINT-0010, procedures/setup.md *Choose the arrangement*): where the agent stops for the
 // owner. `change`: the owner merges every pull request. `milestone`: the agent merges a task's pull request once the
 // gates pass, and stops when a milestone is finished until the owner accepts it. `plan`: as `milestone`, without the
-// stop between authorised milestones. Without a checkpoint the owner merges every pull request and nothing is held,
+// stop between authorised milestones. `notice` (v2.19.0): the agent merges every pull request once the gates pass,
+// those that change what the owner approved included, and `wf ci` reports what the other checkpoints would leave to the
+// owner as `notice:` lines; nothing is held. Without a checkpoint the owner merges every pull request and nothing is held,
 // as before. The quality gates are the same in all of them; only the owner's stops differ.
-export const CHECKPOINTS = ['change', 'milestone', 'plan'];
+export const CHECKPOINTS = ['change', 'milestone', 'plan', 'notice'];
 const OPEN = ['Authorised', 'Active', 'Blocked', 'Verified']; // authorised and not yet accepted
 
 // The baseline config's checkpoint; only owner-merge has one (records.js refuses it elsewhere).
 export const checkpointOf = config => (config?.approval?.label === 'owner-merge' ? config.approval.checkpoint ?? null : null);
 // Whether the agent may merge a task's pull request at all under this checkpoint; the gate still decides each one.
-export const agentMerges = checkpoint => checkpoint === 'milestone' || checkpoint === 'plan';
+export const agentMerges = checkpoint => checkpoint === 'milestone' || checkpoint === 'plan' || checkpoint === 'notice';
 
 // With checkpoint change or milestone, only the earliest authorised milestone the owner has not accepted is open; the
 // later ones wait for that acceptance. Returns that milestone and the held ones, or null when nothing is held.

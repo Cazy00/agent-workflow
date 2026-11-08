@@ -356,9 +356,9 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     const before = m?.id ? baselineRecords.milestones.get(m.id)?.data?.status : null;
     if (m?.id && IN_PROGRESS.includes(m.status) && (before == null || before === 'Draft') && (m.workflow_version == null || m.workflow_version === '')) { findings.push(`${m.id} is authorised here without workflow_version: set workflow_version: ${pinNow} in its record, the workflow release it will run under (templates/milestone.md)`); fail = true; }
   }
-  // MAINT-0022 (v2.11.0 review S1): under review.cadence milestone a milestone that goes straight to Released carries it too, since it
-  // holds the milestone's one review.
-  const closed = config.review?.cadence === 'milestone' ? ['Accepted', 'Released'] : ['Accepted'];
+  // MAINT-0022 (v2.11.0 review S1): a milestone that goes straight to Released carries it too. v2.19.0 review finding 2: under every
+  // cadence and checkpoint, so a records-only move from Authorised or Verified to Released never skips the acceptance evidence.
+  const closed = ['Accepted', 'Released'];
   const accepting = [...candidateRecords.milestones.values()].map(r => r.data).filter(m => m?.id && closed.includes(m.status) && !closed.includes(baselineRecords.milestones.get(m.id)?.data?.status)).map(m => m.id);
   if (prMode && config.acceptance_evidence === true) for (const id of accepting) {
     const notes = [];
@@ -368,7 +368,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (errors.length) fail = true;
   }
   let merge = null;
-  const ownerReasons = [], deferred = [];
+  const ownerReasons = [], deferred = [], notices = [];
   if (trust?.label === 'owner-merge') {
     const checkpoint = checkpointOf(config);
     // MAINT-0016: with defer_to_acceptance the owner approves these at the milestone's acceptance, where the acceptance
@@ -478,6 +478,22 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const m = candidateRecords.tasks.get(id)?.data?.milestone;
       if (hold?.held.has(m)) ownerReasons.push(`${id} belongs to ${m}, which waits for the owner's acceptance of ${hold.first}`);
     }
+    // v2.19.0: with checkpoint notice the agent merges every pull request the gates pass; each reason above is the owner's
+    // notice instead, on the check and in `notices`, and none of them is the owner's merge.
+    // v2.19.0 review finding 5: what waits for the acceptance (defer_to_acceptance) is told now as well, and the acceptance's
+    // evidence lists it (lib/acceptance-evidence.js), which acceptance_evidence, required with notice, makes wf ci check.
+    if (checkpoint === 'notice') {
+      notices.push(...ownerReasons.splice(0), ...deferred.map(d => `for the milestone's acceptance notice: ${d}`));
+      // A pull request runs its own copy of every file under .github/, so one that changes them could rewrite or shadow this
+      // check, and no run of the pull request's own workflow can be trusted to judge a change to that workflow. wf ci does not
+      // claim to block it: it reports a notice, and the protection is the host's merge gate, which must require an independent
+      // review for workflow and enforcement paths before an agent may merge (POLICY § 7). Any other change, workflow config,
+      // procedures or AGENTS.md included, is judged by the base's copy: the base's workflow file, the validator its pin fetches
+      // and the base's config.
+      const ownCopy = changed.map(p => p.replace(/\\/g, '/').replace(/^\.\//, '')).filter(p => p.startsWith('.github/'));
+      if (ownCopy.length) notices.push(`enforcement path, host gate review required: ${ownCopy.join(', ')} (a pull request runs its own copy of the workflow, so wf ci cannot judge a change to it)`);
+      for (const n of notices) findings.push(`notice: ${n}`);
+    }
     merge = ownerReasons.length ? 'owner' : 'agent';
   }
   // MAINT-0016: auto-merge lands a pull request as soon as its required checks pass, so in owner-merge mode it must never be
@@ -493,5 +509,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
 
   // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).
   const workflow = config.workflow?.version || config.workflow?.revision ? { version: config.workflow.version ?? null, revision: config.workflow.revision ?? null } : null;
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), lane, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), lane, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), ...(notices.length ? { notices } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
 }

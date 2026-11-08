@@ -181,7 +181,7 @@ test('wf-adopt scaffolds owner-merge by default for one owner, manual on request
   assert.equal(enforced.status, 2, 'enforced is never scaffolded');
   assert.match(enforced.stderr, /manual or owner-merge/);
   assert.ok(!fs.existsSync(path.join(other, 'docs/workflow')));
-  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/], [['--approval', 'owner-merge', '--owner', 'alice', '--owner', 'bob'], /owner-merge is for one owner/], [['--approval', 'manual', '--checkpoint', 'milestone'], /--checkpoint is for owner-merge/], [['--checkpoint', 'sometimes'], /milestone, change or plan/]]) {
+  for (const [args, message] of [[['--worker', 'owner'], /other than the owner's/], [['--worker', 'not a name'], /not a GitHub username/], [['--worker', 'bot', '--owner', 'alice', '--owner', 'bob'], /for one owner/], [['--approval', 'owner-merge', '--owner', 'alice', '--owner', 'bob'], /owner-merge is for one owner/], [['--approval', 'manual', '--checkpoint', 'milestone'], /--checkpoint is for owner-merge/], [['--checkpoint', 'sometimes'], /milestone, change, plan or notice/]]) {
     const refused = project(t);
     const result = adopt(refused, ...args);
     assert.equal(result.status, 2, result.stdout + result.stderr);

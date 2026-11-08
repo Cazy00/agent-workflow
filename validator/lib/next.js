@@ -23,6 +23,10 @@ const PROCEDURE = {
   present: 'procedures/accept-release.md',
   triage: 'procedures/maintenance.md',
 };
+// What `wf next` says under checkpoint notice: no wait for the owner's merge or acceptance; the reasons the other checkpoints hold are notices.
+const NOTICE_MERGE = 'merge it yourself once that reports merge: agent and every required check has passed; do not wait for the owner: what the other checkpoints leave to the owner is reported as notice: lines, for the owner to read after the merge';
+// v2.19.0 review note 7: the owner's auto_merge choice holds under notice too.
+const NOTICE_AUTO = 'when that reports merge: agent, turn on auto-merge (gh pr merge --auto) and carry on; do not wait for the owner: what the other checkpoints leave to the owner is reported as notice: lines, for the owner to read after the merge';
 const byId = (a, b) => String(a.id).localeCompare(String(b.id));
 
 // The files a task's work starts from: its record, its milestone, what it names as governing, its design, and the
@@ -117,6 +121,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const label = config.approval?.label;
   const manual = !['enforced', 'owner-merge'].includes(label); // owner-merge approves by the pull request, as enforced does
   const checkpoint = checkpointOf(config);
+  const notice = checkpoint === 'notice'; // v2.19.0: the agent merges every pull request the gates pass; the owner is told, not waited for
   // The pull-request modes need the agent's delivery evidence in the pull request description for a production change.
   const evidence = manual ? '' : ' --delivery-evidence PR_DESCRIPTION_FILE';
   const status = evaluateStatus({ baseline, candidate, trustedBranch, pullRequests });
@@ -143,7 +148,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
     const ids = roundReady.map(t => t.id).join(', ');
     add(manual
       ? { kind: 'round', item: ids, do: `Close out or stage the signing round for ${ids}`, why: `${ids} ${roundReady.length > 1 ? 'are' : 'is'} Done here but not on the trusted branch`, read: [PROCEDURE.round], run: [`if the owner signed the round: wf closeout --baseline ${base} --candidate ${head} --trust-key … --receipts … --repository …`, `otherwise dry-run it: wf ci --baseline ${base} --candidate ${head} --task ${roundReady[0].id} --trust-key … --receipts … --repository … --unsigned-receipts ROUND_FILE (exit 3 is the expected dry-run result), then stage the round and end the session`] }
-      : { kind: 'pr', item: ids, do: agentMerges(checkpoint) ? `Merge the pull request for ${ids} once the gate lets you` : `Get the pull request for ${ids} merged by the owner`, why: `${ids} ${roundReady.length > 1 ? 'are' : 'is'} Done here but not on the trusted branch`, read: [PROCEDURE.pr], run: [`wf ci --baseline ${base} --candidate ${head} --task ${roundReady[0].id}${evidence}`, ...(agentMerges(checkpoint) ? [config.approval?.auto_merge === true ? 'when that reports merge: agent, turn on auto-merge (gh pr merge --auto) and carry on with work that does not need this merge; otherwise it waits for the owner' : 'merge it yourself only when that reports merge: agent and every required check has passed; otherwise it waits for the owner'] : [])] });
+      : { kind: 'pr', item: ids, do: notice ? `Merge the pull request for ${ids} yourself once the gates pass; do not wait for the owner` : agentMerges(checkpoint) ? `Merge the pull request for ${ids} once the gate lets you` : `Get the pull request for ${ids} merged by the owner`, why: `${ids} ${roundReady.length > 1 ? 'are' : 'is'} Done here but not on the trusted branch`, read: [PROCEDURE.pr], run: [`wf ci --baseline ${base} --candidate ${head} --task ${roundReady[0].id}${evidence}`, ...(notice ? [config.approval?.auto_merge === true ? NOTICE_AUTO : NOTICE_MERGE] : agentMerges(checkpoint) ? [config.approval?.auto_merge === true ? 'when that reports merge: agent, turn on auto-merge (gh pr merge --auto) and carry on with work that does not need this merge; otherwise it waits for the owner' : 'merge it yourself only when that reports merge: agent and every required check has passed; otherwise it waits for the owner'] : [])] });
   }
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'claim')) add({ kind: 'claim', item: w.item, do: 'Resolve the task claim', why: w.detail, read: [PROCEDURE.claim] });
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'changes')) add({ kind: 'changes', item: w.item, do: `Address the changes requested on ${w.item}`, why: w.detail, read: [PROCEDURE.task] });
@@ -259,9 +264,11 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   for (const w of status.waiting.filter(w => w.owner === 'agent' && w.kind === 'inbox')) add({ kind: 'triage', item: w.item, do: 'Triage the inbox', why: w.detail, read: [w.item, PROCEDURE.triage] });
   if (!drafts.length && stale.length) add({ kind: 'prune', item: stale.map(m => m.id).join(', '), do: `Remove the Done task records of ${stale.map(m => m.id).join(', ')}`, why: 'the milestone is accepted; its Done task records are read by every wf next and readiness run', read: [PROCEDURE.pr], run: prune });
 
+  // Under notice the agent merges what the owner would otherwise accept or merge: a verified milestone's acceptance is its pull request.
+  if (notice) for (const w of status.waiting.filter(w => w.owner !== 'agent' && w.kind === 'acceptance')) add({ kind: 'accept', item: w.item, do: `Open the acceptance pull request for ${w.item} if there is none, with its acceptance evidence, then merge it yourself once the gates pass; do not wait for the owner's acceptance`, why: w.detail, read: [PROCEDURE.present], run: [`wf ci --baseline ${base} --candidate ${head}${evidence}`, NOTICE_MERGE] });
   const secondModel = secondModelBudget(config, records, milestones.filter(m => ['Authorised', 'Active'].includes(m.status)).map(m => m.id));
   const warnings = diffWarnings({ config, baseline, candidate, rd, milestones });
-  const owner = status.waiting.filter(w => w.owner !== 'agent').map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));
+  const owner = status.waiting.filter(w => w.owner !== 'agent' && !(notice && ['review', 'acceptance'].includes(w.kind))).map(w => ({ kind: w.kind, item: w.item, owner: w.owner, detail: w.detail }));
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {

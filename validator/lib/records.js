@@ -181,8 +181,11 @@ export function loadConfig(source) {
     if (config.client !== undefined) validateClientConfig(config.client);
     const checkpoint = config.approval?.checkpoint;
     if (checkpoint !== undefined) {
-      if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone or plan');
+      if (!CHECKPOINTS.includes(checkpoint)) throw new Error('approval.checkpoint must be change, milestone, plan or notice');
       if (config.approval.label !== 'owner-merge') throw new Error('approval.checkpoint applies only to owner-merge approval; manual and enforced modes keep their own approval route');
+      // v2.19.0 review finding 3: under notice the agent accepts its own milestones, so wf ci checks each acceptance's record and
+      // demo (lib/acceptance-evidence.js), and a config that turns that off is refused, at the candidate too.
+      if (checkpoint === 'notice' && config.acceptance_evidence !== true) throw new Error('approval.checkpoint notice needs acceptance_evidence: true, so wf ci checks the acceptance record and demo the agent\'s acceptance carries');
     }
     // MAINT-0016: the agent's own pull requests merge themselves (auto_merge), and some of the owner's approvals wait for
     // the milestone's acceptance (defer_to_acceptance); both only where the checkpoint lets the agent merge at all.
@@ -190,7 +193,7 @@ export function loadConfig(source) {
       const v = config.approval?.[key];
       if (v === undefined) continue;
       if (typeof v !== 'boolean') throw new Error(`approval.${key} must be true or false`);
-      if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone or plan, where the agent merges its own pull requests`);
+      if (v && !agentMerges(checkpointOf(config))) throw new Error(`approval.${key} needs owner-merge approval with checkpoint milestone, plan or notice, where the agent merges its own pull requests`);
     }
     if (config.review !== undefined) validateReviewConfig(config.review);
     // MAINT-0022: the milestone's one review is checked only in the acceptance evidence of a pull-request mode (ci.js).

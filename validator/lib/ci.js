@@ -368,7 +368,7 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
     if (errors.length) fail = true;
   }
   let merge = null;
-  const ownerReasons = [], deferred = [];
+  const ownerReasons = [], deferred = [], notices = [];
   if (trust?.label === 'owner-merge') {
     const checkpoint = checkpointOf(config);
     // MAINT-0016: with defer_to_acceptance the owner approves these at the milestone's acceptance, where the acceptance
@@ -478,6 +478,12 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
       const m = candidateRecords.tasks.get(id)?.data?.milestone;
       if (hold?.held.has(m)) ownerReasons.push(`${id} belongs to ${m}, which waits for the owner's acceptance of ${hold.first}`);
     }
+    // v2.19.0: with checkpoint notice the agent merges every pull request the gates pass; each reason above is the owner's
+    // notice instead, on the check and in `notices`, and none of them is the owner's merge.
+    if (checkpoint === 'notice') {
+      notices.push(...ownerReasons.splice(0));
+      for (const n of notices) findings.push(`notice: ${n}`);
+    }
     merge = ownerReasons.length ? 'owner' : 'agent';
   }
   // MAINT-0016: auto-merge lands a pull request as soon as its required checks pass, so in owner-merge mode it must never be
@@ -493,5 +499,5 @@ export function evaluateCi({ baseline, candidate = baseline, task, changed = [],
 
   // MAINT-0018: the workflow version whose rules judged this change, the baseline's pin (in CI, the base branch's).
   const workflow = config.workflow?.version || config.workflow?.revision ? { version: config.workflow.version ?? null, revision: config.workflow.revision ?? null } : null;
-  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), lane, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
+  return { verdict: fail ? 'fail' : 'pass', findings, classes, records_only: recordsOnly(config, changed), lane, readiness, ...(merge && !fail ? { merge, owner_reasons: ownerReasons, ...(notices.length ? { notices } : {}), ...(deferred.length ? { deferred } : {}) } : {}), records: records.counts, ...(workflow ? { workflow } : {}) };
 }

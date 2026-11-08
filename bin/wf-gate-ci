@@ -113,7 +113,7 @@ function main(argv) {
   // wf ci's JSON carries what judged it: the resolved channel, revision and version, and when it was resolved.
   result.workflow = { channel: resolved.channel, revision: resolved.revision, version: resolved.version ?? resolved.declared_version ?? null, resolved_at: resolved.resolved_at ?? null };
   console.log(JSON.stringify(result, null, 2));
-  const fails = result.verdict === 'fail' ? (result.findings ?? []).filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: )/.test(f)) : [];
+  const fails = result.verdict === 'fail' ? (result.findings ?? []).filter(f => !/^(?:(?:planning|production|governing|enforcement|generated|unclassified): |unverified: |note: |notice: )/.test(f)) : [];
   const lines = [`### wf ci${draft ? ' (draft)' : ''}: ${result.verdict}`, ...fails.map(f => `- ${f.trim()}`)];
   if (draft) lines.push('**Draft:** this run is information only and never fails. `gh pr ready` runs the gate that counts.');
   if (result.lane) lines.push(`**Lane:** ${result.lane}.`);
@@ -122,6 +122,10 @@ function main(argv) {
   if (result.merge === 'owner') {
     lines.push('**Merge:** the owner.', ...(result.owner_reasons ?? []).map(x => `- ${x}`));
     console.log(`::notice title=The owner merges this::${(result.owner_reasons ?? []).join('; ').replace(/[\r\n%]/g, ' ')}`);
+  }
+  if (result.notices?.length) {
+    lines.push('**For the owner’s notice** (checkpoint notice: the agent merges):', ...result.notices.map(x => `- notice: ${x}`));
+    console.log(`::notice title=For the owner's notice::${result.notices.join('; ').replace(/[\r\n%]/g, ' ')}`);
   }
   if (result.deferred?.length) lines.push('**For the owner at the milestone’s acceptance:**', ...result.deferred.map(x => `- ${x}`));
   lines.push(judged);

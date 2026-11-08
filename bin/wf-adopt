@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OPTIONS = ['project', 'repository', 'rev', 'coordinator', 'workflow-repo', 'workflow-slug', 'production', 'lane', 'owner', 'planning-frontend', 'speckit-python', 'approval', 'worker', 'checkpoint', 'second-reviewer'];
 const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev TAG_OR_FULL_HASH --coordinator NAME
-  [--approval owner-merge|manual] [--checkpoint milestone|change|plan] [--worker NAME] [--client-page]
+  [--approval owner-merge|manual] [--checkpoint milestone|change|plan|notice] [--worker NAME] [--client-page]
   [--workflow-repo DIR] [--workflow-slug OWNER/REPO] [--production GLOB]... [--lane new|existing] [--owner NAME]... [--json]
   [--planning-frontend speckit --speckit-python /absolute/isolated/venv/bin/python]
        wf-adopt --inspect --project DIR [--workflow-repo DIR] [--rev TAG_OR_FULL_HASH] [--production GLOB]... [--json]
@@ -26,11 +26,12 @@ const USAGE = `usage: wf-adopt --project DIR --repository OWNER/REPOSITORY --rev
   (procedures/setup.md, steps 5 and 9).
   --checkpoint, with owner-merge, is where the agent stops for the owner: milestone (the default: the agent merges each
   task's pull request once the gates pass and stops when a milestone is finished, until the owner accepts it), change
-  (the owner merges every pull request) or plan (as milestone, without stopping between authorised milestones).
+  (the owner merges every pull request), plan (as milestone, without stopping between authorised milestones) or notice
+  (the agent merges every pull request once the gates pass; wf ci reports what the others leave to the owner as notices).
   --worker: the agent's own GitHub account, when it has one; without it the agent works with the owner's account.
   --client-page: also install .github/workflows/wf-client-page.yml, which publishes the plain-language client page
   (wf status --client) to GitHub Pages. A Pages site is public, even for a private repository.
-  --auto-merge, with owner-merge and checkpoint milestone or plan: the agent turns on auto-merge for the pull requests wf ci
+  --auto-merge, with owner-merge and checkpoint milestone, plan or notice: the agent turns on auto-merge for the pull requests wf ci
     leaves to it, which merge once every required check passes (run bin/wf-protect --apply to allow it)
   --defer-to-acceptance, same checkpoints: acceptance-test changes and minor accepted findings wait for the milestone's
     acceptance instead of each waiting for your merge
@@ -96,11 +97,11 @@ const shared = o.owner.length >= 2;
 const approval = o.approval ?? (shared ? 'manual' : 'owner-merge');
 if (!['manual', 'owner-merge'].includes(approval)) fail(`--approval must be manual or owner-merge; enforced follows verified protections (procedures/setup.md step 9)`);
 if (o.checkpoint !== undefined && approval !== 'owner-merge') fail('--checkpoint is for owner-merge approval; manual and enforced modes keep their own approval route');
-if (o.checkpoint !== undefined && !['change', 'milestone', 'plan'].includes(o.checkpoint)) fail('--checkpoint must be milestone, change or plan');
+if (o.checkpoint !== undefined && !['change', 'milestone', 'plan', 'notice'].includes(o.checkpoint)) fail('--checkpoint must be milestone, change, plan or notice');
 const checkpoint = approval === 'owner-merge' ? o.checkpoint ?? 'milestone' : null;
 // MAINT-0016: where the agent's own pull requests merge themselves, which approvals wait for the acceptance, and the second
 // reviewer; loadConfig checks them again on the result.
-for (const [flag, on] of [['--auto-merge', o.autoMerge], ['--defer-to-acceptance', o.deferToAcceptance]]) if (on && !['milestone', 'plan'].includes(checkpoint)) fail(`${flag} needs owner-merge approval with checkpoint milestone or plan`);
+for (const [flag, on] of [['--auto-merge', o.autoMerge], ['--defer-to-acceptance', o.deferToAcceptance]]) if (on && !['milestone', 'plan', 'notice'].includes(checkpoint)) fail(`${flag} needs owner-merge approval with checkpoint milestone, plan or notice`);
 let secondReviewer = null;
 if (o['second-reviewer'] !== undefined) {
   const [tool, model, effort] = o['second-reviewer'].split(':');
@@ -235,6 +236,7 @@ const CHECKPOINT = {
   milestone: `Checkpoint \`milestone\`: ${AGENT_MERGES}, and stops when a milestone is finished until you have tried it and accepted it. ${KEPT}`,
   change: 'Checkpoint `change`: you review and merge every pull request, and the agent stops when a milestone is finished until you accept it.',
   plan: `Checkpoint \`plan\`: ${AGENT_MERGES}, and works through every milestone you have authorised without stopping; you accept each when you like. ${KEPT}`,
+  notice: 'Checkpoint `notice`: the agent merges every pull request once the `wf ci` check, every required check and the independent review pass, changes to the plan, requirements, acceptance tests, the workflow and a milestone\'s acceptance included; the check tells you each of those as a `notice:` line, and an acceptance still carries its acceptance record and demo.',
 };
 const approvalNote = approval === 'owner-merge'
   ? `Your own merge of a pull request is the approval. ${CHECKPOINT[checkpoint]} Nothing in this mode proves who merged (\`approval-evidence.md\`, *Owner-merge mode*); \`bin/wf-setup\` changes the checkpoint later, as a workflow change you merge.\n\n`

@@ -54,8 +54,11 @@ export function newerRelease(pinned, latest) {
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return b[i] > a[i] ? latest : null;
   return null;
 }
-export function workflowOf(config, latestRelease = null) {
+// v2.19.0: a project on a channel names no pin; the launcher passes what it resolved the channel to (WF_CHANNEL_REVISION,
+// WF_CHANNEL_VERSION), and no newer release is mentioned, since channel moves reach the project by themselves.
+export function workflowOf(config, latestRelease = null, resolved = null) {
   const w = config.workflow ?? {};
+  if (w.channel && !w.revision) return { repo: w.repo ?? null, channel: w.channel, version: resolved?.version ?? null, revision: resolved?.revision ?? null };
   if (!w.version && !w.revision) return null;
   const newer = newerRelease(w.version, latestRelease);
   return { repo: w.repo ?? null, version: w.version ?? null, revision: w.revision ?? null, ...(newer ? { newer } : {}) };
@@ -115,7 +118,7 @@ export function secondModelBudget(config, records, milestoneIds) {
   });
 }
 
-export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null, runsFor = null }) {
+export function evaluateNext({ baseline, candidate = baseline, trustedBranch = null, pullRequests = null, latestRelease = null, channelResolved = null, runsFor = null }) {
   const config = loadConfig(baseline);
   const rd = config.records_dir ?? 'docs/workflow';
   const label = config.approval?.label;
@@ -272,7 +275,7 @@ export function evaluateNext({ baseline, candidate = baseline, trustedBranch = n
   const blocked = status.blocked.map(b => ({ task: b.task, resume_condition: b.resume_condition }));
   const next = actions[0] ?? { kind: 'stop', item: null, do: 'Stop: no agent work is eligible', why: owner.length ? `waiting on the owner: ${owner.map(w => `${w.kind} ${w.item}`).join(', ')}` : 'nothing is open', read: [], run: ['post the session outcome and handoff (procedures/execute.md *Resume, limits and handoff*)'] };
   return {
-    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease), next_ids: nextIds([baseline, candidate], rd),
+    ok: true, revision: candidate.name, baseline: base, mode: manual ? 'manual' : label, ...(checkpoint ? { checkpoint } : {}), workflow: workflowOf(config, latestRelease, channelResolved), next_ids: nextIds([baseline, candidate], rd),
     next, startable: startable.map(t => t.id), running: running.map(t => t.id).sort(), also: actions.slice(1, 8), more: Math.max(0, actions.length - 8), owner, blocked, held, second_model_budget: secondModel, warnings,
     limitation: 'Derived from the records; grants nothing and no gate reads it. Read what it names and nothing else unless one of those points further; the gates decide.',
   };
@@ -284,7 +287,7 @@ export function renderNext(n) {
   if (n.note) lines.push(`Note: ${n.note}`, '');
   const w = n.workflow;
   if (w) {
-    lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.version ?? 'unknown version'} (${w.revision ?? 'no revision'}); name it in the session outcome (\`workflow\`)`);
+    lines.push(`Workflow: ${w.repo ?? 'agent-workflow'} ${w.channel ? `channel ${w.channel}, now ` : ''}${w.version ?? 'unknown version'} (${w.revision ?? 'no revision'}); name it in the session outcome (\`workflow\`)`);
     if (w.newer) lines.push(`  A newer release, ${w.newer}, exists. Moving to it is the owner's decision (bin/wf-upgrade); a milestone in progress stays on its version unless the owner decides otherwise.`);
     lines.push('');
   }

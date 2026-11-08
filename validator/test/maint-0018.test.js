@@ -266,3 +266,29 @@ test('MAINT-0018: a milestone authorised in a pull request names its workflow re
   p.edit(milestonePath, x => x.replace('limits: one bounded task session', 'limits: two sessions')); const limits = p.commit('the milestone\'s limits change');
   assert.equal(governingChanged({ baseline: gitSource(p.repo, limits), revision: moved, recordsDir: 'docs/workflow', task, previous: task }), true);
 });
+
+// v2.19.0 part 5: the launcher runs a channel project from the per-user installation (bin/wf-install), and wf next names
+// the channel and the revision it is at.
+test('the launcher runs a channel project from the installed channel, and wf next names it', t => {
+  if (!head() || !hasLauncher()) return t.skip('needs a Git checkout whose HEAD holds templates/scripts/wf');
+  const dir = adopted(t);
+  const install = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-launcher-install-'));
+  t.after(() => { spawnSync('chmod', ['-R', 'u+w', install]); fs.rmSync(install, { recursive: true, force: true }); });
+  const rev = head();
+  fs.mkdirSync(path.join(install, 'revisions', rev), { recursive: true }); fs.mkdirSync(path.join(install, 'channels'));
+  const tar = spawnSync('bash', ['-c', `git -C "${root}" archive HEAD | tar -x -C "${path.join(install, 'revisions', rev)}"`], { encoding: 'utf8' });
+  assert.equal(tar.status, 0, tar.stderr);
+  fs.symlinkSync(path.join('..', 'revisions', rev), path.join(install, 'channels/stable'));
+  fs.writeFileSync(path.join(install, 'channels/stable.json'), JSON.stringify({ channel: 'stable', revision: rev, version: 'v2.19.0' }));
+  const configPath = path.join(dir, 'docs/workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.workflow = { repo: config.workflow.repo, channel: 'stable', channel_key: `ed25519:${Buffer.alloc(32, 7).toString('base64')}` };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  fs.rmSync(path.join(dir, '.cache'), { recursive: true, force: true }); // nothing pinned to fall back to
+  const next = spawnSync('bash', [path.join(dir, 'scripts/wf'), 'next', '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, WF_INSTALL_ROOT: install } });
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.deepEqual(JSON.parse(next.stdout).workflow, { repo: config.workflow.repo, channel: 'stable', version: 'v2.19.0', revision: rev });
+  assert.equal(fs.existsSync(path.join(dir, '.cache')), false, 'no clone when the channel is installed');
+  const text = spawnSync('bash', [path.join(dir, 'scripts/wf'), 'next'], { cwd: dir, encoding: 'utf8', env: { ...process.env, WF_INSTALL_ROOT: install } });
+  assert.match(text.stdout, new RegExp(`^Workflow: \\S+ channel stable, now v2\\.19\\.0 \\(${rev}\\)`, 'm'));
+});

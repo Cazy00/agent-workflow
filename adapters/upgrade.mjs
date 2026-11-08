@@ -237,7 +237,7 @@ export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
     'Actions policy: the repository must allow workflows from Cazy00/agent-workflow (Settings, Actions, General)',
   ];
   if (noPage) notes.push(`.github/workflows/wf-client-page.yml still reads workflow.revision and the entry ${entryTag} has no shared client page: it fails on a channel config until one is released; delete it or keep the project on a hold, or pass --entry with a release that has it`);
-  if (fs.existsSync(path.join(project, 'scripts/wf'))) notes.push('scripts/wf, the local launcher, still needs workflow.revision, so it refuses a channel config until it resolves channels (a later part of v2.19.0); CI does not use it');
+  if (fs.existsSync(path.join(project, 'scripts/wf')) && !fs.readFileSync(path.join(project, 'scripts/wf'), 'utf8').includes('wf-resolve')) notes.push(`scripts/wf, the local launcher, is a copy from before channels and refuses a channel config: replace it with templates/scripts/wf at ${entryTag}; CI does not use it`);
   return { project, from: from ?? null, to: `channel ${channel}`, from_version: fromVersion, to_version: `channel ${channel}`, entry: entryTag, current: false, changes, notes, left, removed_config: ['workflow.revision', 'workflow.version'].filter(k => k.split('.')[1] in w) };
 }
 

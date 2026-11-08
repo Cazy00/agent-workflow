@@ -4,7 +4,13 @@
 # renders `wf status` with that release and publishes it as the one open issue labelled wf-status, with the line saying
 # which release judged. It runs only on the trusted branch and never runs candidate code. The daily schedule and
 # repository_dispatch (type wf-channel, sent by the release broker after a channel move) keep a canary project's soak
-# fresh. The repository's Actions policy must allow workflows from Cazy00/agent-workflow.
+# fresh. The job's `if:` (v2.19.1) runs only on the trusted branch, as the copied wf-status.yml did (the entry checks the
+# ref again, exactly, in its first step, and skips any other ref in its own `if:`), and the schedule only when WF_GATE is
+# `on`: without a gate runner the view refreshes on pushes, manual runs and the broker's repository_dispatch, and the
+# skipped scheduled job uses no minutes (MAINT-0023). checks: write reaches only the entry's `record` job, which posts
+# the check run `wf resolved` and runs no code of the project or the resolved release. The tag's trust rests on the
+# harbor-wf-tags ruleset, the executor-authored release and the host's merge gate, as wf-ci.yml's header says.
+# The repository's Actions policy must allow workflows from Cazy00/agent-workflow.
 name: wf-status
 on:
   push:
@@ -18,12 +24,13 @@ permissions:
   contents: read
   issues: write
   pull-requests: read
-  checks: write # the check run `wf resolved`: which release judged
+  checks: write # only for the entry's record job: the check run `wf resolved`, which release judged
 concurrency:
   group: wf-status
   cancel-in-progress: true
 jobs:
   status:
+    if: github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || vars.WF_GATE == 'on')
     uses: Cazy00/agent-workflow/.github/workflows/wf-status.yml@__ENTRY__
     with:
       entry: __ENTRY__

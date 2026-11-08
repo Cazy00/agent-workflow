@@ -7,8 +7,12 @@
 # branch's head, and renders `wf status` with the RESOLVED revision's validator, then publishes it as the body of the one
 # open issue labelled wf-status, with a line saying what judged. It grants no authority and approves nothing. The
 # caller's daily schedule and the broker's repository_dispatch (type wf-channel) keep a canary project's runs fresh for
-# the soak; the caller grants contents: read, issues: write, pull-requests: read and checks: write. The publish step
-# keeps one open issue, as the copied wf-status.yml did.
+# the soak; the caller grants contents: read, issues: write, pull-requests: read and checks: write. The status job
+# narrows to the first three (v2.19.1): only the `record` job has checks: write, and posts `wf resolved` from the JSON the
+# status job prepared before the resolved revision's validator ran; the `record` job always runs on `ubuntu-latest`, never
+# on the gate runner, so a process left on a persistent runner cannot read its token. The status job's `if:` skips any
+# ref but the trusted branch and a scheduled run unless WF_GATE is `on` (MAINT-0023); its first step checks the ref
+# exactly. The publish step keeps one open issue, as the copied wf-status.yml did.
 name: wf-status
 on:
   workflow_call:
@@ -33,9 +37,15 @@ on:
 jobs:
   status:
     name: status
-    if: github.ref == format('refs/heads/{0}', inputs.trusted_branch)
+    if: github.ref == format('refs/heads/{0}', inputs.trusted_branch) && (github.event_name != 'schedule' || vars.WF_GATE == 'on')
     runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      check_run: ${{ steps.record.outputs.check_run }}
     steps:
       - name: Refuse any ref but exactly the trusted branch
         # GitHub compares strings ignoring case, so the job's `if:` also passes a run on a branch named `MAIN`.
@@ -92,11 +102,10 @@ jobs:
           [ "$(git -C "$RUNNER_TEMP/wf" rev-parse HEAD)" = "$REV" ] || { echo "::error::the fetched workflow is not at $REV"; exit 2; }
           [ -f "$RUNNER_TEMP/wf/bin/wf-gate-ci" ] || { echo "::error::the base config resolves to $VERSION ($REV), which has no bin/wf-gate-ci: move the pin to v2.19.0 or later first, with today's copied workflow files (the first of the two opt-in pull requests), then opt in"; exit 2; }
           { echo "channel=$CHANNEL"; echo "revision=$REV"; echo "version=$VERSION"; } >> "$GITHUB_OUTPUT"
-      - name: Record what judged (check run `wf resolved`)
-        # Kept with the commit after the run's logs expire; the channel soak and wf channel audit read it.
+      - name: Prepare the record of what judged (check run `wf resolved`)
+        # Written before any code of the resolved revision runs; the record job posts it (this job cannot write checks).
+        id: record
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           JUDGED: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
@@ -104,10 +113,9 @@ jobs:
             const fs = require("fs");
             const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
             const record = { channel: r.channel, revision: r.revision, version: r.version ?? r.declared_version ?? null, ...(r.seq ? { seq: r.seq } : {}), resolved_at: r.resolved_at };
-            fs.writeFileSync(process.argv[2], JSON.stringify({ name: "wf resolved", head_sha: process.env.JUDGED, status: "completed", conclusion: "neutral",
-              output: { title: `${record.channel}: ${record.version} (${record.revision.slice(0, 12)})`, summary: "```json\n" + JSON.stringify(record) + "\n```" } }));
-          ' "$RUNNER_TEMP/resolved.json" "$RUNNER_TEMP/check-run.json"
-          gh api --method POST "repos/$GH_REPO/check-runs" --input "$RUNNER_TEMP/check-run.json" > /dev/null || echo "::warning::Could not record the check run wf resolved (the caller needs checks: write); the run's log has the resolution."
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "check_run=" + JSON.stringify({ name: "wf resolved", head_sha: process.env.JUDGED, status: "completed", conclusion: "neutral",
+              output: { title: `${record.channel}: ${record.version} (${record.revision.slice(0, 12)})`, summary: "```json\n" + JSON.stringify(record) + "\n```" } }) + "\n");
+          ' "$RUNNER_TEMP/resolved.json"
       - name: Render the status view
         run: |
           set -euo pipefail
@@ -158,3 +166,25 @@ jobs:
             gh label create wf-status --force --color BFD4F2 --description 'Project status from wf status, updated automatically'
             gh issue create --title 'Project status' --label wf-status --body-file "$body"
           fi
+  record:
+    name: record
+    # The only job that can write check runs (v2.19.1): it posts the record the status job prepared before any code of the
+    # resolved revision ran, and checks out and runs nothing else. A failed post is a warning, as before. It always runs on
+    # a GitHub-hosted runner (a fresh VM, about one minute): on a persistent gate runner a process the resolved revision
+    # left behind could read this job's token from /proc.
+    needs: status
+    if: ${{ !cancelled() && needs.status.outputs.check_run != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+    steps:
+      - name: Record what judged (check run `wf resolved`)
+        # Kept with the commit after the run's logs expire; the channel soak and wf channel audit read it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECK_RUN: ${{ needs.status.outputs.check_run }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$CHECK_RUN" | gh api --method POST "repos/$GH_REPO/check-runs" --input - > /dev/null || echo "::warning::Could not record the check run wf resolved (the caller needs checks: write); the run's log has the resolution."

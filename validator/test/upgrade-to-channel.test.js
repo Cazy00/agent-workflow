@@ -88,14 +88,14 @@ test('--to-channel from a v2.19.0 pin writes the channel, the key and the thin c
   const w = world(t); if (!w) return t.skip('not a Git checkout');
   const project = w.adopt('v2.19.0');
   const before = fs.readFileSync(path.join(project, 'docs/workflow/config.json'), 'utf8');
-  const report = w.up(project, '--to-channel', 'stable', '--key', K1);
+  const report = w.up(project, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0');
   assert.equal(report.status, 0, report.stdout + report.stderr);
   assert.match(report.stdout, /v2\.19\.0 → channel stable/);
   assert.match(report.stdout, /update \.github\/workflows\/wf-ci\.yml: still the pinned release's copy: the thin caller of the shared entry at v2\.19\.0/);
   assert.match(report.stdout, /`wf ci \/ gate`/, 'says the required check moves');
   assert.equal(fs.readFileSync(path.join(project, 'docs/workflow/config.json'), 'utf8'), before, 'a report writes nothing');
 
-  const applied = w.up(project, '--to-channel', 'stable', '--key', K1, '--apply');
+  const applied = w.up(project, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0', '--apply');
   assert.equal(applied.status, 0, applied.stdout + applied.stderr);
   assert.match(applied.stdout, /The new release's validator accepts the records/);
   const config = readJson(project, 'docs/workflow/config.json');
@@ -106,7 +106,7 @@ test('--to-channel from a v2.19.0 pin writes the channel, the key and the thin c
   git(project, 'add', '-A'); git(project, 'commit', '-qm', 'opt in');
 
   // stable -> canary with a second key: a config change only, the callers are already the entry's
-  const moved = w.up(project, '--to-channel', 'canary', '--key', K1, '--key', K2, '--json', '--apply');
+  const moved = w.up(project, '--to-channel', 'canary', '--key', K1, '--key', K2, '--entry', 'v2.19.0', '--json', '--apply');
   assert.equal(moved.status, 0, moved.stdout + moved.stderr);
   assert.deepEqual(JSON.parse(moved.stdout).changes.map(c => c.path), ['docs/workflow/config.json', 'docs/workflow/profile.md']);
   assert.deepEqual(readJson(project, 'docs/workflow/config.json').workflow.channel_key, [K1, K2]);
@@ -115,7 +115,7 @@ test('--to-channel from a v2.19.0 pin writes the channel, the key and the thin c
 test('--to-channel refuses a pin from before the shared gate, a bad key and a mixed request', t => {
   const w = world(t); if (!w) return t.skip('not a Git checkout');
   const old = w.adopt('v2.18.3');
-  const r = w.up(old, '--to-channel', 'stable', '--key', K1);
+  const r = w.up(old, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /the pin v2\.18\.3 has no shared gate: first move the pin to v2\.19\.0 or later/);
   const project = w.adopt('v2.19.0');
@@ -140,7 +140,7 @@ test('a workflow file the project changed is listed, not replaced; a milestone i
   const milestone = path.join(project, 'docs/workflow/milestones/M-0001.md');
   fs.mkdirSync(path.dirname(milestone), { recursive: true });
   fs.writeFileSync(milestone, '---\nid: M-0001\nstatus: Active\nworkflow_version: v2.19.0\n---\n# M-0001\n');
-  const r = w.up(project, '--to-channel', 'stable', '--key', K1, '--json');
+  const r = w.up(project, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0', '--json');
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const plan = JSON.parse(r.stdout);
   assert.ok(plan.left.some(l => l.path === '.github/workflows/wf-status.yml' && /changed in this project/.test(l.why)));
@@ -152,12 +152,12 @@ test('a workflow file the project changed is listed, not replaced; a milestone i
 test('--to-channel replaces the copied client page with its thin caller, and adds none where the project has no page', t => {
   const w = world(t); if (!w) return t.skip('not a Git checkout');
   const project = w.adopt('v2.19.0');
-  const plain = JSON.parse(w.up(project, '--to-channel', 'stable', '--key', K1, '--json').stdout);
+  const plain = JSON.parse(w.up(project, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0', '--json').stdout);
   assert.ok(!plain.changes.some(c => c.path === '.github/workflows/wf-client-page.yml'), 'no page, no caller');
   const page = path.join(project, '.github/workflows/wf-client-page.yml');
   fs.writeFileSync(page, fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8').replaceAll('__TRUSTED_BRANCH__', 'main'));
   git(project, 'add', '-A'); git(project, 'commit', '-qm', 'client page');
-  const applied = w.up(project, '--to-channel', 'stable', '--key', K1, '--apply');
+  const applied = w.up(project, '--to-channel', 'stable', '--key', K1, '--entry', 'v2.19.0', '--apply');
   assert.equal(applied.status, 0, applied.stdout + applied.stderr);
   assert.equal(fs.readFileSync(page, 'utf8'), w.caller('wf-client-page.yml'));
   assert.doesNotMatch(applied.stdout, /has no shared client page/);

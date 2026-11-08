@@ -42,13 +42,20 @@ export async function audit({ revision, repos, since, api }) {
         if (!Array.isArray(pulls)) throw new AuditError(`repos/${repo}/pulls did not return a list`);
         for (const pr of pulls) {
           if (!pr.merged_at || Date.parse(pr.merged_at) < after) continue;
-          const runs = await api(`repos/${repo}/commits/${pr.head.sha}/check-runs?check_name=${encodeURIComponent('wf resolved')}&per_page=${PAGE}`);
-          const records = (runs?.check_runs ?? []).map(readRecord).filter(Boolean);
+          // filter=all: GitHub's default (latest) drops a superseded run, and a head judged at X then again at Y was judged by both.
+          const records = [];
+          for (let q = 1; ; q++) {
+            const runs = await api(`repos/${repo}/commits/${pr.head.sha}/check-runs?check_name=${encodeURIComponent('wf resolved')}&filter=all&per_page=${PAGE}&page=${q}`);
+            const got = runs?.check_runs ?? [];
+            records.push(...got.map(readRecord).filter(Boolean));
+            if (got.length < PAGE || q >= MAX_PAGES) break;
+          }
           const hit = records.find(r => r.revision.toLowerCase().startsWith(rev));
           if (hit) found.push({ number: pr.number, title: pr.title, merged_at: pr.merged_at, head_sha: pr.head.sha, channel: hit.channel, version: hit.version, resolved_at: hit.resolved_at ?? null, judged_by: [...new Set(records.map(r => r.revision))] });
         }
         // Sorted by update time, newest first: once a whole page was updated before `since`, nothing later merged after it.
         if (pulls.length < PAGE || pulls.every(pr => Date.parse(pr.updated_at) < after)) break;
+        if (page === MAX_PAGES) throw new AuditError(`stopped after ${MAX_PAGES * PAGE} closed pull requests without reaching ${since ? `--since ${since}` : 'the oldest'}: the list is incomplete; narrow it with --since`);
       }
       projects.push({ repo, pull_requests: found.sort((a, b) => a.number - b.number) });
     } catch (e) { projects.push({ repo, pull_requests: found, error: e.message }); }

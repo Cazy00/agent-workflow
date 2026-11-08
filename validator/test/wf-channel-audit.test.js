@@ -54,3 +54,23 @@ test('bad input is refused; a record that does not parse is skipped', async () =
   const cli = spawnSync(process.execPath, [path.join(root, 'bin/wf-channel-audit'), '--repo', 'a/b'], { encoding: 'utf8' });
   assert.equal(cli.status, 2); assert.match(cli.stderr, /--revision is required/);
 });
+
+test('a listing cut off at the page limit is reported, not passed off as complete', async () => {
+  const many = n => Array.from({ length: 100 }, (_, i) => pr(n * 100 + i, `s${n}-${i}`));
+  const api = async route => route.includes('/pulls?') ? many(Number(new URL(`https://x/${route}`).searchParams.get('page'))) : { check_runs: [] };
+  const out = await audit({ revision: BAD, repos: ['acme/one'], api });
+  assert.match(out.projects[0].error, /stopped after 2000 closed pull requests/);
+});
+
+test('the check-run read asks for every run, not only the latest, and follows its pages', async () => {
+  const calls = [];
+  const api = async route => {
+    calls.push(route);
+    if (route.includes('/pulls?')) return [pr(1, 's1')];
+    const page = Number(new URL(`https://x/${route}`).searchParams.get('page'));
+    return { check_runs: page === 1 ? Array.from({ length: 100 }, () => run(GOOD)) : [run(BAD)] };
+  };
+  const out = await audit({ revision: BAD, repos: ['acme/one'], api });
+  assert.ok(calls.filter(c => c.includes('check-runs')).every(c => c.includes('filter=all')));
+  assert.deepEqual(out.projects[0].pull_requests[0].judged_by, [GOOD, BAD]);
+});

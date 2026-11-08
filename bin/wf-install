@@ -8,12 +8,13 @@ import { install, use, prune, defaultRoot, InstallError } from '../adapters/inst
 const TEST_ENV = 'WF_RESOLVE_TEST';
 const USAGE = `usage: wf-install --channel NAME --key ed25519:BASE64 [--key …] [--repo OWNER/NAME] [--min-seq N] [--root DIR]
        wf-install --revision HASH [--repo OWNER/NAME] [--root DIR]
-       wf-install --use NAME|HASH [--root DIR]
+       wf-install --use NAME|HASH [--shell] [--root DIR]
        wf-install --prune [--days N] [--root DIR]
   --channel resolves NAME (stable, canary, stable-N, canary-N) through its signed record, verified with each --key, writes
   the verified revision once to ROOT/revisions/<hash> (read-only), then switches ROOT/channels/NAME to it atomically.
   --revision installs a hold's full hash (a revision on main) with no pointer. --use is a session's start: it prints
-  the revision directory to read until the session ends and marks it used. --prune removes revisions no pointer names
+  the revision directory to read until the session ends and marks it used; with --shell it prints
+  `export WF_SESSION_REVISION=HASH` instead, which keeps scripts/wf on that revision for the whole task. --prune removes revisions no pointer names
   and no session used in the last N days (default 7). ROOT defaults to ${defaultRoot()}.
   Output is JSON. Tests only (refused unless ${TEST_ENV}=1): --git-url URL, --record-url DIR.`;
 const fail = (message, status = 2) => { console.error(`wf-install: ${message}`); process.exit(status); };
@@ -23,6 +24,7 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
   else if (a === '--prune') o.prune = true;
+  else if (a === '--shell') o.shell = true;
   else if (a === '--key' && argv[i + 1] && !argv[i + 1].startsWith('--')) (o.keys ??= []).push(argv[++i]);
   else if (['--channel', '--revision', '--use', '--repo', '--min-seq', '--root', '--days', '--git-url', '--record-url'].includes(a) && argv[i + 1] && !argv[i + 1].startsWith('--')) {
     if (o[a.slice(2)] !== undefined) fail(`${a} given twice`);
@@ -35,6 +37,7 @@ const modes = ['channel', 'revision', 'use', 'prune'].filter(k => o[k] !== undef
 if (modes.length !== 1) fail(`give exactly one of --channel, --revision, --use and --prune\n${USAGE}`);
 if (o.keys && !o.channel) fail('--key goes with --channel');
 if (o['min-seq'] !== undefined && !o.channel) fail('--min-seq goes with --channel');
+if (o.shell && !o.use) fail('--shell goes with --use');
 if (o.days !== undefined && !o.prune) fail('--days goes with --prune');
 if (o.repo !== undefined && !/^[\w.-]+\/[\w.-]+$/.test(o.repo)) fail(`--repo ${o.repo} is not owner/name`);
 let minSeq, days = 7;
@@ -52,5 +55,5 @@ try {
   if (o.use) out = use({ root, name: o.use });
   else if (o.prune) out = prune({ root, days });
   else out = await install({ root, channel: o.channel, keys: o.keys, revision: o.revision, repo: o.repo, gitUrl: o['git-url'], readRecord, minSeq, retryMs: testing ? 0 : undefined });
-  console.log(JSON.stringify(out));
+  console.log(o.shell ? `export WF_SESSION_REVISION=${out.revision}` : JSON.stringify(out));
 } catch (e) { e instanceof InstallError ? fail(e.message) : fail(`unexpected: ${e.stack ?? e.message}`, 3); }

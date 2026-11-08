@@ -238,7 +238,7 @@ test('both entries are reusable only, and resolve and record what judged with th
   assert.match(stepRun('.github/workflows/wf-gate.yml', 'Record what judged'), /name: "wf resolved"/);
 });
 
-test('the shared client page: a thin caller, and an entry that resolves and records like the gate, then renders from the resolved revision', () => {
+test('the shared client page: a thin caller, and an entry that resolves like the gate and records nothing, then renders from the resolved revision', () => {
   const y = parseYaml(read('templates/github/channel/wf-client-page.yml'));
   const jobs = Object.values(y.jobs);
   assert.equal(jobs.length, 1);
@@ -246,14 +246,14 @@ test('the shared client page: a thin caller, and an entry that resolves and reco
   assert.equal(jobs[0].with.entry, '__ENTRY__'); assert.equal(jobs[0].with.trusted_branch, '__TRUSTED_BRANCH__');
   assert.ok(!jobs[0].steps);
   assert.deepEqual(y.on.repository_dispatch.types, ['wf-channel']);
-  for (const k of ['checks', 'actions', 'pages', 'id-token']) assert.equal(y.permissions[k], 'write', k);
+  for (const k of ['actions', 'pages', 'id-token']) assert.equal(y.permissions[k], 'write', k);
+  assert.equal(y.permissions.checks, undefined, 'a page build is not a judgment: no wf resolved check run');
   assert.equal(y.permissions.contents, 'read');
   const entry = parseYaml(read('.github/workflows/wf-client-page.yml'));
   assert.deepEqual(Object.keys(entry.on), ['workflow_call']);
   assert.equal(entry.on.workflow_call.inputs.entry.required, true);
-  for (const name of ['Resolve the release that judges', 'Record what judged']) {
-    assert.equal(stepRun('.github/workflows/wf-client-page.yml', name), stepRun('.github/workflows/wf-gate.yml', name), name);
-  }
+  assert.equal(stepRun('.github/workflows/wf-client-page.yml', 'Resolve the release that judges'), stepRun('.github/workflows/wf-gate.yml', 'Resolve the release that judges'));
+  assert.doesNotMatch(read('.github/workflows/wf-client-page.yml'), /wf resolved"/, 'the page records no judgment');
   assert.match(stepRun('.github/workflows/wf-client-page.yml', 'Render the client page'), /"\$RUNNER_TEMP\/wf\/validator\/cli\.js" --repo "\$GITHUB_WORKSPACE" status --client --live/, 'rendered by the resolved revision');
   assert.match(entry.jobs.build.if, /github\.event_name != 'pull_request'/, 'a pull request never builds or deploys');
   assert.deepEqual(entry.jobs.deploy.needs, 'build');

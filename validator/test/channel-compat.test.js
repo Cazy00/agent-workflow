@@ -15,17 +15,23 @@ import { fixtureTrust, integrationClaims } from './helpers.js';
 //   2. the previous release's validator over the candidate's new fixtures: what the candidate passes, it passes too
 //      (forward tolerance, so a rollback accepts what the new release wrote);
 //   3. upgrades.json: a release after v2.19.0 within major 2 carries automated cleanup only, never a step for a person.
-// Skipped, with the reason, when the history holds no earlier release tag (a shallow CI checkout).
+// The previous release is the newest release tag merged into HEAD that does not point at HEAD itself. A shallow checkout
+// is deepened first (tags included); when there is still no such tag the test is skipped locally, but fails in CI
+// (GITHUB_ACTIONS set), so the release's compatibility guard never passes there without running.
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
 const FIRST_CHANNEL_RELEASE = [2, 19, 0];
 const parse = v => (String(v).match(/^v?(\d+)\.(\d+)\.(\d+)$/) ?? []).slice(1).map(Number);
 const cmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
-const version = parse(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version);
+const IN_CI = Boolean(process.env.GITHUB_ACTIONS);
 
 function previousRelease() {
   if (git('rev-parse', 'HEAD').status !== 0) return null;
-  const tags = git('tag', '--list', 'v[0-9]*', '--merged', 'HEAD').stdout.split('\n').filter(t => parse(t).length === 3 && parse(t)[0] === version[0] && cmp(parse(t), version) < 0);
+  if (git('rev-parse', '--is-shallow-repository').stdout.trim() === 'true') {
+    git('fetch', '--quiet', '--unshallow', '--tags', 'origin'); // a failure leaves it shallow; the lookup below decides
+  }
+  const here = new Set(git('tag', '--points-at', 'HEAD').stdout.split('\n'));
+  const tags = git('tag', '--list', 'v[0-9]*', '--merged', 'HEAD').stdout.split('\n').filter(t => parse(t).length === 3 && !here.has(t));
   return tags.sort((a, b) => cmp(parse(b), parse(a)))[0] ?? null;
 }
 
@@ -48,7 +54,8 @@ const cases = dir => Object.fromEntries(fs.readdirSync(dir).filter(n => fs.exist
 
 test('the candidate and the previous release judge each other\'s fixtures compatibly', async t => {
   const prev = previousRelease();
-  if (!prev) return t.skip('no earlier release tag of this major in the history (a shallow checkout)');
+  if (!prev && IN_CI) assert.fail('no earlier release tag in the history: the CI checkout must fetch tags and full history (fetch-depth: 0)');
+  if (!prev) return t.skip('no earlier release tag in the history (a shallow checkout that could not be deepened)');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-channel-compat-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const tar = spawnSync('bash', ['-c', 'git -C "$1" archive "$2" validator/lib fixtures | tar -x -C "$3"', '_', root, prev, temp], { encoding: 'utf8' });

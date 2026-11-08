@@ -15,17 +15,39 @@ read -r REPO REV CHANNEL < <(node -e '
   else console.log(c.repo, c.revision, "-")' "$CONFIG")
 CACHE="$ROOT/.cache/agent-workflow"
 if [ "$CHANNEL" != - ]; then
-  INSTALLED="${WF_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-workflow}/channels/$CHANNEL"
-  if [ -f "$INSTALLED/validator/cli.js" ]; then
-    DIR="$(cd "$INSTALLED" && pwd -P)"
+  IROOT="${WF_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-workflow}"
+  INSTALLED="$IROOT/channels/$CHANNEL"
+  # The installed channel is used only when its resolution was made for this project's own repository and keys and has not
+  # expired, and names the revision the link points at; otherwise the signed record is resolved below. A session pinned
+  # with `wf-install --use NAME --shell` (WF_SESSION_REVISION) stays on that revision, checked the same way except for
+  # expiry, so one task never mixes two releases.
+  PIN="${WF_SESSION_REVISION:-}"
+  if [ -n "$PIN" ] && [[ "$PIN" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+    DIR="$IROOT/revisions/$PIN"; RESFILE="$IROOT/resolutions/$CHANNEL.$PIN.json"; WANT="$PIN"; EXPIRY=0
+  else
+    PIN=""; DIR="$INSTALLED"; RESFILE="$INSTALLED.json"; EXPIRY=1
+    WANT="$(basename "$(readlink "$INSTALLED" 2>/dev/null)" 2>/dev/null || true)"
+  fi
+  if [ -f "$DIR/validator/cli.js" ] && [ -f "$DIR/.wf-complete" ] && WF_CHANNEL_VERSION="$(node -e '
+    const fs = require("fs");
+    const [config, file, channel, want, expiry] = process.argv.slice(1);
+    const w = JSON.parse(fs.readFileSync(config, "utf8")).workflow;
+    const r = JSON.parse(fs.readFileSync(file, "utf8"));
+    const keys = Array.isArray(w.channel_key) ? w.channel_key : [w.channel_key];
+    const ok = r.repo === w.repo && r.channel === channel && r.revision === want && Array.isArray(r.keys) && r.keys.length > 0 && r.keys.every(k => keys.includes(k))
+      && (expiry !== "1" || Date.parse(r.expires_at) > Date.now());
+    if (!ok) process.exit(1);
+    console.log(r.version ?? "")' "$CONFIG" "$RESFILE" "$CHANNEL" "$WANT" "$EXPIRY" 2>/dev/null)"; then
+    DIR="$(cd "$DIR" && pwd -P)"
     WF_CHANNEL_REVISION="$(basename "$DIR")"
-    WF_CHANNEL_VERSION="$(node -e 'try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "") } catch { console.log("") }' "$INSTALLED.json")"
+    touch "$IROOT/uses/$WF_CHANNEL_REVISION" 2>/dev/null || true
     export WF_CHANNEL_REVISION WF_CHANNEL_VERSION
     for arg in "$@"; do
       if [ "$arg" = --repo ]; then exec node "$DIR/validator/cli.js" "$@"; fi
     done
     exec node "$DIR/validator/cli.js" --repo "$ROOT" "$@"
   fi
+  unset WF_CHANNEL_VERSION
   [ -d "$CACHE/.git" ] || git clone --quiet "https://github.com/$REPO.git" "$CACHE"
   if [ ! -f "$CACHE/bin/wf-resolve" ]; then
     git -C "$CACHE" fetch --quiet origin && git -C "$CACHE" checkout --quiet --detach origin/main

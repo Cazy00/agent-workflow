@@ -3,7 +3,8 @@
 # and the concurrency lives in the entry, Cazy00/agent-workflow/.github/workflows/wf-gate.yml, named here at an
 # immutable release tag and repeated as `entry`: it resolves the BASE branch's docs/workflow/config.json (a channel
 # through its signed record, or a hold) and runs the resolved release's gate, so a pull request cannot choose the rules
-# that judge it. The tag changes only when the entry's contract does, on a major release.
+# that judge it. The entry's contract changes only on a major release; a project moves the tag when it re-copies this
+# file from a newer release, as v2.19.1's permission split needs (it lives in the entry).
 #
 # A pull request runs its own copy of this file and could rewrite it: code-owner review of `.github/` (enforced mode)
 # or the owner's check of every change under `.github/` (owner-merge mode) protects it. On a draft the job is named

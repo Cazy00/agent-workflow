@@ -111,6 +111,15 @@ test('the opt-in pull request passes: its base is still the v2.19.0 pin, which t
   assert.match(record.resolved_at, /^\d{4}-\d\d-\d\dT/);
   assert.equal(gate.status, 0, gate.stdout + gate.stderr);
   assert.match(gate.summary, /Judged by agent-workflow v2\.19\.0 \([0-9a-f]{12}\), a hold \(the base branch’s pin\), resolved at \d{4}-/);
+  // v2.19.1: the gate job only prepares the check run, as one output line of JSON; the record job posts it.
+  const prepared = w.step('Prepare the record of what judged', { RUNNER_TEMP: resolved.runner, JUDGED: head });
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const lines = fs.readFileSync(path.join(prepared.runner, 'output'), 'utf8').split('\n').filter(Boolean);
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].startsWith('check_run='));
+  const checkRun = JSON.parse(lines[0].slice('check_run='.length));
+  assert.equal(checkRun.name, 'wf resolved'); assert.equal(checkRun.head_sha, head); assert.equal(checkRun.conclusion, 'neutral');
+  assert.deepEqual({ ...JSON.parse(checkRun.output.summary.replace(/^```json\n|\n```$/g, '')), resolved_at: undefined }, { channel: 'hold', revision: w.v219, version: 'v2.19.0', resolved_at: undefined });
 });
 
 test('a channel base resolves through its signed record, and the candidate cannot change it', t => {
@@ -217,6 +226,8 @@ test('the thin callers carry only triggers, permissions, concurrency and the ent
     assert.ok('workflow_dispatch' in y.on, file);
     assert.equal(y.permissions.checks, 'write', `${file}: the wf resolved check run`);
     assert.equal(y.permissions.contents, 'read', file);
+    assert.match(jobs[0].if, /github\.ref == 'refs\/heads\/__TRUSTED_BRANCH__' && \(github\.event_name != 'schedule' \|\| vars\.WF_GATE == 'on'\)/, `${file}: v2.19.1 guard`);
+    assert.match(read(file), /harbor-wf-tags/, `${file}: the header says what the tag's trust rests on`);
   }
   assert.ok(parseYaml(read('templates/github/channel/wf-ci.yml')).on.pull_request, 'the gate judges pull requests');
 });
@@ -227,7 +238,7 @@ test('both entries are reusable only, and resolve and record what judged with th
     assert.deepEqual(Object.keys(y.on), ['workflow_call']);
     assert.equal(y.on.workflow_call.inputs.entry.required, true);
   }
-  for (const name of ['Resolve the release that judges', 'Record what judged']) {
+  for (const name of ['Resolve the release that judges', 'Prepare the record of what judged', 'Record what judged']) {
     assert.equal(stepRun('.github/workflows/wf-status.yml', name), stepRun('.github/workflows/wf-gate.yml', name), name);
   }
   const names = steps('.github/workflows/wf-gate.yml').map(s => s.name ?? s.uses);
@@ -235,7 +246,89 @@ test('both entries are reusable only, and resolve and record what judged with th
   assert.match(stepRun('.github/workflows/wf-gate.yml', 'Resolve'), /"\$RUNNER_TEMP\/entry\/bin\/wf-resolve" --project "\$GITHUB_WORKSPACE" --base "\$BASE"/, 'the resolver comes from the entry tag');
   assert.match(stepRun('.github/workflows/wf-gate.yml', 'Run the gate'), /"\$RUNNER_TEMP\/wf\/bin\/wf-gate-ci"/, 'the gate script comes from the resolved revision');
   assert.match(read('.github/workflows/wf-gate.yml'), /BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/);
-  assert.match(stepRun('.github/workflows/wf-gate.yml', 'Record what judged'), /name: "wf resolved"/);
+  assert.match(stepRun('.github/workflows/wf-gate.yml', 'Prepare the record of what judged'), /name: "wf resolved"/);
+  assert.ok(names.indexOf('Prepare the record of what judged (check run `wf resolved`)') < names.indexOf('Run the gate'), 'the record is prepared before the resolved revision runs');
+});
+
+// v2.19.1 (review of headless-lightroom #121, F2): a called workflow's jobs can only narrow what the caller grants, so the
+// job that runs the resolved revision's code narrows to read-only and cannot post a check run; one small job that checks
+// out and runs nothing posts `wf resolved`.
+test('only the record job of each entry can write check runs; the job that judges reads', () => {
+  for (const [file, main, mainPerms] of [['.github/workflows/wf-gate.yml', 'gate', { contents: 'read' }], ['.github/workflows/wf-status.yml', 'status', { contents: 'read', issues: 'write', 'pull-requests': 'read' }]]) {
+    const y = parseYaml(read(file));
+    assert.equal(y.permissions, undefined, `${file}: no workflow-level permissions; the caller's are narrowed per job`);
+    assert.deepEqual(Object.keys(y.jobs), [main, 'record'], file);
+    assert.deepEqual(y.jobs[main].permissions, mainPerms, `${file}: ${main}`);
+    assert.deepEqual(y.jobs.record.permissions, { checks: 'write' }, `${file}: record`);
+    for (const [name, job] of Object.entries(y.jobs)) if (name !== 'record') assert.ok(!job.permissions?.checks, `${file}: ${name} has no checks permission`);
+    assert.equal(y.jobs[main].outputs.check_run, '${{ steps.record.outputs.check_run }}', file);
+    assert.equal(y.jobs[main].steps.find(s => s.id === 'record').name, 'Prepare the record of what judged (check run `wf resolved`)', file);
+    assert.equal(y.jobs.record.needs, main, file);
+    assert.equal(y.jobs.record.if, `\${{ !cancelled() && needs.${main}.outputs.check_run != '' }}`, file);
+    assert.equal(y.jobs.record['runs-on'], y.jobs[main]['runs-on'], `${file}: the record job runs where the judging job ran`);
+    assert.equal(y.jobs.record.steps.length, 1, `${file}: one step`);
+    assert.ok(!y.jobs.record.steps[0].uses, `${file}: no action, no checkout`);
+    assert.match(y.jobs.record.steps[0].run, /printf '%s' "\$CHECK_RUN" \| gh api --method POST "repos\/\$GH_REPO\/check-runs" --input -/, file);
+    assert.doesNotMatch(read(file).slice(read(file).indexOf('\n  record:\n')), /RUNNER_TEMP|node |checkout/, `${file}: the record job runs nothing of the project or the release`);
+  }
+});
+
+// GitHub compares strings in expressions ignoring case. Evaluates the `if:` of a caller or entry job for a context.
+const evalIf = (expr, ctx) => {
+  const js = String(expr).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    .replace(/format\('refs\/heads\/\{0\}', inputs\.trusted_branch\)/g, 'TRUSTED_REF')
+    .replace(/\b(github|vars|inputs)((?:\.[A-Za-z_]+)+)/g, (_, top, p) => `ctx.${top}${p.replace(/\./g, '?.')}`)
+    .replace(/([^\s()]+) (==|!=) ([^\s()]+)/g, (_, a, op, b) => `${op === '!=' ? '!' : ''}eq(${a}, ${b})`)
+    .replace(/TRUSTED_REF/g, "('refs/heads/' + ctx.inputs.trusted_branch)");
+  const eq = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+  return Boolean(new Function('ctx', 'eq', `return (${js});`)(ctx, eq));
+};
+const EVENTS = ['pull_request', 'schedule', 'workflow_dispatch', 'repository_dispatch', 'push'];
+const ctxFor = (event_name, ref, gate) => ({ github: { event_name, ref }, vars: { WF_GATE: gate }, inputs: { trusted_branch: 'main' } });
+
+test('the wf ci caller runs a pull request anywhere, anything else only on the trusted branch, and the schedule only with WF_GATE on (F1, F8)', () => {
+  const job = parseYaml(read('templates/github/channel/wf-ci.yml')).jobs.ci;
+  const runs = (event, ref, gate = 'on') => evalIf(job.if.replaceAll('__TRUSTED_BRANCH__', 'main'), ctxFor(event, ref, gate));
+  assert.ok(runs('pull_request', 'refs/pull/7/merge', '') && runs('pull_request', 'refs/pull/7/merge', 'on'), 'a pull request always runs: its check is required');
+  for (const event of ['workflow_dispatch', 'repository_dispatch']) {
+    assert.ok(runs(event, 'refs/heads/main', ''), `${event} on the trusted branch`);
+    for (const ref of ['refs/heads/feature', 'refs/heads/main2', 'refs/tags/v1.0.0', 'refs/heads/mainx']) assert.ok(!runs(event, ref), `${event} on ${ref}`);
+  }
+  assert.ok(runs('schedule', 'refs/heads/main', 'on'));
+  for (const gate of ['', 'off', 'yes']) assert.ok(!runs('schedule', 'refs/heads/main', gate), `a schedule with WF_GATE=${gate} spends no minutes`);
+  // The `if:` compares ignoring case, so the entry still refuses a branch that differs only in case, exactly.
+  assert.ok(runs('workflow_dispatch', 'refs/heads/MAIN'), 'the caller alone lets refs/heads/MAIN through');
+  assert.match(stepRun('.github/workflows/wf-gate.yml', 'Refuse any event'), /\[ "\$GITHUB_REF" = "refs\/heads\/\$TRUSTED" \]/);
+  for (const ref of ['refs/heads/MAIN', 'refs/heads/feature']) {
+    const r = sh('bash', ['-c', stepRun('.github/workflows/wf-gate.yml', 'Refuse any event')], { env: { PATH: process.env.PATH, EVENT: 'workflow_dispatch', TRUSTED: 'main', GITHUB_REF: ref } });
+    assert.notEqual(r.status, 0, ref);
+  }
+  assert.equal(sh('bash', ['-c', stepRun('.github/workflows/wf-gate.yml', 'Refuse any event')], { env: { PATH: process.env.PATH, EVENT: 'workflow_dispatch', TRUSTED: 'main', GITHUB_REF: 'refs/heads/main' } }).status, 0);
+  // The entry skips a scheduled run without the gate runner too, for a caller that lacks the guard.
+  const gate = parseYaml(read('.github/workflows/wf-gate.yml')).jobs.gate;
+  assert.ok(!evalIf(gate.if, ctxFor('schedule', 'refs/heads/main', '')) && evalIf(gate.if, ctxFor('schedule', 'refs/heads/main', 'on')));
+  for (const event of EVENTS.filter(e => e !== 'schedule')) assert.ok(evalIf(gate.if, ctxFor(event, 'refs/heads/main', '')), event);
+});
+
+test('the wf-status caller and entry run only on the trusted branch, the schedule only with WF_GATE on, and the entry refuses other refs exactly (F3, F8)', () => {
+  const caller = parseYaml(read('templates/github/channel/wf-status.yml')).jobs.status;
+  const entry = parseYaml(read('.github/workflows/wf-status.yml')).jobs.status;
+  for (const [what, expr] of [['caller', caller.if.replaceAll('__TRUSTED_BRANCH__', 'main')], ['entry', entry.if]]) {
+    const runs = (event, ref, gate = 'on') => evalIf(expr, ctxFor(event, ref, gate));
+    for (const event of ['push', 'workflow_dispatch', 'repository_dispatch']) {
+      assert.ok(runs(event, 'refs/heads/main', ''), `${what}: ${event} on main`);
+      for (const ref of ['refs/heads/feature', 'refs/heads/main2', 'refs/tags/v1.0.0']) assert.ok(!runs(event, ref), `${what}: ${event} on ${ref}`);
+    }
+    assert.ok(runs('schedule', 'refs/heads/main', 'on'), what);
+    for (const gate of ['', 'off']) assert.ok(!runs('schedule', 'refs/heads/main', gate), `${what}: schedule with WF_GATE=${gate}`);
+  }
+  assert.equal(caller.if, "github.ref == 'refs/heads/__TRUSTED_BRANCH__' && (github.event_name != 'schedule' || vars.WF_GATE == 'on')", 'the copied wf-status.yml\'s guard (MAINT-0023)');
+  assert.equal(caller.if, parseYaml(read('templates/github/wf-status.yml')).jobs.status.if);
+  const refuse = entry.steps[0];
+  assert.match(refuse.name, /^Refuse any ref but exactly the trusted branch/);
+  for (const [ref, ok] of [['refs/heads/main', true], ['refs/heads/MAIN', false], ['refs/heads/Main', false], ['refs/heads/main2', false]]) {
+    assert.equal(sh('bash', ['-c', refuse.run], { env: { PATH: process.env.PATH, TRUSTED: 'main', GITHUB_REF: ref } }).status === 0, ok, ref);
+  }
 });
 
 test('the shared client page: a thin caller, and an entry that resolves like the gate and records nothing, then renders from the resolved revision', () => {
@@ -258,4 +351,17 @@ test('the shared client page: a thin caller, and an entry that resolves like the
   assert.match(entry.jobs.build.if, /github\.event_name != 'pull_request'/, 'a pull request never builds or deploys');
   assert.deepEqual(entry.jobs.deploy.needs, 'build');
   assert.equal(entry.jobs.dispatch.permissions.actions, 'write');
+});
+
+// v2.19.1: bin/wf-gate-ci reads only the caller's `uses:` and `entry:` lines, so it accepts the hardened caller and still
+// accepts the v2.19.0 shape (no job `if:`): the host's merge gate, not wf ci, asks a channel project for the new blob.
+test('wf-gate-ci accepts the v2.19.1 caller and the v2.19.0 shape alike', async () => {
+  const { callerProblem } = await import('../../bin/wf-gate-ci');
+  const fill = text => text.replaceAll('__ENTRY__', 'v2.19.1').replaceAll('__TRUSTED_BRANCH__', 'main');
+  const now = fill(read('templates/github/channel/wf-ci.yml'));
+  assert.match(now, /^ {4}if: github\.event_name == 'pull_request' \|\|/m);
+  assert.equal(callerProblem(now, 'Cazy00/agent-workflow'), null);
+  const old = now.replace(/^ {4}if: .*\n/m, '').replace(/ # only for the entry's record job.*$/m, '');
+  assert.doesNotMatch(old, /^ {4}if:/m);
+  assert.equal(callerProblem(old, 'Cazy00/agent-workflow'), null);
 });

@@ -211,3 +211,17 @@ test('MAINT-0016: the v2.4.0 step adds the trial walker, and the upgrade install
   assert.ok(manifest['v2.4.0'].notes.some(n => /wf-protect --apply/.test(n)) && manifest['v2.4.0'].notes.some(n => /AGENTS\.md/.test(n)));
   assert.match(fs.readFileSync(new URL('../../adapters/upgrade.mjs', import.meta.url), 'utf8'), /\{ path: '\.claude\/agents\/trial-walker\.md', template: 'templates\/claude\/agents\/trial-walker\.md' \}/);
 });
+
+test('an upgrade across a release whose upgrades.json entry has no notes key succeeds and lists no note for it (F1 of the v2.19.1 release review)', t => {
+  // The v2.19.1 entry carries no `notes` key on purpose: a release within major 2 after the channel began may hold automated
+  // cleanup only (channel-compat.test.js), because a manual step makes it a major. So the plan must read an absent `notes` as none.
+  const r = releases(t); if (!r) return t.skip('not a Git checkout');
+  git(r.project, 'add', '-A'); git(r.project, 'commit', '-qm', 'adopted');
+  fs.writeFileSync(path.join(r.wf, 'upgrades.json'), `${JSON.stringify({ 'v2.0.0': { remove_config: [] } }, null, 2)}\n`);
+  git(r.wf, 'commit', '-qam', 'a release whose entry has no notes'); git(r.wf, 'tag', '-f', 'v2.0.0');
+  const out = r.up('--rev', 'v2.0.0', '--json');
+  assert.equal(out.status, 0, out.stdout + out.stderr);
+  const plan = JSON.parse(out.stdout);
+  assert.equal(plan.steps_from, 'release v2.0.0');
+  assert.ok(!plan.notes.some(n => n.startsWith('v2.0.0: ')), plan.notes.join(' | '));
+});

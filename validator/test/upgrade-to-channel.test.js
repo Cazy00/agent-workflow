@@ -69,7 +69,7 @@ function world(t) {
   git(wf, 'checkout', '-q', '-b', 'old');
   git(wf, 'rm', '-q', 'bin/wf-gate-ci'); bump('2.18.3'); git(wf, 'commit', '-qam', 'v2.18.3'); git(wf, 'tag', 'v2.18.3');
   git(wf, 'checkout', '-q', 'main');
-  bump('2.19.0'); git(wf, 'commit', '-qam', 'v2.19.0'); git(wf, 'tag', 'v2.19.0');
+  bump('2.19.0'); git(wf, 'commit', '-q', '--allow-empty', '-am', 'v2.19.0'); git(wf, 'tag', 'v2.19.0');
   const adopt = rev => {
     const project = path.join(temp, `project-${rev}`);
     fs.mkdirSync(project); git(project, 'init', '-q', '-b', 'main');

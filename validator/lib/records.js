@@ -147,12 +147,34 @@ function validateUsageConfig(u) {
   }
 }
 
+// v2.19.0: a project names a release channel (workflow.channel, with workflow.channel_key, the broker's public key or up
+// to four of them during a rotation) or a hold (workflow.revision), never both (docs/proposals/2026-11-07-central-release-
+// channel.md). Only the form is checked here; bin/wf-resolve decides what a channel resolves to and refuses the rest.
+export const CHANNEL_NAME = /^(?:stable|canary)(?:-([1-9]\d*))?$/;
+export const CHANNEL_KEY = /^ed25519:[A-Za-z0-9+/]{43}=$/;
+export function validateWorkflowConfig(w) {
+  if (w === undefined) return;
+  if (!plainObject(w)) throw new Error('workflow must be an object');
+  const set = v => v !== undefined && v !== null && v !== '';
+  if (set(w.channel)) {
+    const m = typeof w.channel === 'string' ? w.channel.match(CHANNEL_NAME) : null;
+    if (!m || (m[1] && Number(m[1]) <= 2)) throw new Error(`workflow.channel ${JSON.stringify(w.channel)} is not a channel: stable or canary (major 2), or stable-N / canary-N for a later major N`);
+    if (set(w.revision)) throw new Error('workflow names both channel and revision: a project follows a channel or holds a pin, never both');
+    if (!set(w.channel_key)) throw new Error('workflow.channel needs workflow.channel_key, the public key that signs channel records');
+  }
+  if (set(w.channel_key)) {
+    const keys = Array.isArray(w.channel_key) ? w.channel_key : [w.channel_key];
+    if (!keys.length || keys.length > 4 || keys.some(k => typeof k !== 'string' || !CHANNEL_KEY.test(k)) || new Set(keys).size !== keys.length) throw new Error('workflow.channel_key must be ed25519:<base64 of a 32-byte public key>, or a list of one to four different ones');
+  }
+}
+
 export function loadConfig(source) {
   const text = source.read('docs/workflow/config.json');
   if (text == null) throw new WfError(`docs/workflow/config.json not found in ${source.name}`);
   try {
     const config = JSON.parse(text);
     planningEnforcement(config);
+    validateWorkflowConfig(config.workflow);
     const tests = config.paths?.acceptance_tests;
     if (tests !== undefined && (!Array.isArray(tests) || tests.some(g => typeof g !== 'string' || !g.trim()))) throw new Error('paths.acceptance_tests must be an array of glob strings');
     validateAttestConfig(config.attest);
@@ -293,7 +315,7 @@ export function validateRecords(source, recordsDir, config = null) {
   let tests = config?.paths?.acceptance_tests, own = null;
   try { own = loadConfig(source); } catch { /* a missing or invalid config is reported where it is loaded */ }
   if (!config) tests = own?.paths?.acceptance_tests;
-  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source, { acceptanceTests: tests ?? [] }), ...versionErrors(all, own?.workflow?.version ?? null));
+  all.errors.push(...ownerErrors(all), ...validateAcceptanceFiles(source, { acceptanceTests: tests ?? [] }), ...versionErrors(all, own?.workflow?.channel || own?.workflow?.version || null));
   if (!all.profile) all.errors.unshift(`${recordsDir}/profile.md: missing`);
   return {
     ok: all.errors.length === 0,

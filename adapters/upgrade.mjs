@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { LEGACY_LAUNCHERS, sha256 } from './launcher.mjs';
-import { IN_PROGRESS } from '../validator/lib/records.js';
+import { IN_PROGRESS, validateWorkflowConfig } from '../validator/lib/records.js';
 
 const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 // Files the scaffold installs from a template, and how it fills them in.
@@ -160,6 +160,81 @@ export function planUpgrade({ project, workflowRepo, rev }) {
     else left.push({ path: item.path, why: `changed in this project; compare it with ${item.template} at ${to.slice(0, 12)} and merge by hand` });
   }
   return { project, from, to, from_version: fromRelease.version, to_version: toRelease.tag ?? `${toRelease.version} (unreleased)`, current: false, changes, notes, left, removed_config: removed, steps_from: raw === null ? null : listName };
+}
+
+// v2.19.0: the second of the two opt-in pull requests (docs/proposals/2026-11-07-central-release-channel.md, *Opting in*).
+// From a pin at v2.19.0 or later (the first one), or from another channel: writes workflow.channel and workflow.channel_key
+// in place of the pin, moves each milestone in progress and the profile to the channel's name, and replaces the copied
+// wf-ci.yml and wf-status.yml with the thin callers of the shared entry at the entry tag, where the project has not
+// changed them (else lists them). The callers come from the entry tag's own templates/github/channel/.
+export const CHANNEL_CALLERS = [
+  { path: '.github/workflows/wf-ci.yml', template: 'templates/github/channel/wf-ci.yml', copied: 'templates/github/wf-ci.yml', always: true },
+  { path: '.github/workflows/wf-status.yml', template: 'templates/github/channel/wf-status.yml', copied: 'templates/github/wf-status.yml' },
+];
+const FIRST_CHANNEL_RELEASE = 'v2.19.0';
+export function planToChannel({ project, workflowRepo, channel, keys, entry }) {
+  const configPath = path.join(project, 'docs/workflow/config.json');
+  if (!fs.existsSync(configPath)) throw new Error('docs/workflow/config.json not found: this project is not adopted (bin/wf-adopt)');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const w = config.workflow ?? {};
+  if (!keys?.length) throw new Error('--to-channel needs --key ed25519:<base64>, the public key that signs channel records (up to four, repeated)');
+  const nextWorkflow = { ...w, channel, channel_key: keys.length === 1 ? keys[0] : keys };
+  delete nextWorkflow.revision; delete nextWorkflow.version;
+  validateWorkflowConfig(nextWorkflow); // the channel name and the keys, as the validator will read them
+  const from = w.revision;
+  let fromVersion;
+  if (SHA.test(from ?? '')) {
+    if (git(workflowRepo, ['cat-file', '-e', `${from}^{commit}`], true).status !== 0) throw new Error(`the workflow repository does not hold the project's pinned revision ${from.slice(0, 12)}: fetch its full history and tags (git fetch --tags)`);
+    fromVersion = releaseOf(workflowRepo, from, { pin: true }).version;
+    if (show(workflowRepo, from, 'bin/wf-gate-ci') === null) throw new Error(`the pin ${fromVersion ?? from.slice(0, 12)} has no shared gate: first move the pin to ${FIRST_CHANNEL_RELEASE} or later with bin/wf-upgrade --rev (its own pull request), merge it, then opt in; the opt-in pull request is judged by the base branch's pin`);
+  } else if (typeof w.channel === 'string' && w.channel) fromVersion = `channel ${w.channel}`;
+  else throw new Error('the project names neither a full workflow.revision nor a channel');
+  const entryTag = entry ?? (SHA.test(from ?? '') ? releaseOf(workflowRepo, from).tag : null) ?? releaseTags(workflowRepo).find(t => compareVersions(t, FIRST_CHANNEL_RELEASE) >= 0 && show(workflowRepo, t, CHANNEL_CALLERS[0].template) !== null);
+  if (parseVersion(entryTag).length !== 3 || compareVersions(entryTag, FIRST_CHANNEL_RELEASE) < 0) throw new Error(`the entry must be a release tag ${FIRST_CHANNEL_RELEASE} or later (--entry vX.Y.Z), not ${entryTag ?? 'none'}`);
+  if (git(workflowRepo, ['rev-parse', '--verify', '-q', '--end-of-options', `refs/tags/${entryTag}^{commit}`], true).status !== 0) throw new Error(`the entry tag ${entryTag} is not in ${workflowRepo}: fetch the tags (git fetch --tags)`);
+
+  const changes = [], left = [];
+  const nextConfig = { ...config, workflow: nextWorkflow };
+  changes.push({ path: 'docs/workflow/config.json', action: 'update', content: `${JSON.stringify(nextConfig, null, 2)}\n`, why: `${fromVersion}${SHA.test(from ?? '') ? ` (${from.slice(0, 12)})` : ''} → channel ${channel}, verified with ${keys.length} key${keys.length === 1 ? '' : 's'}; the pin goes (a hold PR brings it back)` });
+  const rd = config.records_dir ?? 'docs/workflow';
+  const profilePath = path.join(project, rd, 'profile.md');
+  if (fs.existsSync(profilePath)) {
+    const profile = fs.readFileSync(profilePath, 'utf8');
+    const next = profile.replace(/^workflow_version:.*$/m, `workflow_version: ${channel}`);
+    if (next !== profile) changes.push({ path: `${rd}/profile.md`, action: 'update', content: next, why: 'workflow_version names the channel' });
+  }
+  const milestones = path.join(project, rd, 'milestones');
+  if (fs.existsSync(milestones)) for (const file of fs.readdirSync(milestones).filter(f => /^M-\d{4}\.md$/.test(f)).sort()) {
+    const rel = `${rd}/milestones/${file}`;
+    const text = fs.readFileSync(path.join(project, rel), 'utf8');
+    const front = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
+    const status = front?.match(/^status:[ \t]*(\S+)/m)?.[1];
+    if (!front || !IN_PROGRESS.includes(status)) continue;
+    const moved = /^workflow_version:.*$/m.test(front) ? front.replace(/^workflow_version:.*$/m, `workflow_version: ${channel}`) : front.replace(/^status:.*$/m, line => `${line}\nworkflow_version: ${channel}`);
+    if (moved !== front) changes.push({ path: rel, action: 'update', content: moved + text.slice(front.length), why: `${file.slice(0, 6)} is ${status}: from now on channel moves reach it, announced and recorded on every run; the owner's merge of this change is that decision` });
+  }
+  const branch = config.trusted_branch ?? 'main';
+  const fill = text => text.replaceAll('__TRUSTED_BRANCH__', branch).replaceAll('__ENTRY__', entryTag);
+  for (const item of CHANNEL_CALLERS) {
+    const template = show(workflowRepo, entryTag, item.template);
+    if (template === null) throw new Error(`${entryTag} has no ${item.template}`);
+    const want = fill(template);
+    const full = path.join(project, item.path);
+    if (!fs.existsSync(full)) { if (item.always) changes.push({ path: item.path, action: 'add', content: want, why: `the thin caller of the shared entry at ${entryTag}` }); continue; }
+    const have = fs.readFileSync(full, 'utf8');
+    if (have === want) continue;
+    const copied = SHA.test(from ?? '') ? show(workflowRepo, from, item.copied) : null;
+    const knownCaller = /uses:\s*\S+\/\.github\/workflows\/wf-(?:gate|status)\.yml@v\d+\.\d+\.\d+/.test(have) && have.replace(/v\d+\.\d+\.\d+/g, 'vX') === want.replace(/v\d+\.\d+\.\d+/g, 'vX');
+    if ((copied !== null && have.replaceAll('__TRUSTED_BRANCH__', branch) === copied.replaceAll('__TRUSTED_BRANCH__', branch)) || knownCaller) changes.push({ path: item.path, action: 'update', content: want, why: `still the pinned release's copy: the thin caller of the shared entry at ${entryTag} replaces it` });
+    else left.push({ path: item.path, why: `changed in this project; replace it with ${item.template} at ${entryTag} (fill __TRUSTED_BRANCH__ and __ENTRY__) and keep your additions by hand` });
+  }
+  const notes = [
+    `required check: the gate now reports as \`wf ci / gate\` (a reusable workflow's job is named <caller job> / <called job>): move the required check and the merge route to that name when this merges`,
+    'Actions policy: the repository must allow workflows from Cazy00/agent-workflow (Settings, Actions, General)',
+  ];
+  if (fs.existsSync(path.join(project, '.github/workflows/wf-client-page.yml'))) notes.push('.github/workflows/wf-client-page.yml still reads workflow.revision and has no shared entry yet: it fails on a channel config until one is released; delete it or keep the project on a hold');
+  if (fs.existsSync(path.join(project, 'scripts/wf'))) notes.push('scripts/wf, the local launcher, still needs workflow.revision, so it refuses a channel config until it resolves channels (a later part of v2.19.0); CI does not use it');
+  return { project, from: from ?? null, to: `channel ${channel}`, from_version: fromVersion, to_version: `channel ${channel}`, entry: entryTag, current: false, changes, notes, left, removed_config: ['workflow.revision', 'workflow.version'].filter(k => k.split('.')[1] in w) };
 }
 
 // Writes the plan. Refuses when a file it would change has uncommitted edits, so nothing of the owner's is overwritten.

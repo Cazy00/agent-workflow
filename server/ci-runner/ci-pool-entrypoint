@@ -2,13 +2,24 @@
 # ci-pool-entrypoint: runs inside a pool container (ci-pool-runner.service) once ci-pool has pushed the runner's
 # just-in-time config to /etc/ci-pool/jit. Reads and removes it, runs the runner for exactly one job as the `runner` user,
 # then powers the container off; ci-pool deletes a stopped container. The pool image has no other way to register.
+# The runner runs the image's job-started check (/opt/ci-hooks/job-started.sh, written by ci-pool-image) before any step
+# of the job: a run that a trusted account did not start, or a pull request from another repository, runs nothing here.
+# An image without the check starts no runner.
 set -euo pipefail
 jit=/etc/ci-pool/jit
+started=/opt/ci-hooks/job-started.sh
 config="$(cat "$jit")"
 rm -f "$jit"
+if [ ! -x "$started" ]; then
+  echo "ci-pool-entrypoint: the image has no job-started check ($started); no runner is started" >&2
+  systemctl poweroff
+  exit 1
+fi
+export ACTIONS_RUNNER_HOOK_JOB_STARTED="$started"
 if [ -x /opt/ci-hooks/clean-docker.sh ]; then
   export ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/ci-hooks/clean-docker.sh
 fi
 cd /opt/actions-runner
-sudo -u runner -H --preserve-env=ACTIONS_RUNNER_HOOK_JOB_COMPLETED ./run.sh --jitconfig "$config" || true
+sudo -u runner -H --preserve-env=ACTIONS_RUNNER_HOOK_JOB_STARTED,ACTIONS_RUNNER_HOOK_JOB_COMPLETED \
+  ./run.sh --jitconfig "$config" || true
 systemctl poweroff

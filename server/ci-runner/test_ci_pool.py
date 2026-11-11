@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2007,6 +2008,340 @@ esac
         self.assertNotEqual(code, 0)
         self.assertTrue(calls[-1].startswith("query -X PATCH"))  # it stops there: -new stays for the next build to find
         self.assertNotIn("image alias rename ci-pool-gate ci-pool-gate-prev", calls)
+
+
+BASH = shutil.which("bash")
+
+
+def pull_request(head, base):
+    return {"pull_request": {"head": {"repo": {"full_name": head}}, "base": {"repo": {"full_name": base}}}}
+
+
+class JobStartedCheckTests(unittest.TestCase):
+    """The pool image's job-started check: ci-pool-image writes it into the image, ci-pool-entrypoint points the runner's
+    ACTIONS_RUNNER_HOOK_JOB_STARTED at it. Run here as the runner runs it (`bash -e PATH`), with the values the runner
+    exports from GitHub's job message."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(HERE, "ci-pool-image")) as f:
+            image = f.read()
+        start = "cat > /opt/ci-hooks/job-started.sh <<'JOBHOOK'\n"
+        cls.image = image
+        cls.text = image[image.index(start) + len(start):image.index("\nJOBHOOK\n")] + "\n"
+        cls.dir = tempfile.mkdtemp()
+        # The image's list, as the build writes it from the default TRUSTED_ACTORS (lower case, one a line)
+        cls.list = os.path.join(cls.dir, "trusted-actors")
+        with open(cls.list, "w") as f:
+            f.write("cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\n")
+        assert cls.text.count("list=/opt/ci-hooks/trusted-actors\n") == 1
+        text = cls.text.replace("list=/opt/ci-hooks/trusted-actors\n", "list=%s\n" % cls.list)
+        cls.hook = cls.write(text, "job-started.sh")
+        # The same check, but it takes a bash script for the runner's Worker executable, so a fake Worker can stand in
+        pattern = "worker_exe='/opt/actions-runner/bin*/Runner.Worker'"
+        assert text.count(pattern) == 1
+        cls.fake_worker_hook = cls.write(text.replace(pattern, "worker_exe='%s'" % os.path.realpath(BASH)),
+                                         "job-started-fake-worker.sh")
+
+    @classmethod
+    def write(cls, text, name):
+        path = os.path.join(cls.dir, name)
+        with open(path, "w") as f:
+            f.write(text)
+        os.chmod(path, 0o755)
+        return path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir)
+
+    def env(self, d, actor="Cazy00", triggering="Cazy00", event="push", payload=None, raw=None):
+        path = os.path.join(d, "event.json")
+        with open(path, "w") as f:
+            f.write(raw if raw is not None else json.dumps({} if payload is None else payload))
+        return {"PATH": os.environ["PATH"], "GITHUB_ACTOR": actor, "GITHUB_TRIGGERING_ACTOR": triggering,
+                "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": path}
+
+    def run_hook(self, drop=(), **kw):
+        with tempfile.TemporaryDirectory() as d:
+            env = self.env(d, **kw)
+            for name in drop:
+                env.pop(name)
+            return subprocess.run([BASH, "-e", self.hook], env=env, capture_output=True, text=True, timeout=30)
+
+    def assertAllowed(self, r):
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(": allowed", r.stdout)
+        self.assertNotIn("::error::", r.stdout)
+
+    def assertRefused(self, r, why):
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("::error::ci-pool refused this job: ", r.stdout)
+        self.assertIn(why, r.stdout)
+        self.assertNotIn(": allowed", r.stdout)
+
+    def test_the_check_parses_as_bash_and_is_written_for_both_kinds(self):
+        self.assertEqual(subprocess.run([BASH, "-n", self.hook], capture_output=True).returncode, 0)
+        body = self.image[self.image.index("<<'PROVISION'"):self.image.index("\nPROVISION\n")]
+        at = body.index("\ncat > /opt/ci-hooks/job-started.sh")  # at the top level, not inside a kind's block
+        self.assertLess(at, body.index("# Docker, then the hook that clears it"))  # before the build-only part: gate images too
+        self.assertLess(body.index("install -d -m 0755 /opt/ci-hooks"), at)
+        self.assertIn("chmod 0755 /opt/ci-hooks/job-started.sh", body)
+        self.assertIn("chmod 0644 /opt/ci-hooks/trusted-actors", body)
+        self.assertLess(body.index("useradd -m -s /bin/bash runner"), at)
+        # The provisioning runs as root (lxc exec), so both files are root's; the runner can read, not write, them.
+        self.assertNotIn("chown", body[body.index("install -d -m 0755 /opt/ci-hooks"):body.index("chmod 0755 /opt/ci-hooks/job-started.sh")])
+
+    def test_external_commands_are_called_by_absolute_path(self):
+        for command in ("/usr/bin/jq -r", "/usr/bin/readlink", "/usr/bin/sleep 3"):
+            self.assertIn(command, self.text)
+        code = "\n".join(line for line in self.text.splitlines() if not line.lstrip().startswith("#"))
+        for bare in ("cat", "jq", "readlink", "sleep"):  # no command found through PATH
+            self.assertIsNone(re.search(r"(?<![/\w.-])%s\b" % bare, code.replace("/usr/bin/" + bare, "")), bare)
+
+    def build_part(self, start, end, env):
+        part = self.image[self.image.index(start):self.image.index(end)]
+        return subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], env={"PATH": os.environ["PATH"], **env},
+                              capture_output=True, text=True, timeout=30)
+
+    def test_the_build_refuses_a_trusted_list_that_is_empty_or_not_logins(self):
+        start, end = 'read -ra actors <<<"$TRUSTED_ACTORS"\n[[', 'alias="ci-pool-$kind"'
+        self.assertIn('TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"', self.image)
+        for good in ("Cazy00 MontaDev-sys workspace-executor-2eaa[bot]", "one", "a-b  c1"):
+            with self.subTest(good=good):
+                self.assertEqual(self.build_part(start, end, {"TRUSTED_ACTORS": good}).returncode, 0)
+        for bad in ("", "   ", "a;b", "-a", "a-", "a[bot", "a/b", "*", "a b\\c", "$(id)"):
+            with self.subTest(bad=bad):
+                r = self.build_part(start, end, {"TRUSTED_ACTORS": bad})
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("TRUSTED_ACTORS", r.stderr)
+
+    def test_the_build_writes_the_list_in_lower_case_one_a_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            start = 'read -ra actors <<<"$TRUSTED_ACTORS"\nprintf'
+            part = self.image[self.image.index(start):self.image.index("chmod 0644 /opt/ci-hooks/trusted-actors")]
+            part = part.replace("/opt/ci-hooks/trusted-actors", os.path.join(d, "list"))
+            open(os.path.join(d, "workspace-executor-2eaab"), "w").close()  # a file the login would match as a glob
+            r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], cwd=d, capture_output=True, text=True,
+                               env={"PATH": os.environ["PATH"], "TRUSTED_ACTORS": "Cazy00 MontaDev-sys workspace-executor-2eaa[bot]"})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(os.path.join(d, "list")) as f:
+                self.assertEqual(f.read(), "cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\n")
+
+    def test_the_owners_run_is_allowed(self):
+        self.assertAllowed(self.run_hook())
+        self.assertAllowed(self.run_hook(event="workflow_dispatch"))
+        self.assertIn("a push run of Cazy00, this attempt by Cazy00: allowed", self.run_hook().stdout)
+
+    def test_the_trusted_accounts_are_matched_ignoring_case(self):
+        self.assertAllowed(self.run_hook(actor="MONTADEV-SYS", triggering="cazy00"))
+        self.assertAllowed(self.run_hook(actor="Workspace-Executor-2eaa[bot]", triggering="MontaDev-sys"))
+
+    def test_the_owners_own_pull_request_is_allowed(self):
+        for event in ("pull_request", "pull_request_target"):
+            with self.subTest(event=event):
+                self.assertAllowed(self.run_hook(event=event, payload=pull_request("Cazy00/shop", "Cazy00/shop")))
+
+    def test_a_foreign_actor_is_refused(self):
+        self.assertRefused(self.run_hook(actor="stranger"), "GITHUB_ACTOR is stranger, not a trusted account")
+
+    def test_a_foreign_rerun_of_the_owners_run_is_refused(self):
+        self.assertRefused(self.run_hook(triggering="stranger"), "GITHUB_TRIGGERING_ACTOR is stranger, not a trusted account")
+
+    def test_a_login_like_a_trusted_one_is_refused(self):
+        for login in ("cazy00-x", "cazy0", "xcazy00", "cazy00 ", "workspace-executor-2eaa", "*", "[c]azy00", "montadev-sys[bot]"):
+            with self.subTest(login=login):
+                self.assertRefused(self.run_hook(actor=login), "not a trusted account")
+                self.assertRefused(self.run_hook(triggering=login), "not a trusted account")
+
+    def test_a_pull_request_from_a_fork_is_refused(self):
+        for event in ("pull_request", "pull_request_target", "pull_request_review", "pull_request_review_comment"):
+            with self.subTest(event=event):
+                r = self.run_hook(event=event, payload=pull_request("stranger/shop", "Cazy00/shop"))
+                self.assertRefused(r, "a pull request from stranger/shop into Cazy00/shop, another repository")
+
+    def test_a_fork_of_the_owner_with_the_same_name_is_refused(self):
+        r = self.run_hook(event="pull_request", payload=pull_request("MontaDev-sys/shop", "Cazy00/shop"))
+        self.assertRefused(r, "another repository")
+
+    def test_a_pull_request_in_any_events_payload_is_checked(self):
+        # GitHub's issue_comment payload names its pull request by URL only (below); this pins that a payload which does
+        # carry a pull request is checked whatever the event is called.
+        r = self.run_hook(event="merge_group", payload=pull_request("stranger/shop", "Cazy00/shop"))
+        self.assertRefused(r, "another repository")
+
+    def test_a_trusted_comment_on_a_pull_request_is_checked_by_its_actor(self):
+        payload = {"issue": {"number": 7, "pull_request": {"url": "https://api.github.com/repos/Cazy00/shop/pulls/7"}}}
+        self.assertAllowed(self.run_hook(event="issue_comment", payload=payload))
+        self.assertRefused(self.run_hook(event="issue_comment", payload=payload, actor="stranger"), "not a trusted account")
+
+    def test_a_workflow_run_of_a_fork_is_refused(self):
+        payload = {"workflow_run": {"head_repository": {"full_name": "stranger/shop"}, "repository": {"full_name": "Cazy00/shop"}}}
+        self.assertRefused(self.run_hook(event="workflow_run", payload=payload), "a workflow run of stranger/shop in Cazy00/shop")
+        payload["workflow_run"]["head_repository"]["full_name"] = "Cazy00/shop"
+        self.assertAllowed(self.run_hook(event="workflow_run", payload=payload))
+
+    def test_a_missing_or_unreadable_value_refuses(self):
+        cases = {
+            "no actor": (dict(drop=("GITHUB_ACTOR",)), "GITHUB_ACTOR is not set"),
+            "empty actor": (dict(actor=""), "GITHUB_ACTOR is not set"),
+            "no triggering actor": (dict(drop=("GITHUB_TRIGGERING_ACTOR",)), "GITHUB_TRIGGERING_ACTOR is not set"),
+            "no event name": (dict(drop=("GITHUB_EVENT_NAME",)), "GITHUB_EVENT_NAME is not set"),
+            "no payload path": (dict(drop=("GITHUB_EVENT_PATH",)), "missing or unreadable"),
+            "payload not JSON": (dict(raw="{not json"), "not one JSON object"),
+            "payload empty": (dict(raw=""), "not one JSON object"),
+            "payload an array": (dict(raw="[1]"), "not one JSON object"),
+            "two payloads": (dict(raw="{} {}"), "not one JSON object"),
+            "a pull_request event without one": (dict(event="pull_request"), "whose payload has no pull request"),
+            "a pull_request_target event without one": (dict(event="pull_request_target"), "whose payload has no pull request"),
+            "a workflow_run event without one": (dict(event="workflow_run"), "whose payload has no workflow run"),
+            "a deleted fork": (dict(event="pull_request", payload={"pull_request": {"head": {"repo": None},
+                                                                                     "base": {"repo": {"full_name": "Cazy00/shop"}}}}),
+                               "head or base repository is missing"),
+            "empty names": (dict(event="pull_request", payload=pull_request("", "")), "head or base repository is missing"),
+            "a name that is not a string": (dict(event="pull_request", payload=pull_request(["Cazy00/shop"], ["Cazy00/shop"])),
+                                            "head or base repository is missing"),
+            "a pull request that is not an object": (dict(event="pull_request", payload={"pull_request": "Cazy00/shop"}),
+                                                     "head or base repository is missing"),
+        }
+        for name, (kw, why) in cases.items():
+            with self.subTest(name):
+                self.assertRefused(self.run_hook(**kw), why)
+
+    def test_a_missing_or_empty_trusted_list_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, content in (("absent", None), ("empty", ""), ("blank lines", "\n\n")):
+                with self.subTest(name):
+                    path = os.path.join(d, name.replace(" ", "-"))
+                    if content is not None:
+                        with open(path, "w") as f:
+                            f.write(content)
+                    hook = self.write(self.text.replace("list=/opt/ci-hooks/trusted-actors\n", "list=%s\n" % path),
+                                      "job-started-%s.sh" % name.replace(" ", "-"))
+                    r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
+                    self.assertRefused(r, "cannot be read" if content is None else "not a trusted account")
+
+    def test_a_payload_path_that_is_not_a_readable_file_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = self.env(d)
+            for path in (os.path.join(d, "absent.json"), d):
+                with self.subTest(path=path):
+                    r = subprocess.run([BASH, "-e", self.hook], env={**env, "GITHUB_EVENT_PATH": path},
+                                       capture_output=True, text=True, timeout=30)
+                    self.assertRefused(r, "missing or unreadable")
+            if os.geteuid() != 0:  # root reads a file whatever its mode
+                os.chmod(env["GITHUB_EVENT_PATH"], 0)
+                r = subprocess.run([BASH, "-e", self.hook], env=env, capture_output=True, text=True, timeout=30)
+                self.assertRefused(r, "missing or unreadable")
+
+    def test_an_error_inside_the_check_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(self.hook) as f:
+                text = f.read()
+            hook = self.write(text.replace("/usr/bin/jq", os.path.join(d, "no-jq")), "job-started-no-jq.sh")
+            r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
+        self.assertRefused(r, "not one JSON object")  # the reader is missing: no payload was read, so no run is allowed
+
+    def fake_worker(self, d, start_hook):
+        """A process named Runner.Worker (the name the check looks for) that starts the check, then 'a step'."""
+        worker = os.path.join(d, "Runner.Worker")
+        with open(worker, "w") as f:
+            f.write('#!%s\n%s\necho "a step ran"\n' % (BASH, start_hook))
+        os.chmod(worker, 0o755)
+        return worker
+
+    def test_a_refusal_kills_the_runner_worker_so_no_step_runs(self):
+        for how, start_hook in (("as its child", '%s -e "$HOOK"' % BASH),
+                                ("through a shell", "/bin/sh -c '%s -e \"$HOOK\"; true'" % BASH)):  # review F2
+            with self.subTest(how), tempfile.TemporaryDirectory() as d:
+                worker = self.fake_worker(d, start_hook)
+                refused = subprocess.run([worker], env={**self.env(d, actor="stranger"), "HOOK": self.fake_worker_hook},
+                                         capture_output=True, text=True, timeout=60)
+                allowed = subprocess.run([worker], env={**self.env(d), "HOOK": self.fake_worker_hook},
+                                         capture_output=True, text=True, timeout=60)
+                self.assertEqual(refused.returncode, -9, refused.stdout + refused.stderr)  # SIGKILL
+                self.assertIn("GITHUB_ACTOR is stranger", refused.stdout)
+                self.assertNotIn("a step ran", refused.stdout)
+                self.assertNotIn("cannot stop the job", refused.stdout)
+                self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+                self.assertIn("a step ran", allowed.stdout)
+
+    def test_only_the_runners_own_executable_counts_as_its_worker(self):
+        # The same fake, but the check now wants the runner's executable (/opt/actions-runner/bin*/Runner.Worker): a
+        # process that only has the name is not killed, and outside the pool image the check says it cannot stop the job.
+        with tempfile.TemporaryDirectory() as d:
+            worker = self.fake_worker(d, '%s -e "$HOOK"' % BASH)
+            r = subprocess.run([worker], env={**self.env(d, actor="stranger"), "HOOK": self.hook},
+                               capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a step ran", r.stdout)
+        self.assertIn("found no Runner.Worker and is not the pool image's own, so it cannot stop the job", r.stdout)
+
+    def test_without_its_worker_the_pool_images_own_check_ends_every_process_of_its_user(self):
+        # Not run (it would end every process of the user running the tests): the fallback is only the installed
+        # check's, never root's, and comes after the Worker was looked for.
+        stop = self.text[self.text.index("stop_job() {"):self.text.index("\n}\n", self.text.index("stop_job() {"))]
+        self.assertLess(stop.index('if worker="$(find_worker)"; then'), stop.index("kill -KILL -1"))
+        self.assertIn('elif [[ "${BASH_SOURCE[0]}" == /opt/ci-hooks/job-started.sh && $EUID -ne 0 ]]; then', stop)
+        self.assertEqual(self.text.count("kill -KILL -1"), 1)
+        self.assertLess(stop.index("$EUID -ne 0 ]]; then"), stop.index("kill -KILL -1"))
+        self.assertLess(stop.index("kill -KILL -1"), stop.index("else"))
+        find = self.text[self.text.index("find_worker() {"):self.text.index("stop_job() {")]
+        self.assertIn("for depth in 1 2; do", find)  # the parent or its parent, never further up
+
+    def test_a_refusal_outside_the_runner_says_it_cannot_stop_the_job(self):
+        r = self.run_hook(actor="stranger")
+        self.assertIn("so it cannot stop the job", r.stdout)
+
+
+class EntrypointTests(unittest.TestCase):
+    """ci-pool-entrypoint, run with its paths moved into a scratch directory and sudo and systemctl faked."""
+
+    def run_entrypoint(self, d, hook_present=True):
+        with open(os.path.join(HERE, "ci-pool-entrypoint")) as f:
+            body = f.read()
+        for old, new in (("/etc/ci-pool/jit", "jit"), ("/opt/ci-hooks/", "hooks/"), ("/opt/actions-runner", "runner")):
+            self.assertIn(old, body)
+            body = body.replace(old, os.path.join(d, new))
+        os.makedirs(os.path.join(d, "hooks"))
+        os.makedirs(os.path.join(d, "runner"))
+        with open(os.path.join(d, "jit"), "w") as f:
+            f.write("CONFIG")
+        if hook_present:
+            hook = os.path.join(d, "hooks", "job-started.sh")
+            with open(hook, "w") as f:
+                f.write("#!/bin/bash\n")
+            os.chmod(hook, 0o755)
+        prelude = ('sudo() { printf "%s\\n" "$@" > "$D/sudo-args"; env > "$D/sudo-env"; }\n'
+                   'systemctl() { echo "$*" >> "$D/systemctl"; }\n')
+        return subprocess.run([BASH, "-c", prelude + body], env={"PATH": os.environ["PATH"], "D": d},
+                              capture_output=True, text=True, timeout=30)
+
+    def read(self, d, name):
+        with open(os.path.join(d, name)) as f:
+            return f.read()
+
+    def test_the_runner_runs_with_the_job_started_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self.run_entrypoint(d)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            args = self.read(d, "sudo-args").splitlines()
+            self.assertIn("--preserve-env=ACTIONS_RUNNER_HOOK_JOB_STARTED,ACTIONS_RUNNER_HOOK_JOB_COMPLETED", args)
+            self.assertEqual(args[-3:], ["./run.sh", "--jitconfig", "CONFIG"])
+            self.assertIn("ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\n" % os.path.join(d, "hooks", "job-started.sh"),
+                          self.read(d, "sudo-env"))
+            self.assertEqual(self.read(d, "systemctl"), "poweroff\n")
+            self.assertFalse(os.path.exists(os.path.join(d, "jit")))
+
+    def test_an_image_without_the_check_starts_no_runner(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self.run_entrypoint(d, hook_present=False)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("no runner is started", r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(d, "sudo-args")))
+            self.assertEqual(self.read(d, "systemctl"), "poweroff\n")
+            self.assertFalse(os.path.exists(os.path.join(d, "jit")))  # the config is gone either way
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,11 @@ SHARE="${SHARE:-/usr/local/share/ci-runner}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
 TMP_SIZE="${TMP_SIZE:-2G}"
+# The accounts whose runs a pool container runs (the job-started check below), compared ignoring case. They must be the
+# JIT source's trusted accounts; the default is home's, the accounts its broker's repo_shared check trusts (the owner, the
+# agent and the executor App's bot). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses
+# every job.
+TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -25,6 +30,12 @@ case "$2" in
   wf-gate | gate) kind=gate ;;
   *) usage ;;
 esac
+read -ra actors <<<"$TRUSTED_ACTORS"
+[[ ${#actors[@]} -gt 0 ]] || { echo "ci-pool-image: TRUSTED_ACTORS names no account" >&2; exit 2; }
+for actor in "${actors[@]}"; do
+  [[ "$actor" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\[bot\])?$ ]] \
+    || { echo "ci-pool-image: TRUSTED_ACTORS: not a GitHub login: $actor" >&2; exit 2; }
+done
 alias="ci-pool-$kind"
 work="ci-pool-image-$kind-$$"
 trap 'rc=$?; echo "ci-pool-image: failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
@@ -39,7 +50,7 @@ $LXC file push "$SHARE/ci-pool-runner.service" "$work/etc/systemd/system/ci-pool
 # deletes the container, since the service's journal otherwise says only that the build exited.
 rc=0
 $LXC exec -T "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
-  --env TMP_SIZE="$TMP_SIZE" -- bash -s <<'PROVISION' || rc=$?
+  --env TMP_SIZE="$TMP_SIZE" --env TRUSTED_ACTORS="${actors[*]}" -- bash -s <<'PROVISION' || rc=$?
 set -Eeuo pipefail  # -E: the ERR trap below also fires inside a function, such as purge_updaters
 umask 022
 exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1
@@ -112,41 +123,73 @@ rm /tmp/runner.tar.gz
 /opt/actions-runner/bin/installdependencies.sh >/dev/null
 
 # The job-started check, in both kinds (ci-pool-entrypoint sets ACTIONS_RUNNER_HOOK_JOB_STARTED to it, and starts no runner
-# without it). Root's and read-only to the runner, and a container serves one job, so no job's code has run before it.
+# without it), and the trusted accounts it reads. Root's and read-only to the runner, and a container serves one job, so no
+# job's code has run before it.
 install -d -m 0755 /opt/ci-hooks
+read -ra actors <<<"$TRUSTED_ACTORS"
+printf '%s\n' "${actors[@],,}" > /opt/ci-hooks/trusted-actors
+chmod 0644 /opt/ci-hooks/trusted-actors
 cat > /opt/ci-hooks/job-started.sh <<'JOBHOOK'
 #!/bin/bash
 # ci-pool's job-started check (ACTIONS_RUNNER_HOOK_JOB_STARTED, set by ci-pool-entrypoint). The runner runs it as the
 # `runner` user once GitHub has given it the job, before any step, job container, service or action of the job. The job
-# goes on only when a trusted account started the run (GITHUB_ACTOR) and started this attempt (GITHUB_TRIGGERING_ACTOR),
-# and a pull request's head repository is its base repository (no fork). The runner takes these from GitHub's job message:
-# it exports them from the job's github context and writes the event payload to GITHUB_EVENT_PATH before this runs, and
-# no code of the job has run yet that could change them. A value that is missing or cannot be read refuses.
+# goes on only when a trusted account (/opt/ci-hooks/trusted-actors, from ci-pool-image's TRUSTED_ACTORS) started the run
+# (GITHUB_ACTOR) and this attempt (GITHUB_TRIGGERING_ACTOR), and a pull request's head repository is its base repository
+# (no fork). The runner takes these from GitHub's job message: it exports them from the job's github context and writes the
+# event payload to GITHUB_EVENT_PATH before this runs, and no code of the job has run yet that could change them. The job's
+# own `env:` does not reach this process (server/ci-runner/README.md says why). A value that is missing or cannot be read
+# refuses.
 # A failed hook fails the job, but the runner still runs each later step whose own `if:` holds, as `always()` does, and a
-# pull request's workflow file is its author's. So a refusal kills the job's Runner.Worker, this script's parent: no step
-# runs at all.
+# pull request's workflow file is its author's. So a refusal kills the job's Runner.Worker, and where it cannot find it, in
+# the pool image, every process of the runner's user: no step runs at all.
 set -uo pipefail
-# The trusted accounts, in lower case: the job source's (on home: the owner, the agent and the executor App's bot, the
-# accounts the broker's repo_shared check trusts). Logins are compared ignoring case, as GitHub compares them.
-trusted=(cazy00 montadev-sys 'workspace-executor-2eaa[bot]')
+list=/opt/ci-hooks/trusted-actors
+worker_exe='/opt/actions-runner/bin*/Runner.Worker'  # the runner's Worker (bin.VERSION after a self-update)
 allowed=no
 reason="the check stopped before it finished"
 shown() { local v="${1//[^A-Za-z0-9._\/\[\]-]/?}"; printf '%s' "${v:0:120}"; }
+# The Runner.Worker that started this check: its parent, or the parent's parent (a runner that wraps hooks in a shell),
+# by name and by executable. Never further up: a test of this check runs under some other runner's Worker.
+find_worker() {
+  local pid="$PPID" depth comm exe key value rest
+  for depth in 1 2; do
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
+    { read -r comm < "/proc/$pid/comm"; } 2>/dev/null || return 1
+    exe="$(/usr/bin/readlink "/proc/$pid/exe" 2>/dev/null)" || exe=""
+    # shellcheck disable=SC2053  # the right side is a pattern
+    if [[ "$comm" == Runner.Worker && "$exe" == $worker_exe ]]; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    value=""
+    while IFS=$':\t ' read -r key value rest; do [[ "$key" == PPid ]] && break; value=""; done 2>/dev/null < "/proc/$pid/status"
+    pid="$value"
+  done
+  return 1
+}
 stop_job() {
+  local worker
   printf '::error::ci-pool refused this job: %s\n' "$reason"
-  if [ "$(cat "/proc/$PPID/comm" 2>/dev/null)" = Runner.Worker ]; then
-    sleep 3  # so the line above reaches the job's live log first
-    kill -KILL "$PPID" 2>/dev/null || true
+  if worker="$(find_worker)"; then
+    /usr/bin/sleep 3 || true  # so the line above reaches the job's live log first
+    kill -KILL "$worker" 2>/dev/null || true
+  elif [[ "${BASH_SOURCE[0]}" == /opt/ci-hooks/job-started.sh && $EUID -ne 0 ]]; then
+    # The pool image's own check, as the runner's user, in a container that serves this one job: end every process of
+    # that user (the runner's Listener and Worker; not this one).
+    /usr/bin/sleep 3 || true
+    kill -KILL -1 2>/dev/null || true
   else
-    printf '::error::ci-pool: this check was not started by Runner.Worker, so it cannot stop the job: the job fails, but its always() steps may still run\n'
+    printf '::error::ci-pool: this check found no Runner.Worker and is not the pool image'"'"'s own, so it cannot stop the job: the job fails, but its always() steps may still run\n'
   fi
 }
 # Every way out but the one at the end refuses, an unexpected error included.
 trap '[ "$allowed" = yes ] || { stop_job; exit 1; }' EXIT
 refuse() { reason="$1"; exit 1; }
+trusted=()
+{ mapfile -t trusted < "$list"; } 2>/dev/null || refuse "the trusted accounts ($list) cannot be read"
 is_trusted() {
   local who="${1,,}" t
-  for t in "${trusted[@]}"; do [[ "$who" == "$t" ]] && return 0; done
+  for t in "${trusted[@]}"; do [[ -n "$t" && "$who" == "${t,,}" ]] && return 0; done
   return 1
 }
 for name in GITHUB_ACTOR GITHUB_TRIGGERING_ACTOR; do
@@ -160,7 +203,7 @@ payload="${GITHUB_EVENT_PATH-}"
 [[ -n "$payload" && -f "$payload" && -r "$payload" ]] || refuse "the event payload (GITHUB_EVENT_PATH) is missing or unreadable"
 # One value a line, then "." (command substitution drops trailing empty lines): whether the payload has a pull request,
 # its head and base repositories, whether it has a workflow run, and that run's head repository and repository.
-fields="$(jq -r '
+fields="$(/usr/bin/jq -r '
   def name(p): (try p catch null) | if type == "string" then . else "" end;
   if type != "object" then error("not an object") else
     (has("pull_request") | tostring),
@@ -177,7 +220,9 @@ case "$event" in
   workflow_run)
     [[ "${f[3]}" == true ]] || refuse "a workflow_run event whose payload has no workflow run" ;;
 esac
-# A payload with a pull request, whatever the event (review and comment events run the pull request's code too)
+# A payload with a pull request, whatever the event: the review and review-comment events run the pull request's code too.
+# (An issue_comment payload names its pull request only by URL: its workflow runs from the base branch, and the actor
+# check is what applies to it.)
 if [[ "${f[0]}" == true ]]; then
   [[ -n "${f[1]}" && -n "${f[2]}" ]] || refuse "the pull request's head or base repository is missing (a deleted fork reads so)"
   [[ "${f[1]}" == "${f[2]}" ]] || refuse "a pull request from $(shown "${f[1]}") into $(shown "${f[2]}"), another repository"

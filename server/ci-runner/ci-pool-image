@@ -147,37 +147,54 @@ list=/opt/ci-hooks/trusted-actors
 worker_exe='/opt/actions-runner/bin*/Runner.Worker'  # the runner's Worker (bin.VERSION after a self-update)
 allowed=no
 reason="the check stopped before it finished"
+# What a refusal reports beside its reason (stop_job): the values as the runner gave them, and the repositories once read.
+event="${GITHUB_EVENT_NAME-}"
+actor="${GITHUB_ACTOR-}"
+triggering="${GITHUB_TRIGGERING_ACTOR-}"
+repository="${GITHUB_REPOSITORY-}"
+pr_repos=""    # "HEAD into BASE" of the payload's pull request
+run_repos=""   # "HEAD in REPOSITORY" of the payload's workflow run
 shown() { local v="${1//[^A-Za-z0-9._\/\[\]-]/?}"; printf '%s' "${v:0:120}"; }
+said() { if [[ -n "$1" ]]; then shown "$1"; else printf 'not set'; fi; }
 # The Runner.Worker that started this check: its parent, or the parent's parent (a runner that wraps hooks in a shell),
 # by name and by executable. Never further up: a test of this check runs under some other runner's Worker.
 find_worker() {
   local pid="$PPID" depth comm exe key value rest
   for depth in 1 2; do
     [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
-    { read -r comm < "/proc/$pid/comm"; } 2>/dev/null || return 1
-    exe="$(/usr/bin/readlink "/proc/$pid/exe" 2>/dev/null)" || exe=""
+    read -r comm < "/proc/$pid/comm" || return 1
+    exe="$(/usr/bin/readlink "/proc/$pid/exe")" || exe=""
     # shellcheck disable=SC2053  # the right side is a pattern
     if [[ "$comm" == Runner.Worker && "$exe" == $worker_exe ]]; then
       printf '%s' "$pid"
       return 0
     fi
     value=""
-    while IFS=$':\t ' read -r key value rest; do [[ "$key" == PPid ]] && break; value=""; done 2>/dev/null < "/proc/$pid/status"
+    while IFS=$':\t ' read -r key value rest; do [[ "$key" == PPid ]] && break; value=""; done < "/proc/$pid/status"
     pid="$value"
   done
   return 1
 }
 stop_job() {
-  local worker
-  printf '::error::ci-pool refused this job: %s\n' "$reason"
+  local worker lines
+  # Which check failed, and the values it read: the actors, the event, the repository and the repositories of the
+  # payload's pull request or workflow run.
+  lines="$(printf '::error::ci-pool refused this job: %s\n' "$reason"
+           printf '::error::ci-pool: event %s, actor %s, triggering actor %s, repository %s, pull request %s, workflow run %s\n' \
+             "$(said "$event")" "$(said "$actor")" "$(said "$triggering")" "$(said "$repository")" \
+             "${pr_repos:-none}" "${run_repos:-none}")"
+  printf '%s\n' "$lines"
   if worker="$(find_worker)"; then
-    /usr/bin/sleep 3 || true  # so the line above reaches the job's live log first
-    kill -KILL "$worker" 2>/dev/null || true
+    # Also to the Worker's own stderr: the runner's Listener attaches what its Worker printed to the failed job as an
+    # error when the Worker dies, so the refusal stays on the job, though the killed Worker uploads no more of this log.
+    printf '%s\n' "$lines" > "/proc/$worker/fd/2" || true
+    /usr/bin/sleep 3 || true  # so the lines above reach the job's live log first
+    kill -KILL "$worker" || true
   elif [[ "${BASH_SOURCE[0]}" == /opt/ci-hooks/job-started.sh && $EUID -ne 0 ]]; then
     # The pool image's own check, as the runner's user, in a container that serves this one job: end every process of
     # that user (the runner's Listener and Worker; not this one).
     /usr/bin/sleep 3 || true
-    kill -KILL -1 2>/dev/null || true
+    kill -KILL -1 || true
   else
     printf '::error::ci-pool: this check found no Runner.Worker and is not the pool image'"'"'s own, so it cannot stop the job: the job fails, but its always() steps may still run\n'
   fi
@@ -186,7 +203,7 @@ stop_job() {
 trap '[ "$allowed" = yes ] || { stop_job; exit 1; }' EXIT
 refuse() { reason="$1"; exit 1; }
 trusted=()
-{ mapfile -t trusted < "$list"; } 2>/dev/null || refuse "the trusted accounts ($list) cannot be read"
+mapfile -t trusted < "$list" || refuse "the trusted accounts ($list) cannot be read"
 is_trusted() {
   local who="${1,,}" t
   for t in "${trusted[@]}"; do [[ -n "$t" && "$who" == "${t,,}" ]] && return 0; done
@@ -197,7 +214,6 @@ for name in GITHUB_ACTOR GITHUB_TRIGGERING_ACTOR; do
   [[ -n "$value" ]] || refuse "$name is not set"
   is_trusted "$value" || refuse "$name is $(shown "$value"), not a trusted account"
 done
-event="${GITHUB_EVENT_NAME-}"
 [[ -n "$event" ]] || refuse "GITHUB_EVENT_NAME is not set"
 payload="${GITHUB_EVENT_PATH-}"
 [[ -n "$payload" && -f "$payload" && -r "$payload" ]] || refuse "the event payload (GITHUB_EVENT_PATH) is missing or unreadable"
@@ -211,9 +227,11 @@ fields="$(/usr/bin/jq -r '
     (has("workflow_run") | tostring),
     name(.workflow_run.head_repository.full_name), name(.workflow_run.repository.full_name),
     "."
-  end' "$payload" 2>/dev/null)" || refuse "the event payload is not one JSON object"
+  end' "$payload")" || refuse "the event payload is not one JSON object (the reader's error is above)"
 mapfile -t f <<<"$fields"
 [[ ${#f[@]} -eq 7 && "${f[6]}" == . ]] || refuse "the event payload is not one JSON object"
+[[ "${f[0]}" != true ]] || pr_repos="$(said "${f[1]}") into $(said "${f[2]}")"
+[[ "${f[3]}" != true ]] || run_repos="$(said "${f[4]}") in $(said "${f[5]}")"
 case "$event" in
   pull_request | pull_request_target | pull_request_review | pull_request_review_comment)
     [[ "${f[0]}" == true ]] || refuse "a $event event whose payload has no pull request" ;;

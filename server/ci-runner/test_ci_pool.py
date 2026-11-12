@@ -1749,6 +1749,17 @@ esac
         self.assertLess(body.index("playwright install --with-deps"), body.index("chown -R runner:runner /opt/ms-playwright"))
         self.assertLess(body.index("useradd -m -s /bin/bash runner"), body.index("chown -R runner:runner /opt/ms-playwright"))
 
+    def test_the_build_image_can_compile_native_node_modules(self):  # 2026-11-12: electron-rebuild "not found: make"
+        t = self.text("ci-pool-image")
+        body = t[t.index("<<'PROVISION'"):t.index("\nPROVISION\n")]
+        start = body.index('if [ "$KIND" = build ]; then\n  # Docker')
+        build = body[start:body.index("\nfi\n", start)]
+        # node-gyp needs make, a C++ compiler and python3; installed after a refresh of the lists
+        self.assertIn("apt-get install -y build-essential python3", build)
+        self.assertLess(build.index("apt-get update"), build.index("apt-get install -y build-essential python3"))
+        # the build kind only: a gate container gets no compiler
+        self.assertNotIn("build-essential", body[:start] + body[start + len(build):])
+
     def test_the_tmpfs_line_is_written_when_the_image_has_no_fstab(self):  # 2026-10-30 build failure
         t = self.text("ci-pool-image")
         part = t[t.index("touch /etc/fstab\n"):t.index("systemctl enable ci-pool-runner.service")]

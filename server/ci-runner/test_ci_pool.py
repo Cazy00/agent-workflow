@@ -2302,8 +2302,9 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertEqual(code, -9, out)
         self.assertNotIn("a step ran", out)
         self.assertIn("GITHUB_ACTOR is stranger", out)
-        # The write that was killed after 1 s says so in the job's log (#116 review 2; timeout exits 124 then).
-        self.assertIn("ci-pool: the refusal could not be written to the Worker's stderr (exit 124)", hook_err)
+        # The write that was killed after 1 s says so in the job's log (#116 review 2). The status is timeout's: GNU's
+        # sends the KILL to its own group too and ends 137, uutils' ends 124.
+        self.assertRegex(hook_err, r"ci-pool: the refusal could not be written to the Worker's stderr \(exit (124|137)\)")
 
     def test_the_write_to_the_worker_appends(self):  # #115 review N1: what fd 2 points at is never truncated
         with tempfile.TemporaryDirectory() as d:

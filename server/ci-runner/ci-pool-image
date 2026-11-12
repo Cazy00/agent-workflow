@@ -187,7 +187,11 @@ stop_job() {
   if worker="$(find_worker)"; then
     # Also to the Worker's own stderr: the runner's Listener attaches what its Worker printed to the failed job as an
     # error when the Worker dies, so the refusal stays on the job, though the killed Worker uploads no more of this log.
-    printf '%s\n' "$lines" > "/proc/$worker/fd/2" || true
+    # Appended (never truncating what fd 2 points at), in the background and for 1 s at most: a write that blocks (a
+    # full pipe nobody drains) is killed, and the kill below never waits for it.
+    # A write that fails or is killed says so in the job's log.
+    { /usr/bin/timeout -s KILL 1 /usr/bin/bash -c 'printf "%s\n" "$1" >> "$2"' ci-pool-job-started "$lines" "/proc/$worker/fd/2" \
+        || printf "ci-pool: the refusal could not be written to the Worker's stderr (exit %s)\n" "$?" >&2; } &
     /usr/bin/sleep 3 || true  # so the lines above reach the job's live log first
     kill -KILL "$worker" || true
   elif [[ "${BASH_SOURCE[0]}" == /opt/ci-hooks/job-started.sh && $EUID -ne 0 ]]; then

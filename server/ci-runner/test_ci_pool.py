@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2093,10 +2094,11 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertNotIn("chown", body[body.index("install -d -m 0755 /opt/ci-hooks"):body.index("chmod 0755 /opt/ci-hooks/job-started.sh")])
 
     def test_external_commands_are_called_by_absolute_path(self):
-        for command in ("/usr/bin/jq -r", "/usr/bin/readlink", "/usr/bin/sleep 3"):
+        for command in ("/usr/bin/jq -r", "/usr/bin/readlink", "/usr/bin/sleep 3", "/usr/bin/timeout -s KILL 1",
+                        "/usr/bin/bash -c"):
             self.assertIn(command, self.text)
         code = "\n".join(line for line in self.text.splitlines() if not line.lstrip().startswith("#"))
-        for bare in ("cat", "jq", "readlink", "sleep"):  # no command found through PATH
+        for bare in ("cat", "jq", "readlink", "sleep", "timeout", "bash"):  # no command found through PATH (#116 review 3)
             self.assertIsNone(re.search(r"(?<![/\w.-])%s\b" % bare, code.replace("/usr/bin/" + bare, "")), bare)
 
     def build_part(self, start, end, env):
@@ -2242,13 +2244,13 @@ class JobStartedCheckTests(unittest.TestCase):
             r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
         self.assertRefused(r, "not one JSON object")  # the reader is missing: no payload was read, so no run is allowed
 
-    def fake_worker(self, d, start_hook):
-        """A process named Runner.Worker (the name the check looks for) that starts the check, then 'a step'. The
-        check's own stderr goes to $HOOK_ERR (start_hook says so), so what reaches the Worker's stderr is what the check
-        wrote there itself."""
+    def fake_worker(self, d, start_hook, before=""):
+        """A process named Runner.Worker (the name the check looks for) that runs `before`, starts the check, then 'a
+        step'. The check's own stderr goes to $HOOK_ERR (start_hook says so), so what reaches the Worker's stderr is what
+        the check wrote there itself."""
         worker = os.path.join(d, "Runner.Worker")
         with open(worker, "w") as f:
-            f.write('#!%s\n%s\necho "a step ran"\n' % (BASH, start_hook))
+            f.write('#!%s\n%s\n%s\necho "a step ran"\n' % (BASH, before, start_hook))
         os.chmod(worker, 0o755)
         return worker
 
@@ -2272,6 +2274,58 @@ class JobStartedCheckTests(unittest.TestCase):
                 self.assertNotIn("cannot stop the job", refused.stdout)
                 self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
                 self.assertIn("a step ran", allowed.stdout)
+                self.assertNotIn("::error::", allowed.stderr)  # an allowed run writes nothing to the Worker (#115 N4)
+
+    def test_a_worker_whose_stderr_is_full_is_still_killed(self):  # #115 review N2, #774 review F2
+        # The Worker's stderr is a pipe nobody reads, filled by a writer left blocked on it: the check's write to it
+        # blocks, and is given 1 s in the background; the kill does not wait for it.
+        with tempfile.TemporaryDirectory() as d:
+            worker = self.fake_worker(d, '%s -e "$HOOK" 2>"$HOOK_ERR"' % BASH,
+                                      before="head -c 1048576 /dev/zero >&2 &\nsleep 1")
+            env = {**self.env(d, actor="stranger"), "HOOK": self.fake_worker_hook, "HOOK_ERR": os.path.join(d, "hook.err")}
+            # Its own session, so that whatever happens the Worker's whole group (the check, the filler) is ended below
+            # and the test fails rather than hangs (#116 review 1).
+            p = subprocess.Popen([worker], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                code = p.wait(timeout=30)  # never reads the Worker's stderr while it runs
+            finally:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                p.stderr.close()  # a writer still blocked on the full pipe gets SIGPIPE
+                out = p.stdout.read().decode()
+                p.stdout.close()
+                p.wait()
+            with open(env["HOOK_ERR"]) as f:
+                hook_err = f.read()
+        self.assertEqual(code, -9, out)
+        self.assertNotIn("a step ran", out)
+        self.assertIn("GITHUB_ACTOR is stranger", out)
+        # The write that was killed after 1 s says so in the job's log (#116 review 2). The status is timeout's: GNU's
+        # sends the KILL to its own group too and ends 137, uutils' ends 124.
+        self.assertRegex(hook_err, r"ci-pool: the refusal could not be written to the Worker's stderr \(exit (124|137)\)")
+
+    def test_the_write_to_the_worker_appends(self):  # #115 review N1: what fd 2 points at is never truncated
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "worker.log")
+            with open(log, "w") as f:
+                f.write("earlier worker output\n")
+            worker = self.fake_worker(d, '%s -e "$HOOK" 2>"$HOOK_ERR"' % BASH, before='exec 2>>"$WORKER_LOG"')
+            env = {**self.env(d, actor="stranger"), "HOOK": self.fake_worker_hook, "HOOK_ERR": os.path.join(d, "hook.err"),
+                   "WORKER_LOG": log}
+            r = subprocess.run([worker], env=env, capture_output=True, text=True, timeout=60)
+            with open(log) as f:
+                written = f.read()
+        self.assertEqual(r.returncode, -9, r.stdout + r.stderr)
+        self.assertTrue(written.startswith("earlier worker output\n::error::ci-pool refused this job: "), written)
+
+    def test_the_write_to_the_worker_is_bounded_and_in_the_background(self):
+        # The behaviour is in the full-pipe and append tests above; this pins only that the write is the bounded one
+        # and is started before the kill (#116 review 4: no line shape beyond that).
+        stop = self.text[self.text.index("stop_job() {"):self.text.index("\n}\n", self.text.index("stop_job() {"))]
+        at = stop.index('/usr/bin/timeout -s KILL 1 /usr/bin/bash -c \'printf "%s\\n" "$1" >> "$2"\'')
+        self.assertLess(at, stop.index('kill -KILL "$worker"'))
 
     def test_only_the_runners_own_executable_counts_as_its_worker(self):
         # The same fake, but the check now wants the runner's executable (/opt/actions-runner/bin*/Runner.Worker): a

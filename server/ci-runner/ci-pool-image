@@ -4,7 +4,8 @@
 # publishes, as runner-setup does), git, gh and Node; for build also Docker, build-essential and python3 (node-gyp),
 # Playwright's browsers and postgres:18.6 already pulled, and /tmp as tmpfs. The runner is not registered: ci-pool-entrypoint registers it with a just-in-time config when
 # a container starts, and the job-started check written here (/opt/ci-hooks/job-started.sh) refuses a job a trusted account
-# did not start, or a pull request from another repository, before any of its steps runs. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
+# (or an accepted writer of the job's repository) did not start, or a pull request from another repository, before any of
+# its steps runs. The image keeps its alias (ci-pool-build, ci-pool-gate); the one it replaces is kept as ALIAS-prev,
 # and the one before that is deleted.
 # Nothing here runs this on a schedule: a host rebuilds on release, and a weekly timer, if it wants one, is its own to add.
 # A container takes no updates of its own (no apt timers), so its packages are as new as this build, which ends in a full
@@ -20,6 +21,11 @@ TMP_SIZE="${TMP_SIZE:-2G}"
 # agent and the executor App's bot). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses
 # every job.
 TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"
+# Accepted writers, per repository (optional): one "owner/repo login" pair a line, in lower case, the login a user's (no
+# [bot]). The job-started check accepts that login as it accepts a trusted account, for a job of that repository alone
+# (GITHUB_REPOSITORY). A missing file means none. The host writes it from a list it reviews (home renders it when it
+# installs the pool), so this repository names no repository and no login. The build refuses (exit 2) any other line.
+ACCEPTED_WRITERS_FILE="$SHARE/ci-pool-accepted-writers"
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -38,6 +44,23 @@ for actor in "${actors[@]}"; do
 done
 alias="ci-pool-$kind"
 work="ci-pool-image-$kind-$$"
+writers=()
+if [[ -e "$ACCEPTED_WRITERS_FILE" || -L "$ACCEPTED_WRITERS_FILE" ]]; then
+  [[ -f "$ACCEPTED_WRITERS_FILE" && -r "$ACCEPTED_WRITERS_FILE" ]] \
+    || { echo "ci-pool-image: $ACCEPTED_WRITERS_FILE is not a readable file" >&2; exit 2; }
+  n=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    if [[ ! "$line" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?/[a-z0-9._-]+\ [a-z0-9]([a-z0-9-]*[a-z0-9])?$ \
+          || "${line%% *}" == */. || "${line%% *}" == */.. ]]; then
+      echo "ci-pool-image: $ACCEPTED_WRITERS_FILE line $n is not one \"owner/repo login\" pair in lower case" >&2
+      exit 2
+    fi
+    writers+=("$line")
+  done < "$ACCEPTED_WRITERS_FILE"
+fi
+# To the provisioning as one value: the lines joined by commas, which no line holds
+accepted_writers="$(IFS=,; printf '%s' "${writers[*]}")"
 trap 'rc=$?; echo "ci-pool-image: failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
 trap '$LXC delete --force "$work" >/dev/null 2>&1 || true' EXIT
 
@@ -50,7 +73,8 @@ $LXC file push "$SHARE/ci-pool-runner.service" "$work/etc/systemd/system/ci-pool
 # deletes the container, since the service's journal otherwise says only that the build exited.
 rc=0
 $LXC exec -T "$work" --env KIND="$kind" --env NODE_MAJOR="$NODE_MAJOR" --env POSTGRES_IMAGE="$POSTGRES_IMAGE" \
-  --env TMP_SIZE="$TMP_SIZE" --env TRUSTED_ACTORS="${actors[*]}" -- bash -s <<'PROVISION' || rc=$?
+  --env TMP_SIZE="$TMP_SIZE" --env TRUSTED_ACTORS="${actors[*]}" --env ACCEPTED_WRITERS="$accepted_writers" \
+  -- bash -s <<'PROVISION' || rc=$?
 set -Eeuo pipefail  # -E: the ERR trap below also fires inside a function, such as purge_updaters
 umask 022
 exec > >(tee -a /var/log/ci-pool-provision.log) 2>&1
@@ -123,27 +147,33 @@ rm /tmp/runner.tar.gz
 /opt/actions-runner/bin/installdependencies.sh >/dev/null
 
 # The job-started check, in both kinds (ci-pool-entrypoint sets ACTIONS_RUNNER_HOOK_JOB_STARTED to it, and starts no runner
-# without it), and the trusted accounts it reads. Root's and read-only to the runner, and a container serves one job, so no
-# job's code has run before it.
+# without it), the trusted accounts and the accepted writers it reads. Root's and read-only to the runner, and a container
+# serves one job, so no job's code has run before it.
 install -d -m 0755 /opt/ci-hooks
 read -ra actors <<<"$TRUSTED_ACTORS"
 printf '%s\n' "${actors[@],,}" > /opt/ci-hooks/trusted-actors
 chmod 0644 /opt/ci-hooks/trusted-actors
+# The accepted writers ci-pool-image read and checked, one "owner/repo login" a line; none is an empty file
+IFS=, read -ra writers <<<"${ACCEPTED_WRITERS-}"
+if [[ ${#writers[@]} -gt 0 ]]; then printf '%s\n' "${writers[@]}"; fi > /opt/ci-hooks/accepted-writers
+chmod 0644 /opt/ci-hooks/accepted-writers
 cat > /opt/ci-hooks/job-started.sh <<'JOBHOOK'
 #!/bin/bash
 # ci-pool's job-started check (ACTIONS_RUNNER_HOOK_JOB_STARTED, set by ci-pool-entrypoint). The runner runs it as the
 # `runner` user once GitHub has given it the job, before any step, job container, service or action of the job. The job
 # goes on only when a trusted account (/opt/ci-hooks/trusted-actors, from ci-pool-image's TRUSTED_ACTORS) started the run
 # (GITHUB_ACTOR) and this attempt (GITHUB_TRIGGERING_ACTOR), and a pull request's head repository is its base repository
-# (no fork). The runner takes these from GitHub's job message: it exports them from the job's github context and writes the
-# event payload to GITHUB_EVENT_PATH before this runs, and no code of the job has run yet that could change them. The job's
-# own `env:` does not reach this process (server/ci-runner/README.md says why). A value that is missing or cannot be read
-# refuses.
+# (no fork). An accepted writer of the job's repository (GITHUB_REPOSITORY; /opt/ci-hooks/accepted-writers, from
+# ci-pool-image's input) counts as a trusted account for that job alone; the fork checks apply to every actor. The runner
+# takes these from GitHub's job message: it exports them from the job's github context and writes the event payload to
+# GITHUB_EVENT_PATH before this runs, and no code of the job has run yet that could change them. The job's own `env:` does
+# not reach this process (server/ci-runner/README.md says why). A value that is missing or cannot be read refuses.
 # A failed hook fails the job, but the runner still runs each later step whose own `if:` holds, as `always()` does, and a
 # pull request's workflow file is its author's. So a refusal kills the job's Runner.Worker, and where it cannot find it, in
 # the pool image, every process of the runner's user: no step runs at all.
 set -uo pipefail
 list=/opt/ci-hooks/trusted-actors
+writers=/opt/ci-hooks/accepted-writers  # "owner/repo login" a line: that login counts for that repository's jobs alone
 worker_exe='/opt/actions-runner/bin*/Runner.Worker'  # the runner's Worker (bin.VERSION after a self-update)
 allowed=no
 reason="the check stopped before it finished"
@@ -213,10 +243,40 @@ is_trusted() {
   for t in "${trusted[@]}"; do [[ -n "$t" && "$who" == "${t,,}" ]] && return 0; done
   return 1
 }
+# The accepted writers of this job's repository: the logins on the lines whose repository is GITHUB_REPOSITORY, both
+# compared ignoring case. Read only for an actor who is not a trusted account. An unset or empty GITHUB_REPOSITORY
+# accepts no one; a list that cannot be read refuses.
+accepted=()
+accepted_read=no
+is_accepted() {
+  local who="${1,,}" here="${repository,,}" line r l rest lines=()
+  [[ -n "$here" ]] || return 1
+  if [[ "$accepted_read" == no ]]; then
+    [[ -f "$writers" ]] || refuse "the accepted writers ($writers) cannot be read: not a file"
+    mapfile -t lines < "$writers" || refuse "the accepted writers ($writers) cannot be read"
+    for line in "${lines[@]}"; do
+      r="" l="" rest=""
+      read -r r l rest <<<"$line" || true
+      if [[ -n "$r" && -n "$l" && -z "$rest" && "${r,,}" == "$here" ]]; then accepted+=("${l,,}"); fi
+    done
+    accepted_read=yes
+  fi
+  for l in "${accepted[@]}"; do [[ "$who" == "$l" ]] && return 0; done
+  return 1
+}
+as_writer=()  # the actors that passed as accepted writers, lower case, each once
 for name in GITHUB_ACTOR GITHUB_TRIGGERING_ACTOR; do
   value="${!name-}"
   [[ -n "$value" ]] || refuse "$name is not set"
-  is_trusted "$value" || refuse "$name is $(shown "$value"), not a trusted account"
+  is_trusted "$value" && continue
+  if is_accepted "$value"; then
+    [[ " ${as_writer[*]} " == *" ${value,,} "* ]] || as_writer+=("${value,,}")
+    continue
+  fi
+  if [[ -n "$repository" ]]; then
+    refuse "$name is $(shown "$value"), not a trusted account or an accepted writer of $(shown "${repository,,}")"
+  fi
+  refuse "$name is $(shown "$value"), not a trusted account (GITHUB_REPOSITORY is not set, so no accepted writer counts)"
 done
 [[ -n "$event" ]] || refuse "GITHUB_EVENT_NAME is not set"
 payload="${GITHUB_EVENT_PATH-}"
@@ -254,8 +314,13 @@ if [[ "${f[3]}" == true ]]; then
   [[ -n "${f[4]}" && -n "${f[5]}" ]] || refuse "the workflow run's head repository or repository is missing"
   [[ "${f[4]}" == "${f[5]}" ]] || refuse "a workflow run of $(shown "${f[4]}") in $(shown "${f[5]}"), another repository"
 fi
-printf 'ci-pool: a %s run of %s, this attempt by %s: allowed\n' "$(shown "$event")" "$(shown "$GITHUB_ACTOR")" \
-  "$(shown "$GITHUB_TRIGGERING_ACTOR")"
+note=""
+if [[ ${#as_writer[@]} -gt 0 ]]; then
+  note="; $(shown "${as_writer[0]}")${as_writer[1]:+ and $(shown "${as_writer[1]}")}"
+  note+=" passed as an accepted writer of $(shown "${repository,,}")"
+fi
+printf 'ci-pool: a %s run of %s, this attempt by %s: allowed%s\n' "$(shown "$event")" "$(shown "$GITHUB_ACTOR")" \
+  "$(shown "$GITHUB_TRIGGERING_ACTOR")" "$note"
 allowed=yes
 exit 0
 JOBHOOK

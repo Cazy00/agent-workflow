@@ -1,5 +1,6 @@
 # Profile for a pool gate container (ci-pool, MAINT-0017 D1): git and gh only, so no nesting and no intercepts.
 # `ci-pool check-profiles` refuses a profile with any other key or device.
+# eth0 has LXD's bridge port isolation: the container cannot reach another one on lxdbr0 that has it too.
 # Create with: lxc profile create ci-pool-gate && lxc profile edit ci-pool-gate < ci-pool-gate.yaml
 name: ci-pool-gate
 description: ci-pool gate container (git and gh)
@@ -19,3 +20,4 @@ devices:
     type: nic
     name: eth0
     network: lxdbr0
+    security.port_isolation: "true"

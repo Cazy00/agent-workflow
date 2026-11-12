@@ -257,5 +257,8 @@
   },
   "v2.19.5": {
     "remove_config": []
+  },
+  "v2.19.6": {
+    "remove_config": []
   }
 }

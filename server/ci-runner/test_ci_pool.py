@@ -153,6 +153,8 @@ class Env:
         self.runner_id = "77"  # the id the next `jit create` answers
         self.held = set()  # runner names GitHub still holds: a `create` with one fails, as GitHub refuses a taken name
         self.create_fails = lambda name: False  # True: that `create` fails (an upstream error, the broker's cap)
+        self.create_seconds = 0  # how long each `create` takes, on the pool's clock
+        self.stop = False  # a SIGTERM the pool has seen
         self.mem = {}  # container -> what read_memory would answer for it
         self.cgroup = os.path.join(self.tmp.name, "cgroup")
         self.restart()
@@ -162,7 +164,8 @@ class Env:
         self.pool = pool.Pool(self.cfg, self.lxc, pool.State(self.cfg["state_file"]), run_cmd=self.cmd,
                               host=lambda: self.host, clock=lambda: self.now,
                               diag=pool.DiagKeeper(self.cfg, self.lxc, lambda: self.now, cgroup_root=self.cgroup),
-                              memory=lambda n: self.mem.get(n, {"memory_peak_mib": None, "oom_kill": None}))
+                              memory=lambda n: self.mem.get(n, {"memory_peak_mib": None, "oom_kill": None}),
+                              stopping=lambda: self.stop)
 
     def cmd(self, argv):
         self.commands.append(argv)
@@ -174,6 +177,7 @@ class Env:
                 return json.dumps({"version": 1, "repo": argv[2], "private": self.private, "jobs": self.queued, **extra})
             return json.dumps({"version": 1, "repo": argv[2], "jobs": [{"id": "1", "runner_name": n} for n in self.running], **extra})
         if argv[1] == "create":
+            self.now += self.create_seconds
             if argv[4] in self.held:
                 raise pool.PoolError("jit failed: upstream_error (422: a runner with this name already exists)")
             if self.create_fails(argv[4]):
@@ -540,6 +544,132 @@ class BackoffTests(unittest.TestCase):  # I-132; workspace plan 2026-11-09-subtr
         self.assertEqual(self.jit_calls(e), [["jit", "remove", "o/r", "1099"],
                                              ["jit", "create", "o/r", "wf-gate", "ci-pool-wf-gate-88341032-a1"]])
         self.assertEqual(e.lxc.names("start"), ["pool-wf-gate-128388341032"])
+
+    # the review of #119 (rv7c372ca2367a0304): S1 a failure every job shares, S2 a source that hangs, S3 a long wait, S4 the cap
+    def wide_gate(self):
+        e = Env(self, labels={"wf-gate": {"profile": "p", "image": "i", "cap": 10, "memory": "1GiB"}})
+        e.host = {**GOOD, "mem_available_mib": 100000}
+        return e
+
+    def test_a_failure_every_job_shares_costs_two_calls_a_pass_doubles_no_pause_and_ends_within_two_minutes(self):  # S1
+        e = self.wide_gate()
+        for n in range(10):
+            e.job(str(500 + n), "wf-gate", created=f"2026-10-29T19:00:{n:02d}Z")
+        e.create_fails = lambda name: True
+        per_pass, deferred = [], 0
+        for _ in range(31 * 60 // 15):  # a 31-minute outage of the source
+            n = e.creates()
+            deferred += sum(1 for ev in e.events() if ev["event"] == "label_deferred")
+            per_pass.append(e.creates() - n)
+            e.now += 15
+        self.assertEqual(max(per_pass), 2, "a second failure in a pass stops the label for the pass")
+        self.assertGreater(deferred, 0)
+        self.assertEqual(max(j["failures"] for j in e.pool.state.jobs.values()), 1, "only the first failure was a job's own")
+        self.assertEqual({j["retry_after"] - j["finished"] for j in e.pool.state.jobs.values()}, {120})
+        over = e.now
+        e.create_fails = lambda name: False
+        for _ in range(20):
+            if e.lxc.names("start"):
+                break
+            e.tick()
+            e.now += 15
+        self.assertTrue(e.lxc.names("start"))
+        self.assertLessEqual(e.now - over, 120 + 15, "a start within retry_seconds of the source's return")
+
+    def test_a_job_that_fails_while_its_neighbours_start_still_doubles_its_own_pause(self):  # S1: I-132's case stays per job
+        e = self.wide_gate()
+        e.job("100", "wf-gate", created="2026-10-29T19:00:00Z")
+        e.create_fails = lambda name: "-100-" in name
+        pauses = []
+        for n in range(4):
+            e.job(str(200 + n), "wf-gate", created=f"2026-10-29T19:01:{n:02d}Z")  # a neighbour, which starts
+            pauses += [ev["retry_in"] for ev in e.events() if ev["event"] == "jit_failed"]
+            e.now += pauses[-1]
+        self.assertEqual(pauses, [120, 240, 480, 960])
+
+    def test_a_slow_or_hung_source_spends_the_launch_budget_and_the_rest_waits_for_the_next_pass(self):  # S2
+        e = self.wide_gate()
+        for n in range(3):
+            e.job(str(300 + n), "wf-gate", created=f"2026-10-29T19:00:{n:02d}Z")
+        e.create_seconds = 70  # each create works, slowly
+        events = e.events()
+        self.assertEqual(e.created(), ["ci-pool-wf-gate-300-a1", "ci-pool-wf-gate-301-a1"])
+        self.assertIn("launch_deferred", [ev["event"] for ev in events])
+        e.create_seconds = 0
+        e.now += 15
+        e.tick()
+        self.assertEqual(e.created()[-1], "ci-pool-wf-gate-302-a1")
+        h = self.wide_gate()
+        for n in range(3):
+            h.job(str(300 + n), "wf-gate", created=f"2026-10-29T19:00:{n:02d}Z")
+        h.create_seconds, h.create_fails = 125, (lambda name: True)  # a create that hangs to the command timeout
+        h.tick()
+        self.assertEqual(h.creates(), 1, "one hung call a pass, not one a job")
+
+    def test_after_a_stop_is_asked_for_no_start_begins(self):  # S2
+        e = Env(self)
+        e.job("100")
+        e.stop = True
+        events = e.events()
+        self.assertEqual(e.creates(), 0)
+        self.assertIn(("launch_deferred", "the pool is stopping"), [(ev["event"], ev.get("why")) for ev in events])
+
+    def test_the_first_refused_stale_removal_ends_the_removals_of_that_attempt(self):  # S2
+        e = Env(self)
+        e.pool.state.jobs["900"] = {
+            "container": "pool-wf-gate-900", "repo": "o/r", "label": "wf-gate", "runner_id": "7",
+            "runner_name": "ci-pool-wf-gate-900-a3", "started": e.now - 500, "status": "failed", "assigned": False,
+            "attempt": 3, "failures": 1, "retry_after": e.now - 1, "finished": e.now - 200, "runner_gone": False,
+            "stale": ["5", "6"]}
+        e.job("900", "wf-gate")
+        e.remove_fails = True
+        e.tick()
+        self.assertEqual(self.jit_calls(e), [["jit", "remove", "o/r", "5"],
+                                             ["jit", "create", "o/r", "wf-gate", "ci-pool-wf-gate-900-a4"]])
+        self.assertEqual(e.pool.state.jobs["900"]["stale"], ["5", "6", "7"], "kept, the refused one first")
+        e.lxc.instances["pool-wf-gate-900"]["status"] = "Stopped"  # a4's runner took another job and is done
+        e.remove_fails = False
+        e.now += 15
+        e.tick()  # reaped; runner 77 removed
+        e.commands.clear()
+        e.now += 15
+        e.tick()
+        self.assertEqual(self.jit_calls(e), [["jit", "remove", "o/r", "5"], ["jit", "remove", "o/r", "6"],
+                                             ["jit", "remove", "o/r", "7"],
+                                             ["jit", "create", "o/r", "wf-gate", "ci-pool-wf-gate-900-a5"]])
+
+    def test_a_failed_entry_keeps_its_stale_runner_and_attempt_past_the_hard_timeout_and_goes_a_day_after(self):  # S3
+        e = Env(self)
+        e.lxc.fail, e.remove_fails = {"start"}, True
+        e.job("900", "wf-gate")
+        e.tick()  # a1's start fails and GitHub refuses the removal of its runner 77
+        e.queued = []  # the job waits longer than the hard timeout (behind the cap, in the review's case)
+        e.lxc.fail, e.remove_fails, e.runner_id = set(), False, "78"
+        e.now += e.cfg["hard_timeout_seconds"] + 100
+        e.tick()
+        self.assertIn("900", e.pool.state.jobs)
+        e.job("900", "wf-gate")
+        e.commands.clear()
+        e.now += 15
+        e.tick()
+        self.assertEqual(self.jit_calls(e), [["jit", "remove", "o/r", "77"],
+                                             ["jit", "create", "o/r", "wf-gate", "ci-pool-wf-gate-900-a2"]])
+        d = Env(self)
+        old = {"container": "c", "repo": "o/r", "label": "wf-gate", "runner_id": None, "runner_name": "x", "assigned": False,
+               "status": "failed", "started": d.now - 90000, "retry_after": 0}
+        d.pool.state.jobs.update({"1": dict(old, finished=d.now - 86401), "2": dict(old, finished=d.now - 86000)})
+        d.tick()
+        self.assertEqual(sorted(d.pool.state.jobs), ["2"], "an ended failed entry stays a day after it ended")
+
+    def test_a_container_whose_cleanup_failed_still_counts_against_the_cap(self):  # S4
+        e = Env(self)  # wf-build: cap 1
+        e.job("100", created="2026-10-29T19:00:00Z")
+        e.job("101", created="2026-10-29T19:00:05Z")
+        e.lxc.fail = {"start", "delete"}
+        e.tick()
+        self.assertEqual([n for n in e.lxc.instances if n.startswith("pool-wf-build-") and not n.endswith("-spare")],
+                         ["pool-wf-build-100"])
+        self.assertEqual(e.creates(), 1)
 
 
 class ReaperTests(unittest.TestCase):

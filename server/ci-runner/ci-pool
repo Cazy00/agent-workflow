@@ -34,9 +34,16 @@ ID_RE = re.compile(r"^[0-9]{1,20}$")
 MEM_RE = re.compile(r"^([0-9]+)(MiB|GiB|MB|GB)$")
 MIN_POLL_SECONDS = 15
 MAX_REPORTED_PAUSE = 300  # a source that reports absurd call counts slows the pool to this, never stops it
-# a job whose start failed waits retry_seconds (120) and, after each further failure in a row, twice as long, up to this:
-# 2, 4, 8, 16, then 30 minutes (I-132). The pause is the job's own: the pool goes on to the next queued job of its label.
+# a job whose start failed waits retry_seconds (120) and, after each further failure of its own in a row, twice as long, up
+# to this: 2, 4, 8, 16, then 30 minutes (I-132). The pause is the job's own: the pool goes on to the next queued job of its
+# label. A failure right after another job's failure in the same label is shared and waits retry_seconds (Pool.failed_start).
 RETRY_MAX_SECONDS = 1800
+# a second failed start of one repository's label in a pass stops that label for the pass: the cause is not one job's (a
+# source or a host that fails every job), so the other queued jobs keep their place and the source gets no burst (#119 S1)
+MAX_FAILED_STARTS = 2
+# the JIT calls of one pass's launches (creates and stale removes) start within this many seconds of the first; past it, and
+# once a stop is asked for, no start begins until the next pass, so a source that hangs holds the reap up only so long (S2)
+LAUNCH_BUDGET_SECONDS = 120
 STALE_KEEP = 20  # runner ids of a job's earlier attempts kept for removal (the newest), so a state entry stays small
 YOUNG_SECONDS = 60  # a container this young has not used its memory yet
 LABEL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
@@ -398,8 +405,8 @@ class State:
     failures, runner_gone, stale}. status: launching | running | finished | failed. An entry is written before the container
     starts (or when the runner config for it fails) and says which container, runner and job id a launch was for; it is not a
     promise about the job (the runner takes any queued job of its label). It keeps a launch from repeating while its
-    container is alive, its retry pause runs, or lag_seconds after it ended; finished entries stay a day, other entries that
-    outlive the hard timeout without a container are dropped. `attempt` is the number the runner name carries (the configs
+    container is alive, its retry pause runs, or lag_seconds after it ended; finished and failed entries stay a day after they
+    ended (`finished`), other entries that outlive the hard timeout without a container are dropped. `attempt` is the number the runner name carries (the configs
     asked for the job so far), `failures` its failed starts in a row (they set the pause), `runner_gone` whether the runner
     was seen unregistered when the entry ended, and `stale` the runner ids of earlier attempts that were not."""
 
@@ -691,6 +698,9 @@ class Pool:
                  diag=None, stopping=lambda: False):
         self.cfg, self.lxc, self.state, self.host, self.clock, self.memory = cfg, lxc, state, host, clock, memory
         self.diag = diag or DiagKeeper(cfg, lxc, clock, stopping=stopping)
+        self.stopping = stopping
+        self.launch_deadline = None  # set by launch: when this pass's JIT calls for starts stop beginning
+        self.last_start = {}  # (repo, label) -> (job id, whether it worked) of the label's last start in this process
         self.run_cmd = run_cmd or self._run_cmd
         self.pass_calls = 0   # API calls the source reported for the pass under way (ci-pool.contract.md, `api_calls`)
         self.last_calls = 0   # ... and for the last whole pass; the poll pause is stretched to keep it within the budget
@@ -923,8 +933,13 @@ class Pool:
                 total += mem_mib(self.cfg["labels"].get(e["label"], {}).get("memory")) or 0
         return total
 
+    def may_call_jit(self):
+        """Whether a launch may begin another JIT call in this pass: no stop asked for, and the pass's budget not spent."""
+        return not self.stopping() and (self.launch_deadline is None or self.clock() < self.launch_deadline)
+
     def launch(self, pool, now):
         refused = set()  # labels the admission rule refused in this pass: each is skipped for the rest of it, in every repository
+        self.launch_deadline = self.clock() + LAUNCH_BUDGET_SECONDS
         for repo in self.cfg["repos"]:
             try:
                 jobs = self.queued(repo)
@@ -941,6 +956,7 @@ class Pool:
                     continue
                 spec = self.cfg["labels"][label]
                 need = len(wanted) - self.unassigned(pool, repo, label)
+                failed = 0  # failed starts of this repository's label in this pass
                 for job in wanted:
                     if need <= 0:
                         break
@@ -958,26 +974,38 @@ class Pool:
                         log("admission_refused", label=label, job=jid, why=why)
                         refused.add(label)  # only this label waits; another label's limits may still admit
                         break
+                    if not self.may_call_jit():
+                        log("launch_deferred", repo=repo, label=label, job=jid,
+                            why="the pool is stopping" if self.stopping() else
+                            f"this pass's starts spent their {LAUNCH_BUDGET_SECONDS} s")
+                        return
                     if not self._start(repo, label, jid, spec, pool, now):
-                        continue  # this job waits its own pause (I-132); the next queued job of the label is tried
+                        failed += 1  # this job waits its own pause (I-132); the next queued job of the label is tried
+                        if failed >= MAX_FAILED_STARTS:
+                            log("label_deferred", repo=repo, label=label, failed=failed,
+                                why="starts of two jobs failed in this pass; the label is tried again in the next")
+                            break
+                        continue
                     pool[self.cname(label, jid)] = {"name": self.cname(label, jid), "status": "Running"}
                     need -= 1
 
     def remove_stale(self, repo, jid, prev):
         """Before a job's next attempt, unregister the runners of its earlier attempts that were not seen gone: after a host
         restart GitHub can still hold the job on the dead runner when the reap removes it, refuse, and queue the job again
-        later. Returns the ids still refused, newest last, at most STALE_KEEP; each is tried again before the next attempt."""
+        later. Only the runners of this job id's own attempts are known here (a runner that took another job is that job's
+        container's). Returns the ids not removed, newest last, at most STALE_KEEP: the first refusal ends the removals of
+        this attempt (a source that refuses one likely refuses the rest, and each call can take command_timeout_seconds), as
+        does a spent launch budget or a stop; what is left is tried again before the next attempt."""
         stale = prev.get("stale") if isinstance(prev.get("stale"), list) else []
         ids = [str(r) for r in stale if isinstance(r, (str, int)) and not isinstance(r, bool) and ID_RE.match(str(r))]
         if prev.get("runner_id") and not prev.get("runner_gone") and ID_RE.match(str(prev["runner_id"])):
             ids.append(str(prev["runner_id"]))
-        kept = []
-        for rid in dict.fromkeys(ids):
-            if self.jit_remove(repo, rid):
-                log("stale_runner_removed", job=jid, repo=repo, runner_id=rid)
-            else:
-                kept.append(rid)
-        return kept[-STALE_KEEP:]
+        ids = list(dict.fromkeys(ids))
+        for n, rid in enumerate(ids):
+            if not self.may_call_jit() or not self.jit_remove(repo, rid):
+                return ids[n:][-STALE_KEEP:]
+            log("stale_runner_removed", job=jid, repo=repo, runner_id=rid)
+        return []
 
     def _start(self, repo, label, jid, spec, pool, now):
         name = self.cname(label, jid)
@@ -993,10 +1021,10 @@ class Pool:
         try:
             runner_id, jit = self.jit_create(repo, label, runner_name)
         except PoolError as e:
-            pause = retry_pause(self.cfg, failures + 1)
-            self.state.jobs[jid] = dict(entry, status="failed", failures=failures + 1, retry_after=now + pause, finished=now,
+            counted, pause, shared = self.failed_start(repo, label, jid, failures, now)
+            self.state.jobs[jid] = dict(entry, status="failed", failures=counted, retry_after=now + pause, finished=now,
                                         runner_gone=True)  # no runner was made
-            log("jit_failed", job=jid, runner=runner_name, attempt=attempt, retry_in=pause, error=str(e))
+            log("jit_failed", job=jid, runner=runner_name, attempt=attempt, retry_in=pause, shared=shared, error=str(e))
             return False
         # recorded before anything starts: a crash from here on leaves an entry that the next pass closes
         self.state.jobs[jid] = dict(entry, runner_id=runner_id)
@@ -1014,20 +1042,36 @@ class Pool:
             self.lxc.push_secret(name, "/etc/ci-pool/jit", jit)
             self.lxc.start(name)
         except PoolError as e:
-            pause = retry_pause(self.cfg, failures + 1)
-            log("launch_failed", job=jid, container=name, runner=runner_name, attempt=attempt, retry_in=pause, error=str(e))
+            counted, pause, shared = self.failed_start(repo, label, jid, failures, now)
+            log("launch_failed", job=jid, container=name, runner=runner_name, attempt=attempt, retry_in=pause, shared=shared,
+                error=str(e))
             gone = self.jit_remove(repo, runner_id)
             try:
                 self.lxc.delete(name)
             except PoolError:
-                pass
-            self.state.jobs[jid].update(status="failed", failures=failures + 1, retry_after=now + pause, finished=now,
+                # it may still exist: it counts against the label's cap for the rest of the pass, and the next pass's reap
+                # deletes it as an orphan (no live entry names it) (#119 S4)
+                pool[name] = {"name": name, "status": "Stopped"}
+            self.state.jobs[jid].update(status="failed", failures=counted, retry_after=now + pause, finished=now,
                                         runner_gone=gone)
             return False
-        self.state.jobs[jid]["status"] = "running"
+        self.state.jobs[jid].update(status="running", failures=0)
         self.state.save()
         log("launched", job=jid, container=name, repo=repo, label=label, runner=runner_name, attempt=attempt)
+        self.last_start[(repo, label)] = (jid, True)
         return True
+
+    def failed_start(self, repo, label, jid, failures, now):
+        """A start of this job failed: (failures in a row it counts now, its pause, whether the cause is shared). The failure
+        is shared when the last start of this repository's label in this process was another job's and failed too: a source
+        or a host that fails every job (#119 S1). A shared failure does not count toward the job's doubling and waits
+        retry_seconds, so after an outage every job is tried again within that, not up to RETRY_MAX_SECONDS later; a job's
+        own failures in a row (one job alone in its label, or one whose neighbours start) double its pause."""
+        last = self.last_start.get((repo, label))
+        self.last_start[(repo, label)] = (jid, False)
+        if last is not None and not last[1] and last[0] != jid:
+            return failures, self.cfg["retry_seconds"], True
+        return failures + 1, retry_pause(self.cfg, failures + 1), False
 
     def _spare_is_current(self, label, inst):
         want = self.lxc.image_fingerprint(self.cfg["labels"][label]["image"])
@@ -1056,7 +1100,9 @@ class Pool:
 
     def prune(self, now, pool):
         for jid, e in list(self.state.jobs.items()):
-            if e["status"] == "finished":
+            if e["status"] == "finished" or (e["status"] == "failed" and "finished" in e):
+                # an ended entry stays a day: a failed one keeps its attempt count and the runners still to remove while its
+                # job waits behind the cap, however long (#119 S3); one from before v2.19.7 has no `finished` (below)
                 gone = now - e.get("finished", now) > 86400
             else:  # an entry that outlived the hard timeout with no container will never be reaped
                 gone = now - e["started"] > self.cfg["hard_timeout_seconds"] and e["container"] not in pool

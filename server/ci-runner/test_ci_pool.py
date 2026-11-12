@@ -2060,7 +2060,7 @@ class JobStartedCheckTests(unittest.TestCase):
         with open(path, "w") as f:
             f.write(raw if raw is not None else json.dumps({} if payload is None else payload))
         return {"PATH": os.environ["PATH"], "GITHUB_ACTOR": actor, "GITHUB_TRIGGERING_ACTOR": triggering,
-                "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": path}
+                "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": path, "GITHUB_REPOSITORY": "Cazy00/shop"}
 
     def run_hook(self, drop=(), **kw):
         with tempfile.TemporaryDirectory() as d:
@@ -2243,7 +2243,9 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertRefused(r, "not one JSON object")  # the reader is missing: no payload was read, so no run is allowed
 
     def fake_worker(self, d, start_hook):
-        """A process named Runner.Worker (the name the check looks for) that starts the check, then 'a step'."""
+        """A process named Runner.Worker (the name the check looks for) that starts the check, then 'a step'. The
+        check's own stderr goes to $HOOK_ERR (start_hook says so), so what reaches the Worker's stderr is what the check
+        wrote there itself."""
         worker = os.path.join(d, "Runner.Worker")
         with open(worker, "w") as f:
             f.write('#!%s\n%s\necho "a step ran"\n' % (BASH, start_hook))
@@ -2251,16 +2253,21 @@ class JobStartedCheckTests(unittest.TestCase):
         return worker
 
     def test_a_refusal_kills_the_runner_worker_so_no_step_runs(self):
-        for how, start_hook in (("as its child", '%s -e "$HOOK"' % BASH),
-                                ("through a shell", "/bin/sh -c '%s -e \"$HOOK\"; true'" % BASH)):  # review F2
+        for how, start_hook in (("as its child", '%s -e "$HOOK" 2>"$HOOK_ERR"' % BASH),
+                                ("through a shell", "/bin/sh -c '%s -e \"$HOOK\" 2>\"$HOOK_ERR\"; true'" % BASH)):  # review F2
             with self.subTest(how), tempfile.TemporaryDirectory() as d:
                 worker = self.fake_worker(d, start_hook)
-                refused = subprocess.run([worker], env={**self.env(d, actor="stranger"), "HOOK": self.fake_worker_hook},
+                hook_env = {"HOOK": self.fake_worker_hook, "HOOK_ERR": os.path.join(d, "hook.err")}
+                refused = subprocess.run([worker], env={**self.env(d, actor="stranger"), **hook_env},
                                          capture_output=True, text=True, timeout=60)
-                allowed = subprocess.run([worker], env={**self.env(d), "HOOK": self.fake_worker_hook},
+                allowed = subprocess.run([worker], env={**self.env(d), **hook_env},
                                          capture_output=True, text=True, timeout=60)
                 self.assertEqual(refused.returncode, -9, refused.stdout + refused.stderr)  # SIGKILL
                 self.assertIn("GITHUB_ACTOR is stranger", refused.stdout)
+                # The Worker's own stderr carries the refusal too: the runner's Listener puts it on the failed job.
+                self.assertIn("::error::ci-pool refused this job: GITHUB_ACTOR is stranger, not a trusted account\n"
+                              "::error::ci-pool: event push, actor stranger, triggering actor Cazy00, repository Cazy00/shop",
+                              refused.stderr)
                 self.assertNotIn("a step ran", refused.stdout)
                 self.assertNotIn("cannot stop the job", refused.stdout)
                 self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
@@ -2270,8 +2277,9 @@ class JobStartedCheckTests(unittest.TestCase):
         # The same fake, but the check now wants the runner's executable (/opt/actions-runner/bin*/Runner.Worker): a
         # process that only has the name is not killed, and outside the pool image the check says it cannot stop the job.
         with tempfile.TemporaryDirectory() as d:
-            worker = self.fake_worker(d, '%s -e "$HOOK"' % BASH)
-            r = subprocess.run([worker], env={**self.env(d, actor="stranger"), "HOOK": self.hook},
+            worker = self.fake_worker(d, '%s -e "$HOOK" 2>"$HOOK_ERR"' % BASH)
+            r = subprocess.run([worker], env={**self.env(d, actor="stranger"), "HOOK": self.hook,
+                                              "HOOK_ERR": os.path.join(d, "hook.err")},
                                capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("a step ran", r.stdout)
@@ -2288,6 +2296,35 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertLess(stop.index("kill -KILL -1"), stop.index("else"))
         find = self.text[self.text.index("find_worker() {"):self.text.index("stop_job() {")]
         self.assertIn("for depth in 1 2; do", find)  # the parent or its parent, never further up
+
+    def test_a_refusal_says_which_check_failed_and_the_values_it_read(self):
+        r = self.run_hook(event="pull_request", payload=pull_request("stranger/shop", "Cazy00/shop"))
+        self.assertRefused(r, "a pull request from stranger/shop into Cazy00/shop, another repository")
+        self.assertIn("::error::ci-pool: event pull_request, actor Cazy00, triggering actor Cazy00, repository Cazy00/shop, "
+                      "pull request stranger/shop into Cazy00/shop, workflow run none\n", r.stdout)
+        payload = {"workflow_run": {"head_repository": {"full_name": "stranger/shop"}, "repository": {"full_name": "Cazy00/shop"}}}
+        r = self.run_hook(event="workflow_run", payload=payload, triggering="MontaDev-sys")
+        self.assertIn("triggering actor MontaDev-sys, repository Cazy00/shop, pull request none, "
+                      "workflow run stranger/shop in Cazy00/shop\n", r.stdout)
+        r = self.run_hook(actor="", drop=("GITHUB_REPOSITORY",))  # refused before the payload is read
+        self.assertIn("::error::ci-pool: event push, actor not set, triggering actor Cazy00, repository not set, "
+                      "pull request none, workflow run none\n", r.stdout)
+        r = self.run_hook(actor="evil\n::warning::x")  # a value is shown with anything outside a login's characters replaced
+        self.assertIn("actor evil???warning??x,", r.stdout)
+        self.assertNotIn("\n::warning::", r.stdout)
+
+    def test_what_went_wrong_reaches_the_job_log(self):
+        # Nothing the check reads is sent to /dev/null: the reader's own error is in the log beside the refusal.
+        r = self.run_hook(raw="{not json")
+        self.assertRefused(r, "not one JSON object (the reader's error is above)")
+        self.assertIn("jq: parse error", r.stderr)
+        with tempfile.TemporaryDirectory() as d:
+            hook = self.write(self.text.replace("list=/opt/ci-hooks/trusted-actors\n", "list=%s\n" % os.path.join(d, "absent")),
+                              "job-started-absent-list.sh")
+            r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
+        self.assertRefused(r, "cannot be read")
+        self.assertIn("No such file or directory", r.stderr)
+        self.assertNotIn("2>/dev/null", self.text)
 
     def test_a_refusal_outside_the_runner_says_it_cannot_stop_the_job(self):
         r = self.run_hook(actor="stranger")

@@ -2,6 +2,16 @@
 
 Releases are tags, and the host's release broker makes them (`wf-release`; from v2.19.0). After one deep review of the commit that sets the version in `package.json`, the broker tags that commit, creates the release and moves `canary` to it; `stable` follows after a 24 h soak, once the canary project's gate and status runs have passed on it. Nobody types a tag, and no workflow in this repository tags or pushes a ref, which `validator/test/status-workflow.test.js` checks by what a workflow can do (a ref-writing step or `contents: write`), not by file name. The tag ruleset and what the broker tags and signs belong to the host and are described in its docs (the workspace repository's `broker/docs/wf-channels.md`); this repository enforces only that a channel resolves through a signed record (`bin/wf-resolve`), and checks a pin or an entry tag for shape and minimum version. Before v2.19.0 a release was tagged by `.github/workflows/release-tag.yml` when the owner merged the pull request that bumped `package.json`. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`, or follows a channel (v2.19.0); a new tag never upgrades a pinned project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.19.3
+
+2026-11-12. A patch for hosts that run the CI pool: a refusal of the job-started check (v2.19.2) is visible. Nothing changes for a project.
+
+- **Which check failed, and the values it read:** besides its reason, a refusal prints a second `::error::` line with the event, `GITHUB_ACTOR`, `GITHUB_TRIGGERING_ACTOR`, `GITHUB_REPOSITORY`, and the head and base of the payload's pull request or workflow run (`not set` or `none` where there is none). Each value is shown with anything outside a login's or a repository name's characters replaced, so a value cannot start a workflow command of its own.
+- **It stays on the job:** the check kills the job's `Runner.Worker`, so the step's log may never be uploaded. Before the kill it writes the same lines to the Worker's own stderr, and the runner's Listener attaches what a dying Worker printed to the failed job as an error.
+- **No stderr to `/dev/null`:** jq's error on a payload it cannot parse, a list file it cannot open, and a `/proc` read that fails now reach the job's log beside the refusal.
+- Tests (`server/ci-runner/test_ci_pool.py`): the context line for a fork's pull request, a fork's workflow run and missing values; a value with a newline and `::` cannot start a line; jq's parse error and a missing list's error reach stderr; the hook has no `2>/dev/null`; under a fake `Runner.Worker`, the Worker's own stderr receives the refusal before it is killed.
+- Upgrade: a host reinstalls the pool and rebuilds both images.
+
 ## v2.19.2
 
 2026-11-12. A patch for hosts that run the CI pool (`server/ci-runner`). The JIT source mints a runner only while no one outside the trusted accounts can reach one (home's broker: `repo_shared`), but a runner takes any queued job of its label, so a job queued after that check (a pull request from a fork, a re-run by another account) could still run in the container. Now the container checks the job itself, before the job's first step.

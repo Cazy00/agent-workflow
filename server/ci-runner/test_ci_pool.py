@@ -2089,7 +2089,7 @@ class JobStartedCheckTests(unittest.TestCase):
         cls.writers = os.path.join(cls.dir, "accepted-writers")
         with open(cls.writers, "w") as f:
             f.write("cazy00/shop writer-one\ncazy00/other writer-two\ncazy00/shop-x writer-three\n"
-                    "cazy00/shop writer-four extra\n")
+                    "cazy00/shop writer-four extra\ncazy00/shop writer-seven\n")
         assert cls.text.count("list=/opt/ci-hooks/trusted-actors\n") == 1
         assert cls.text.count(WRITERS_LINE) == 1
         cls.text_with_list = cls.text.replace("list=/opt/ci-hooks/trusted-actors\n", "list=%s\n" % cls.list)
@@ -2477,6 +2477,11 @@ class JobStartedCheckTests(unittest.TestCase):
         # a trusted account's own run says nothing of accepted writers
         self.assertIn("this attempt by Cazy00: allowed\n", self.run_hook_in("Cazy00/shop").stdout)
 
+    def test_two_accepted_writers_of_the_repository_pass_and_are_both_named(self):  # review rvf19836f41b99ad88 F6
+        r = self.run_hook_in("Cazy00/shop", actor="writer-one", triggering="Writer-Seven")
+        self.assertAllowed(r)
+        self.assertIn("allowed; writer-one and writer-seven passed as accepted writers of cazy00/shop\n", r.stdout)
+
     def test_an_accepted_writer_is_refused_on_another_repository(self):
         cases = (("Cazy00/other", "writer-one"), ("Cazy00/shop", "writer-two"), ("Cazy00/shop", "writer-three"),
                  ("Cazy00/shop-x", "writer-one"), ("Cazy00/sho", "writer-one"), ("other/shop", "writer-one"),
@@ -2547,10 +2552,35 @@ class JobStartedCheckTests(unittest.TestCase):
                     r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
                     self.assertAllowed(r)  # the owner's run never reads it
 
+    def run_host_part(self, d, path, isolation="true", tail="", part=None):
+        """The build's host half that reads the input (to the line before its traps), as root runs it, with a fake `lxc`
+        whose `profile device get` prints `isolation` (None: the call fails). Returns the run and the lxc calls."""
+        if part is None:
+            part = self.image[self.image.index("writers=()\nif [[ -e"):self.image.index("trap 'rc=$?; echo \"ci-pool-image: failed")]
+        lxc, log = os.path.join(d, "fake-lxc"), os.path.join(d, "lxc-calls")
+        with open(lxc, "w") as f:
+            f.write('#!%s\necho "$*" >> "$LXC_LOG"\n[ "$1 $2 $3" = "profile device get" ] || exit 9\n'
+                    '[ -n "${ISOLATION+x}" ] || exit 1\nprintf "%%s\\n" "$ISOLATION"\n' % BASH)
+        os.chmod(lxc, 0o755)
+        if os.path.exists(log):
+            os.remove(log)
+        env = {"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path, "LXC": lxc, "LXC_LOG": log}
+        if isolation is not None:
+            env["ISOLATION"] = isolation
+        r = subprocess.run([BASH, "-c", "set -euo pipefail\nkind=build\n" + part + tail], capture_output=True, text=True,
+                           timeout=30, env=env)
+        calls = open(log).read().splitlines() if os.path.exists(log) else []
+        return r, calls
+
+    @staticmethod
+    def put(path, content, mode=0o644):
+        with open(path, "w") as f:
+            f.write(content)
+        os.chmod(path, mode)
+
     def test_the_build_reads_the_accepted_writers_input(self):
         self.assertEqual(self.image.count('ACCEPTED_WRITERS_FILE="$SHARE/ci-pool-accepted-writers"\n'), 1)  # what the host checks
         self.assertIn('--env ACCEPTED_WRITERS="$accepted_writers"', self.image)
-        start, end = "writers=()\nif [[ -e", "trap 'rc=$?; echo \"ci-pool-image: failed"
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "ci-pool-accepted-writers")
             for name, content, want in (
@@ -2562,16 +2592,32 @@ class JobStartedCheckTests(unittest.TestCase):
                     if os.path.exists(path):
                         os.remove(path)
                     if content is not None:
-                        with open(path, "w") as f:
-                            f.write(content)
-                    part = self.image[self.image.index(start):self.image.index(end)] + 'printf "<%s>" "$accepted_writers"\n'
-                    r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], capture_output=True, text=True, timeout=30,
-                                       env={"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path})
+                        self.put(path, content)
+                    r, calls = self.run_host_part(d, path, tail='printf "<%s>" "$accepted_writers"\n')
                     self.assertEqual((r.returncode, r.stdout), (0, "<%s>" % want), r.stderr)
+                    # the profile is asked about only when there is a writer
+                    self.assertEqual(calls, ["profile device get ci-pool-build eth0 security.port_isolation"] if want else [])
+
+    def test_the_build_refuses_writers_on_a_profile_without_port_isolation(self):  # review rvf19836f41b99ad88 F1
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ci-pool-accepted-writers")
+            self.put(path, "cazy00/shop writer-one\n")
+            for isolation in ("", "false", "1", "yes", "TRUE", "true ", None):
+                with self.subTest(isolation=isolation):
+                    r, calls = self.run_host_part(d, path, isolation=isolation, tail='echo "went on"\n')
+                    self.assertEqual(r.returncode, 2, r.stderr)
+                    self.assertIn("the profile ci-pool-build's eth0 does not set security.port_isolation=true", r.stderr)
+                    self.assertNotIn("went on", r.stdout)
+            self.put(path, "")
+            for isolation in ("", None):  # no writer: the profile is not asked, and the build goes on as before
+                with self.subTest(isolation=isolation, writers="none"):
+                    r, calls = self.run_host_part(d, path, isolation=isolation, tail='echo "went on"\n')
+                    self.assertEqual((r.returncode, calls), (0, []), r.stderr)
+                    self.assertIn("went on", r.stdout)
+        # before anything is launched or pushed
+        self.assertLess(self.image.index("profile device get"), self.image.index('$LXC launch ubuntu:24.04'))
 
     def test_the_build_refuses_a_malformed_accepted_writers_input(self):
-        start, end = "writers=()\nif [[ -e", "trap 'rc=$?; echo \"ci-pool-image: failed"
-        part = self.image[self.image.index(start):self.image.index(end)]
         bad_lines = ("Cazy00/shop writer-one", "cazy00/shop Writer-One", "cazy00/shop", "cazy00 writer-one", "/shop writer-one",
                      "cazy00/ writer-one", "cazy00/shop writer-one[bot]", "cazy00/shop  writer-one", " cazy00/shop writer-one",
                      "cazy00/shop writer-one ", "cazy00/shop\twriter-one", "cazy00/shop writer-one\r", "", "# a comment",
@@ -2584,27 +2630,35 @@ class JobStartedCheckTests(unittest.TestCase):
             for line in bad_lines:
                 for content, n in ((line + "\n", 1), ("cazy00/shop writer-one\n" + line + "\n", 2)):
                     with self.subTest(line=line, n=n):
-                        with open(path, "w") as f:
-                            f.write(content)
-                        r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], capture_output=True, text=True,
-                                           timeout=30, env={"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path})
+                        self.put(path, content)
+                        r, calls = self.run_host_part(d, path)
                         self.assertEqual(r.returncode, 2, r.stderr)
                         self.assertIn("line %d is not one \"owner/repo login\" pair in lower case" % n, r.stderr)
+                        self.assertEqual(calls, [])
             os.remove(path)
-            for name, make in (("a directory", lambda: os.mkdir(path)), ("a dangling link", lambda: os.symlink("absent", path))):
+            good = os.path.join(d, "good")
+            self.put(good, "cazy00/shop writer-one\n")
+            for name, make, why in (("a directory", lambda: os.mkdir(path), "is not a readable file"),
+                                    ("a dangling link", lambda: os.symlink("absent", path), "is not a readable file"),
+                                    ("a link to a good file", lambda: os.symlink(good, path), "(a link is refused)"),
+                                    ("group-writable", lambda: self.put(path, "cazy00/shop writer-one\n", 0o664), "writable by no one else"),
+                                    ("world-writable", lambda: self.put(path, "cazy00/shop writer-one\n", 0o646), "writable by no one else")):
                 with self.subTest(name):
                     make()
-                    r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], capture_output=True, text=True,
-                                       timeout=30, env={"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path})
+                    r, calls = self.run_host_part(d, path)
                     self.assertEqual(r.returncode, 2, r.stderr)
-                    self.assertIn("is not a readable file", r.stderr)
+                    self.assertIn(why, r.stderr)
                     os.rmdir(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+            # another account's file (as root the build refuses any file root does not own)
+            self.put(path, "cazy00/shop writer-one\n")
+            host = self.image[self.image.index("writers=()\nif [[ -e"):self.image.index("trap 'rc=$?; echo \"ci-pool-image: failed")]
+            self.assertEqual(host.count('"$owner" == "$EUID"'), 1)
+            r, calls = self.run_host_part(d, path, part=host.replace('"$owner" == "$EUID"', '"$owner" == "%d"' % (os.geteuid() + 1)))
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("must be owned by uid", r.stderr)
             if os.geteuid() != 0:  # root reads a file whatever its mode
-                with open(path, "w") as f:
-                    f.write("cazy00/shop writer-one\n")
                 os.chmod(path, 0)
-                r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], capture_output=True, text=True,
-                                   timeout=30, env={"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path})
+                r, calls = self.run_host_part(d, path)
                 self.assertEqual(r.returncode, 2, r.stderr)
                 self.assertIn("is not a readable file", r.stderr)
 
@@ -2640,12 +2694,9 @@ class JobStartedCheckTests(unittest.TestCase):
         guest = body[body.index('IFS=, read -ra writers'):body.index("chmod 0644 /opt/ci-hooks/accepted-writers\n")]
         with tempfile.TemporaryDirectory() as d:
             given, out = os.path.join(d, "input"), os.path.join(d, "accepted-writers")
-            with open(given, "w") as f:
-                f.write("cazy00/mateen writer-five\ncazy00/shop writer-six\n")
-            script = ("set -euo pipefail\n" + host + 'ACCEPTED_WRITERS="$accepted_writers"\n'
-                      + guest.replace("/opt/ci-hooks/accepted-writers", out))
-            r = subprocess.run([BASH, "-c", script], env={"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": given},
-                               capture_output=True, text=True, timeout=30)
+            self.put(given, "cazy00/mateen writer-five\ncazy00/shop writer-six\n")
+            r, calls = self.run_host_part(d, given, part=host + 'ACCEPTED_WRITERS="$accepted_writers"\n'
+                                          + guest.replace("/opt/ci-hooks/accepted-writers", out))
             self.assertEqual(r.returncode, 0, r.stderr)
             hook = self.write(self.text_with_list.replace(WRITERS_LINE, "writers=%s  #" % out), "job-started-built.sh")
             for repository, login, ok in (("Cazy00/mateen", "writer-five", True), ("Cazy00/shop", "writer-six", True),

@@ -46,8 +46,13 @@ alias="ci-pool-$kind"
 work="ci-pool-image-$kind-$$"
 writers=()
 if [[ -e "$ACCEPTED_WRITERS_FILE" || -L "$ACCEPTED_WRITERS_FILE" ]]; then
-  [[ -f "$ACCEPTED_WRITERS_FILE" && -r "$ACCEPTED_WRITERS_FILE" ]] \
-    || { echo "ci-pool-image: $ACCEPTED_WRITERS_FILE is not a readable file" >&2; exit 2; }
+  [[ ! -L "$ACCEPTED_WRITERS_FILE" && -f "$ACCEPTED_WRITERS_FILE" && -r "$ACCEPTED_WRITERS_FILE" ]] \
+    || { echo "ci-pool-image: $ACCEPTED_WRITERS_FILE is not a readable file (a link is refused)" >&2; exit 2; }
+  # It says whose code runs here, so only the account that builds (root) may write it, as with the pool's token
+  owner="" mode=""
+  read -r owner mode < <(stat -c '%u %a' "$ACCEPTED_WRITERS_FILE") || owner=""
+  [[ "$owner" == "$EUID" && "$mode" =~ ^[0-7]+$ ]] && (( (8#$mode & 8#022) == 0 )) \
+    || { echo "ci-pool-image: $ACCEPTED_WRITERS_FILE must be owned by uid $EUID and writable by no one else" >&2; exit 2; }
   n=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     n=$((n + 1))
@@ -58,6 +63,17 @@ if [[ -e "$ACCEPTED_WRITERS_FILE" || -L "$ACCEPTED_WRITERS_FILE" ]]; then
     fi
     writers+=("$line")
   done < "$ACCEPTED_WRITERS_FILE"
+fi
+# An accepted writer's code runs as root in the container (sudo, and Docker on build), so no image accepts one unless its
+# profile keeps the containers apart: LXD's port isolation on eth0 (README, "Port isolation keeps the containers apart").
+# Profiles are never overwritten by an install, so a host that made them earlier sets the key before it adds a writer.
+if [[ ${#writers[@]} -gt 0 ]]; then
+  isolation="$($LXC profile device get "ci-pool-$kind" eth0 security.port_isolation)" || isolation=""
+  [[ "$isolation" == true ]] || {
+    echo "ci-pool-image: $ACCEPTED_WRITERS_FILE lists accepted writers, but the profile ci-pool-$kind's eth0 does not set" \
+      "security.port_isolation=true; set it (lxc profile device set ci-pool-$kind eth0 security.port_isolation=true) first" >&2
+    exit 2
+  }
 fi
 # To the provisioning as one value: the lines joined by commas, which no line holds
 accepted_writers="$(IFS=,; printf '%s' "${writers[*]}")"
@@ -315,9 +331,10 @@ if [[ "${f[3]}" == true ]]; then
   [[ "${f[4]}" == "${f[5]}" ]] || refuse "a workflow run of $(shown "${f[4]}") in $(shown "${f[5]}"), another repository"
 fi
 note=""
-if [[ ${#as_writer[@]} -gt 0 ]]; then
-  note="; $(shown "${as_writer[0]}")${as_writer[1]:+ and $(shown "${as_writer[1]}")}"
-  note+=" passed as an accepted writer of $(shown "${repository,,}")"
+if [[ ${#as_writer[@]} -eq 1 ]]; then
+  note="; $(shown "${as_writer[0]}") passed as an accepted writer of $(shown "${repository,,}")"
+elif [[ ${#as_writer[@]} -gt 1 ]]; then
+  note="; $(shown "${as_writer[0]}") and $(shown "${as_writer[1]}") passed as accepted writers of $(shown "${repository,,}")"
 fi
 printf 'ci-pool: a %s run of %s, this attempt by %s: allowed%s\n' "$(shown "$event")" "$(shown "$GITHUB_ACTOR")" \
   "$(shown "$GITHUB_TRIGGERING_ACTOR")" "$note"

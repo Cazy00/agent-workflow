@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2093,10 +2094,11 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertNotIn("chown", body[body.index("install -d -m 0755 /opt/ci-hooks"):body.index("chmod 0755 /opt/ci-hooks/job-started.sh")])
 
     def test_external_commands_are_called_by_absolute_path(self):
-        for command in ("/usr/bin/jq -r", "/usr/bin/readlink", "/usr/bin/sleep 3"):
+        for command in ("/usr/bin/jq -r", "/usr/bin/readlink", "/usr/bin/sleep 3", "/usr/bin/timeout -s KILL 1",
+                        "/usr/bin/bash -c"):
             self.assertIn(command, self.text)
         code = "\n".join(line for line in self.text.splitlines() if not line.lstrip().startswith("#"))
-        for bare in ("cat", "jq", "readlink", "sleep"):  # no command found through PATH
+        for bare in ("cat", "jq", "readlink", "sleep", "timeout", "bash"):  # no command found through PATH (#116 review 3)
             self.assertIsNone(re.search(r"(?<![/\w.-])%s\b" % bare, code.replace("/usr/bin/" + bare, "")), bare)
 
     def build_part(self, start, end, env):
@@ -2281,19 +2283,27 @@ class JobStartedCheckTests(unittest.TestCase):
             worker = self.fake_worker(d, '%s -e "$HOOK" 2>"$HOOK_ERR"' % BASH,
                                       before="head -c 1048576 /dev/zero >&2 &\nsleep 1")
             env = {**self.env(d, actor="stranger"), "HOOK": self.fake_worker_hook, "HOOK_ERR": os.path.join(d, "hook.err")}
-            p = subprocess.Popen([worker], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Its own session, so that whatever happens the Worker's whole group (the check, the filler) is ended below
+            # and the test fails rather than hangs (#116 review 1).
+            p = subprocess.Popen([worker], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             try:
                 code = p.wait(timeout=30)  # never reads the Worker's stderr while it runs
             finally:
-                if p.poll() is None:
-                    p.kill()
-                    p.wait()
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                p.stderr.close()  # a writer still blocked on the full pipe gets SIGPIPE
                 out = p.stdout.read().decode()
                 p.stdout.close()
-                p.stderr.close()  # the blocked filler gets SIGPIPE and ends
+                p.wait()
+            with open(env["HOOK_ERR"]) as f:
+                hook_err = f.read()
         self.assertEqual(code, -9, out)
         self.assertNotIn("a step ran", out)
         self.assertIn("GITHUB_ACTOR is stranger", out)
+        # The write that was killed after 1 s says so in the job's log (#116 review 2; timeout exits 124 then).
+        self.assertIn("ci-pool: the refusal could not be written to the Worker's stderr (exit 124)", hook_err)
 
     def test_the_write_to_the_worker_appends(self):  # #115 review N1: what fd 2 points at is never truncated
         with tempfile.TemporaryDirectory() as d:
@@ -2310,12 +2320,11 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertTrue(written.startswith("earlier worker output\n::error::ci-pool refused this job: "), written)
 
     def test_the_write_to_the_worker_is_bounded_and_in_the_background(self):
+        # The behaviour is in the full-pipe and append tests above; this pins only that the write is the bounded one
+        # and is started before the kill (#116 review 4: no line shape beyond that).
         stop = self.text[self.text.index("stop_job() {"):self.text.index("\n}\n", self.text.index("stop_job() {"))]
-        write = next(line for line in stop.splitlines() if "/proc/$worker/fd/2" in line)
-        self.assertTrue(write.strip().startswith("/usr/bin/timeout -s KILL 1 "), write)
-        self.assertTrue(write.rstrip().endswith("&"), write)
-        self.assertIn('>> "$2"', write)
-        self.assertLess(stop.index(write), stop.index('kill -KILL "$worker"'))
+        at = stop.index('/usr/bin/timeout -s KILL 1 /usr/bin/bash -c \'printf "%s\\n" "$1" >> "$2"\'')
+        self.assertLess(at, stop.index('kill -KILL "$worker"'))
 
     def test_only_the_runners_own_executable_counts_as_its_worker(self):
         # The same fake, but the check now wants the runner's executable (/opt/actions-runner/bin*/Runner.Worker): a

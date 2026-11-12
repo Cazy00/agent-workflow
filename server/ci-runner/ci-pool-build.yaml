@@ -1,5 +1,6 @@
 # Profile for a pool build container (ci-pool, MAINT-0017 D1). Unprivileged; nesting and the two syscall intercepts are
 # what Docker inside the container needs. `ci-pool check-profiles` refuses a profile with any other key or device.
+# eth0 has LXD's bridge port isolation: the container cannot reach another one on lxdbr0 that has it too.
 # Create with: lxc profile create ci-pool-build && lxc profile edit ci-pool-build < ci-pool-build.yaml
 name: ci-pool-build
 description: ci-pool build container (Docker in an unprivileged container)
@@ -22,3 +23,4 @@ devices:
     type: nic
     name: eth0
     network: lxdbr0
+    security.port_isolation: "true"

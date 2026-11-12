@@ -112,6 +112,12 @@ DEVICES = {
     "root": {"type": "disk", "path": "/", "pool": "ci"},
     "eth0": {"type": "nic", "name": "eth0", "network": "lxdbr0", "nictype": None},
 }
+# Keys a device may lack, and must have exactly this value when it has them. LXD's bridge port isolation: a NIC with it
+# cannot reach another NIC on the bridge that has it, so containers on lxdbr0 cannot reach each other (only the host's
+# bridge address, which the firewall limits to DNS and DHCP).
+DEVICE_OPTIONAL = {
+    "eth0": {"security.port_isolation": "true"},
+}
 PROFILE_TOP_KEYS = {"name", "description", "config", "devices", "used_by", "project"}
 
 
@@ -1081,8 +1087,12 @@ def profile_refusals(kind, text):
         if want is None or not isinstance(dev, dict):
             out.append(f"device {dname} is not allowed")
             continue
+        optional = DEVICE_OPTIONAL.get(dname, {})
         for k, v in dev.items():
-            if k not in want:
+            if k in optional:
+                if v != optional[k]:
+                    out.append(f"device {dname} {k} must be {optional[k]}, is {v}")
+            elif k not in want:
                 out.append(f"device {dname} key {k} is not allowed")
             elif want[k] is not None and v != want[k]:
                 out.append(f"device {dname} {k} must be {want[k]}, is {v}")

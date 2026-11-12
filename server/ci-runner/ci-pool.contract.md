@@ -28,7 +28,7 @@ it: an unknown answer never deletes or starts a container. A command gets 120 s.
 `<source_cmd> running OWNER/REPO` prints
 
 ```json
-{"version": 1, "repo": "OWNER/REPO", "jobs": [{"id": "123456789", "runner_name": "ci-pool-wf-build-56789012"}]}
+{"version": 1, "repo": "OWNER/REPO", "jobs": [{"id": "123456789", "runner_name": "ci-pool-wf-build-56789012-a1"}]}
 ```
 
 - `jobs`: jobs in progress and the name of the runner each one runs on. The pool uses it to tell a runner that took a job
@@ -47,7 +47,11 @@ it: an unknown answer never deletes or starts a container. A command gets 120 s.
   `NAME`. The pool puts `encoded_jit_config` into the container (mode 0600, through stdin, never an argument or the log).
 
 `<jit_cmd> remove OWNER/REPO RUNNER_ID` prints `{"version": 1}`; it unregisters the runner. A runner that is already gone
-is success. The pool calls it whenever it deletes a container.
+is success. The pool calls it whenever it deletes a container, and before a job's next attempt for each runner of its
+earlier attempts that was not seen gone (v2.19.7).
+
+The pool names each runner `ci-pool-<label>-<last 8 of the job id>-a<attempt>` (v2.19.7; `ci-pool-<label>-<last 8>`
+before): it starts `ci-pool-` and never ends `-ci` or `-gate`, so a JIT source can tell a pool runner by its name.
 
 ## Notes
 

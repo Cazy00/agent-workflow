@@ -2,6 +2,14 @@
 
 Releases are tags, and the host's release broker makes them (`wf-release`; from v2.19.0). After one deep review of the commit that sets the version in `package.json`, the broker tags that commit, creates the release and moves `canary` to it; `stable` follows after a 24 h soak, once the canary project's gate and status runs have passed on it. Nobody types a tag, and no workflow in this repository tags or pushes a ref, which `validator/test/status-workflow.test.js` checks by what a workflow can do (a ref-writing step or `contents: write`), not by file name. The tag ruleset and what the broker tags and signs belong to the host and are described in its docs (the workspace repository's `broker/docs/wf-channels.md`); this repository enforces only that a channel resolves through a signed record (`bin/wf-resolve`), and checks a pin or an entry tag for shape and minimum version. Before v2.19.0 a release was tagged by `.github/workflows/release-tag.yml` when the owner merged the pull request that bumped `package.json`. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`, or follows a channel (v2.19.0); a new tag never upgrades a pinned project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.19.5
+
+2026-11-12. A patch for hosts that run the CI pool: the build image can compile native Node modules. Nothing changes for a project.
+
+- **build-essential and python3 in the build image.** `ci-pool-image` installs them in the build kind only, after Docker. node-gyp needs make, a C++ compiler and python3 to build a native module, so `electron-rebuild -f -w better-sqlite3` stopped with `Error: not found: make` on a `wf-build` container (AssistDesk, 2026-11-12). The gate kind is unchanged.
+- Tests (`server/ci-runner/test_ci_pool.py`): the build kind's block installs both after a refresh of the lists, and nothing outside it installs `build-essential`.
+- Upgrade: a host reinstalls the pool and rebuilds both images (their inputs' digest covers `ci-pool-image`).
+
 ## v2.19.4
 
 2026-11-12. A patch for hosts that run the CI pool: a refusal of the job-started check kills the Worker even when the Worker's stderr cannot take the refusal (found by the deep reviews of #115, N2, and of home's pin PR, F2). Nothing changes for a project.

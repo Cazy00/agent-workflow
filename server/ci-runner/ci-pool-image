@@ -18,9 +18,9 @@ POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
 TMP_SIZE="${TMP_SIZE:-2G}"
 # The accounts whose runs a pool container runs (the job-started check below), compared ignoring case. They must be the
 # JIT source's trusted accounts; the default is home's, the accounts its broker's repo_shared check trusts (the owner, the
-# agent and the executor App's bot). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses
-# every job.
-TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"
+# agent, the executor App's bot and, since v2.19.8, the worker App's bot, whose pushes and pull requests are a project's
+# under HQ). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses every job.
+TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot] workspace-worker-9081[bot]}"
 # Accepted writers, per repository (optional): one "owner/repo login" pair a line, in lower case, the login a user's (no
 # [bot]). The job-started check accepts that login as it accepts a trusted account, for a job of that repository alone
 # (GITHUB_REPOSITORY). A missing file means none. The host writes it from a list it reviews (home renders it when it
@@ -64,13 +64,20 @@ if [[ -e "$ACCEPTED_WRITERS_FILE" || -L "$ACCEPTED_WRITERS_FILE" ]]; then
     writers+=("$line")
   done < "$ACCEPTED_WRITERS_FILE"
 fi
-# An accepted writer's code runs as root in the container (sudo, and Docker on build), so no image accepts one unless its
-# profile keeps the containers apart: LXD's port isolation on eth0 (README, "Port isolation keeps the containers apart").
-# Profiles are never overwritten by an install, so a host that made them earlier sets the key before it adds a writer.
-if [[ ${#writers[@]} -gt 0 ]]; then
+# An accepted writer's code runs as root in the container (sudo, and Docker on build), and so does an App bot's (its pushes
+# and pull requests run before any review: v2.19.10), so no image accepts either unless its profile keeps the containers
+# apart: LXD's port isolation on eth0 (README, "Port isolation keeps the containers apart"). Profiles are never overwritten
+# by an install, so a host that made them earlier sets the key before it adds a writer or a bot.
+bots=()
+for actor in "${actors[@]}"; do
+  if [[ "${actor,,}" == *"[bot]" ]]; then bots+=("$actor"); fi
+done
+if [[ ${#writers[@]} -gt 0 || ${#bots[@]} -gt 0 ]]; then
   isolation="$($LXC profile device get "ci-pool-$kind" eth0 security.port_isolation)" || isolation=""
   [[ "$isolation" == true ]] || {
-    echo "ci-pool-image: $ACCEPTED_WRITERS_FILE lists accepted writers, but the profile ci-pool-$kind's eth0 does not set" \
+    if [[ ${#writers[@]} -gt 0 ]]; then why="$ACCEPTED_WRITERS_FILE lists accepted writers"
+    else why="TRUSTED_ACTORS names an App's bot (${bots[*]})"; fi
+    echo "ci-pool-image: $why, but the profile ci-pool-$kind's eth0 does not set" \
       "security.port_isolation=true; set it (lxc profile device set ci-pool-$kind eth0 security.port_isolation=true) first" >&2
     exit 2
   }

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -2552,7 +2553,10 @@ class JobStartedCheckTests(unittest.TestCase):
 
     def test_a_login_like_a_trusted_one_is_refused(self):
         for login in ("cazy00-x", "cazy0", "xcazy00", "cazy00 ", "workspace-executor-2eaa", "*", "[c]azy00", "montadev-sys[bot]",
-                      "workspace-worker-9081", "workspace-worker-9082[bot]", "workspace-worker-9081[bot]x"):
+                      "workspace-worker-9081", "workspace-worker-9082[bot]", "workspace-worker-9081[bot]x",
+                      # "[bot]" is a bracket expression if the hook ever compares unquoted (review rvbac57da5cbd39d1f 2)
+                      "workspace-worker-9081b", "workspace-worker-9081o", "workspace-worker-9081t",
+                      "workspace-executor-2eaab", "workspace-executor-2eaao"):
             with self.subTest(login=login):
                 self.assertRefused(self.run_hook(actor=login), "not a trusted account")
                 self.assertRefused(self.run_hook(triggering=login), "not a trusted account")
@@ -2896,9 +2900,10 @@ class JobStartedCheckTests(unittest.TestCase):
                     r = subprocess.run([BASH, "-e", hook], env=self.env(d), capture_output=True, text=True, timeout=30)
                     self.assertAllowed(r)  # the owner's run never reads it
 
-    def run_host_part(self, d, path, isolation="true", tail="", part=None):
+    def run_host_part(self, d, path, isolation="true", tail="", part=None, actors="cazy00 montadev-sys"):
         """The build's host half that reads the input (to the line before its traps), as root runs it, with a fake `lxc`
-        whose `profile device get` prints `isolation` (None: the call fails). Returns the run and the lxc calls."""
+        whose `profile device get` prints `isolation` (None: the call fails), and `actors` as the trusted list (users
+        alone by default, so that only the writers ask for isolation). Returns the run and the lxc calls."""
         if part is None:
             part = self.image[self.image.index("writers=()\nif [[ -e"):self.image.index("trap 'rc=$?; echo \"ci-pool-image: failed")]
         lxc, log = os.path.join(d, "fake-lxc"), os.path.join(d, "lxc-calls")
@@ -2911,8 +2916,8 @@ class JobStartedCheckTests(unittest.TestCase):
         env = {"PATH": os.environ["PATH"], "ACCEPTED_WRITERS_FILE": path, "LXC": lxc, "LXC_LOG": log}
         if isolation is not None:
             env["ISOLATION"] = isolation
-        r = subprocess.run([BASH, "-c", "set -euo pipefail\nkind=build\n" + part + tail], capture_output=True, text=True,
-                           timeout=30, env=env)
+        r = subprocess.run([BASH, "-c", "set -euo pipefail\nkind=build\nread -ra actors <<<%s\n" % shlex.quote(actors)
+                            + part + tail], capture_output=True, text=True, timeout=30, env=env)
         calls = open(log).read().splitlines() if os.path.exists(log) else []
         return r, calls
 
@@ -2958,6 +2963,29 @@ class JobStartedCheckTests(unittest.TestCase):
                     r, calls = self.run_host_part(d, path, isolation=isolation, tail='echo "went on"\n')
                     self.assertEqual((r.returncode, calls), (0, []), r.stderr)
                     self.assertIn("went on", r.stdout)
+
+    def test_the_build_refuses_an_apps_bot_on_a_profile_without_port_isolation(self):  # review rvbac57da5cbd39d1f 1
+        default = re.search(r'^TRUSTED_ACTORS="\$\{TRUSTED_ACTORS:-([^"}]*)\}"$', self.image, re.M).group(1)
+        get = "profile device get ci-pool-build eth0 security.port_isolation"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ci-pool-accepted-writers")  # missing: no writer
+            for actors in (default, "Cazy00 workspace-executor-2eaa[bot]", "cazy00 Workspace-Worker-9081[BOT]"):
+                for isolation in ("", "false", "1", "TRUE", "true ", None):
+                    with self.subTest(actors=actors, isolation=isolation):
+                        r, calls = self.run_host_part(d, path, isolation=isolation, tail='echo "went on"\n', actors=actors)
+                        self.assertEqual((r.returncode, calls), (2, [get]), r.stderr)
+                        self.assertIn("TRUSTED_ACTORS names an App's bot", r.stderr)
+                        self.assertIn("the profile ci-pool-build's eth0 does not set security.port_isolation=true", r.stderr)
+                        self.assertNotIn("went on", r.stdout)
+                with self.subTest(actors=actors, isolation="true"):
+                    r, calls = self.run_host_part(d, path, isolation="true", tail='echo "went on"\n', actors=actors)
+                    self.assertEqual((r.returncode, calls), (0, [get]), r.stderr)
+                    self.assertIn("went on", r.stdout)
+            for isolation in ("", None):  # users alone and no writer: the profile is not asked
+                with self.subTest(actors="users", isolation=isolation):
+                    r, calls = self.run_host_part(d, path, isolation=isolation, tail='echo "went on"\n',
+                                                  actors="Cazy00 MontaDev-sys")
+                    self.assertEqual((r.returncode, calls), (0, []), r.stderr)
         # before anything is launched or pushed
         self.assertLess(self.image.index("profile device get"), self.image.index('$LXC launch ubuntu:24.04'))
 

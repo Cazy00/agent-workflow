@@ -64,13 +64,20 @@ if [[ -e "$ACCEPTED_WRITERS_FILE" || -L "$ACCEPTED_WRITERS_FILE" ]]; then
     writers+=("$line")
   done < "$ACCEPTED_WRITERS_FILE"
 fi
-# An accepted writer's code runs as root in the container (sudo, and Docker on build), so no image accepts one unless its
-# profile keeps the containers apart: LXD's port isolation on eth0 (README, "Port isolation keeps the containers apart").
-# Profiles are never overwritten by an install, so a host that made them earlier sets the key before it adds a writer.
-if [[ ${#writers[@]} -gt 0 ]]; then
+# An accepted writer's code runs as root in the container (sudo, and Docker on build), and so does an App bot's (its pushes
+# and pull requests run before any review: v2.19.10), so no image accepts either unless its profile keeps the containers
+# apart: LXD's port isolation on eth0 (README, "Port isolation keeps the containers apart"). Profiles are never overwritten
+# by an install, so a host that made them earlier sets the key before it adds a writer or a bot.
+bots=()
+for actor in "${actors[@]}"; do
+  if [[ "${actor,,}" == *"[bot]" ]]; then bots+=("$actor"); fi
+done
+if [[ ${#writers[@]} -gt 0 || ${#bots[@]} -gt 0 ]]; then
   isolation="$($LXC profile device get "ci-pool-$kind" eth0 security.port_isolation)" || isolation=""
   [[ "$isolation" == true ]] || {
-    echo "ci-pool-image: $ACCEPTED_WRITERS_FILE lists accepted writers, but the profile ci-pool-$kind's eth0 does not set" \
+    if [[ ${#writers[@]} -gt 0 ]]; then why="$ACCEPTED_WRITERS_FILE lists accepted writers"
+    else why="TRUSTED_ACTORS names an App's bot (${bots[*]})"; fi
+    echo "ci-pool-image: $why, but the profile ci-pool-$kind's eth0 does not set" \
       "security.port_isolation=true; set it (lxc profile device set ci-pool-$kind eth0 security.port_isolation=true) first" >&2
     exit 2
   }

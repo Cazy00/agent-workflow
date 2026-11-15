@@ -8,9 +8,9 @@ Releases are tags, and the host's release broker makes them (`wf-release`; from 
 
 - **The worker App's bot is no longer a trusted account.** `ci-pool-image`, its tests and the README are byte for byte as at v2.19.7 (`a4a5132a`): `TRUSTED_ACTORS` defaults to `Cazy00 MontaDev-sys workspace-executor-2eaa[bot]`. The host that asked for v2.19.8 undid that change by its own rule: one project's test run on the rebuilt images failed twice, both times in that project's own tests (a date written into a test that has since passed, and a digit scan that matched a random id), and the rule does not weigh causes. Home's broker drops the same login from its `repo_shared` check in the paired change (Cazy00/workspace#829), which pins this release.
 - Because `ci-pool-image` is as at v2.19.7, its inputs' digest is v2.19.7's, so a host that kept its v2.19.7 images and puts them back needs no rebuild.
-- Upgrade: a host reinstalls the pool; it rebuilds both images only if they are not v2.19.7's.
+- Upgrade: a host reinstalls the pool; it rebuilds both images only if they are not v2.19.7's. **A host that rebuilt for v2.19.8 puts its v2.19.7 images back** (repoint `ci-pool-<kind>` at them) rather than rebuilding once: a rebuild would make the v2.19.8 image `ci-pool-<kind>-prev`, and a later rollback to `-prev` would trust the worker App's bot again. If they are gone, rebuild twice, so that `-prev` is not v2.19.8's either.
 
-## v2.19.8
+## v2.19.8 (withdrawn by v2.19.9)
 
 2026-11-15. A patch for hosts that run the CI pool: the job-started check trusts the worker App's bot. Nothing changes for a project, but one the worker App pushes to: its pool jobs now run instead of being killed, and they share the label caps with the owner's jobs.
 

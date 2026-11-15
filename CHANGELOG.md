@@ -2,6 +2,14 @@
 
 Releases are tags, and the host's release broker makes them (`wf-release`; from v2.19.0). After one deep review of the commit that sets the version in `package.json`, the broker tags that commit, creates the release and moves `canary` to it; `stable` follows after a 24 h soak, once the canary project's gate and status runs have passed on it. Nobody types a tag, and no workflow in this repository tags or pushes a ref, which `validator/test/status-workflow.test.js` checks by what a workflow can do (a ref-writing step or `contents: write`), not by file name. The tag ruleset and what the broker tags and signs belong to the host and are described in its docs (the workspace repository's `broker/docs/wf-channels.md`); this repository enforces only that a channel resolves through a signed record (`bin/wf-resolve`), and checks a pin or an entry tag for shape and minimum version. Before v2.19.0 a release was tagged by `.github/workflows/release-tag.yml` when the owner merged the pull request that bumped `package.json`. A project adopts a release only by moving its pin, with `bin/wf-upgrade` from `v2.0.0`, or follows a channel (v2.19.0); a new tag never upgrades a pinned project by itself. What a project must do when it moves to a release is under that release, and `bin/wf-upgrade` lists it from `upgrades.json`.
 
+## v2.19.8
+
+2026-11-15. A patch for hosts that run the CI pool: the job-started check trusts the worker App's bot. Nothing changes for a project.
+
+- **One more trusted account.** `ci-pool-image`'s `TRUSTED_ACTORS` default adds `workspace-worker-9081[bot]`, the bot of the worker App that pushes a project's pieces and opens their pull requests under HQ, so a run it started (a push, its own pull request, or the owner's re-run of either) runs on a pool container instead of being killed at its first step. Home's broker trusts the same login in its `repo_shared` check from the same change (workspace `ci_pool.TRUSTED_BOTS`), as the README asks: the two lists must be one. The fork and `workflow_run` checks apply to it as to every actor; a look-alike login is refused.
+- Tests (`server/ci-runner/test_ci_pool.py`): the bot's push run, its own pull request and the owner's re-run of its run are allowed, case ignored; its pull request from another repository is refused; `workspace-worker-9081`, `workspace-worker-9082[bot]` and `workspace-worker-9081[bot]x` are refused; the default list is written in lower case, one a line, with the bot last.
+- Upgrade: a host reinstalls the pool and rebuilds both images (their inputs' digest covers `ci-pool-image`). A host whose accounts are not home's sets `TRUSTED_ACTORS` as before.
+
 ## v2.19.7
 
 2026-11-12. A patch for hosts that run the CI pool: a job whose runner config fails waits alone, a failure every job shares neither piles up pauses nor bursts calls, and a runner name GitHub still holds no longer blocks a job (I-132). Nothing changes for a project.

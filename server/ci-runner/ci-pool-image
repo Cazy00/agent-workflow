@@ -18,9 +18,9 @@ POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
 TMP_SIZE="${TMP_SIZE:-2G}"
 # The accounts whose runs a pool container runs (the job-started check below), compared ignoring case. They must be the
 # JIT source's trusted accounts; the default is home's, the accounts its broker's repo_shared check trusts (the owner, the
-# agent and the executor App's bot). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses
-# every job.
-TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"
+# agent, the executor App's bot and, since v2.19.8, the worker App's bot, whose pushes and pull requests are a project's
+# under HQ). A host whose accounts differ sets TRUSTED_ACTORS when it builds, or the check refuses every job.
+TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot] workspace-worker-9081[bot]}"
 # Accepted writers, per repository (optional): one "owner/repo login" pair a line, in lower case, the login a user's (no
 # [bot]). The job-started check accepts that login as it accepts a trusted account, for a job of that repository alone
 # (GITHUB_REPOSITORY). A missing file means none. The host writes it from a list it reviews (home renders it when it

@@ -2413,7 +2413,7 @@ class JobStartedCheckTests(unittest.TestCase):
         # The image's list, as the build writes it from the default TRUSTED_ACTORS (lower case, one a line)
         cls.list = os.path.join(cls.dir, "trusted-actors")
         with open(cls.list, "w") as f:
-            f.write("cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\n")
+            f.write("cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\nworkspace-worker-9081[bot]\n")
         # The accepted writers, as the build writes them from its input: one "owner/repo login" a line, in lower case. The
         # last line is one the build would refuse; the check skips it, so it accepts no one.
         cls.writers = os.path.join(cls.dir, "accepted-writers")
@@ -2495,8 +2495,9 @@ class JobStartedCheckTests(unittest.TestCase):
 
     def test_the_build_refuses_a_trusted_list_that_is_empty_or_not_logins(self):
         start, end = 'read -ra actors <<<"$TRUSTED_ACTORS"\n[[', 'alias="ci-pool-$kind"'
-        self.assertIn('TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot]}"', self.image)
-        for good in ("Cazy00 MontaDev-sys workspace-executor-2eaa[bot]", "one", "a-b  c1"):
+        self.assertIn('TRUSTED_ACTORS="${TRUSTED_ACTORS:-Cazy00 MontaDev-sys workspace-executor-2eaa[bot] '
+                      'workspace-worker-9081[bot]}"', self.image)
+        for good in ("Cazy00 MontaDev-sys workspace-executor-2eaa[bot] workspace-worker-9081[bot]", "one", "a-b  c1"):
             with self.subTest(good=good):
                 self.assertEqual(self.build_part(start, end, {"TRUSTED_ACTORS": good}).returncode, 0)
         for bad in ("", "   ", "a;b", "-a", "a-", "a[bot", "a/b", "*", "a b\\c", "$(id)"):
@@ -2512,10 +2513,11 @@ class JobStartedCheckTests(unittest.TestCase):
             part = part.replace("/opt/ci-hooks/trusted-actors", os.path.join(d, "list"))
             open(os.path.join(d, "workspace-executor-2eaab"), "w").close()  # a file the login would match as a glob
             r = subprocess.run([BASH, "-c", "set -euo pipefail\n" + part], cwd=d, capture_output=True, text=True,
-                               env={"PATH": os.environ["PATH"], "TRUSTED_ACTORS": "Cazy00 MontaDev-sys workspace-executor-2eaa[bot]"})
+                               env={"PATH": os.environ["PATH"],
+                                    "TRUSTED_ACTORS": "Cazy00 MontaDev-sys workspace-executor-2eaa[bot] Workspace-Worker-9081[bot]"})
             self.assertEqual(r.returncode, 0, r.stderr)
             with open(os.path.join(d, "list")) as f:
-                self.assertEqual(f.read(), "cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\n")
+                self.assertEqual(f.read(), "cazy00\nmontadev-sys\nworkspace-executor-2eaa[bot]\nworkspace-worker-9081[bot]\n")
 
     def test_the_owners_run_is_allowed(self):
         self.assertAllowed(self.run_hook())
@@ -2525,6 +2527,17 @@ class JobStartedCheckTests(unittest.TestCase):
     def test_the_trusted_accounts_are_matched_ignoring_case(self):
         self.assertAllowed(self.run_hook(actor="MONTADEV-SYS", triggering="cazy00"))
         self.assertAllowed(self.run_hook(actor="Workspace-Executor-2eaa[bot]", triggering="MontaDev-sys"))
+        self.assertAllowed(self.run_hook(actor="WORKSPACE-WORKER-9081[bot]", triggering="workspace-worker-9081[BOT]"))
+
+    def test_the_worker_apps_push_and_own_pull_request_are_allowed(self):  # v2.19.8: a project's pieces under HQ
+        bot = "workspace-worker-9081[bot]"
+        self.assertAllowed(self.run_hook(actor=bot, triggering=bot))
+        self.assertIn("a push run of %s, this attempt by %s: allowed" % (bot, bot), self.run_hook(actor=bot, triggering=bot).stdout)
+        self.assertAllowed(self.run_hook(actor=bot, triggering="Cazy00"))  # the owner re-runs the bot's run
+        self.assertAllowed(self.run_hook(event="pull_request", actor=bot, triggering=bot,
+                                         payload=pull_request("Cazy00/shop", "Cazy00/shop")))
+        self.assertRefused(self.run_hook(event="pull_request", actor=bot, triggering=bot,
+                                         payload=pull_request("stranger/shop", "Cazy00/shop")), "another repository")
 
     def test_the_owners_own_pull_request_is_allowed(self):
         for event in ("pull_request", "pull_request_target"):
@@ -2538,7 +2551,8 @@ class JobStartedCheckTests(unittest.TestCase):
         self.assertRefused(self.run_hook(triggering="stranger"), "GITHUB_TRIGGERING_ACTOR is stranger, not a trusted account")
 
     def test_a_login_like_a_trusted_one_is_refused(self):
-        for login in ("cazy00-x", "cazy0", "xcazy00", "cazy00 ", "workspace-executor-2eaa", "*", "[c]azy00", "montadev-sys[bot]"):
+        for login in ("cazy00-x", "cazy0", "xcazy00", "cazy00 ", "workspace-executor-2eaa", "*", "[c]azy00", "montadev-sys[bot]",
+                      "workspace-worker-9081", "workspace-worker-9082[bot]", "workspace-worker-9081[bot]x"):
             with self.subTest(login=login):
                 self.assertRefused(self.run_hook(actor=login), "not a trusted account")
                 self.assertRefused(self.run_hook(triggering=login), "not a trusted account")

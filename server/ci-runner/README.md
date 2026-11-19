@@ -9,7 +9,7 @@ A project's GitHub Actions jobs can run here instead of on GitHub's metered runn
 
 **What each runner trusts.**
 - **The build container** runs whatever any account that can push sends it: a pull request's tests, and the packages they install, run there as root inside the container.
-- **The gate** runs `wf ci` only for pull requests into the trusted branch; any other pull request's `wf ci` goes to GitHub's runner. It runs `wf-status` and the client page only on the trusted branch. Each job's first step checks the branch name exactly, because GitHub compares names in expressions ignoring case: a branch called `MAIN` would otherwise pass. The client page's dispatch job also runs there for any pull request, but it only runs a fixed `gh workflow run`. On the gate run:
+- **The gate** runs `wf ci` only for pull requests into the trusted branch; any other pull request's `wf ci` goes to GitHub's runner. It runs `wf-status` and the client page only on the trusted branch. Each job's first step checks the branch name exactly, because GitHub compares names in expressions ignoring case: a branch called `MAIN` would otherwise pass. The client page's dispatch job never runs with the gate (v2.19.11): the run it queues is GitHub Actions' own, `github-actions[bot]`, an account the pool does not trust, so no runner would ever take its jobs and the host's JIT source refuses the whole repository while it stays queued (home, 2026-11-19: one such run held a project's CI for over an hour). With the gate on, the client page's 15-minute build shows a pull request's change instead. On the gate run:
   - the workflow files;
   - the validator pinned by the trusted branch's `docs/workflow/config.json` (at the pull request's base commit);
   - that branch's `scripts/wf`.

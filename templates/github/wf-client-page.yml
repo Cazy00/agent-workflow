@@ -1,5 +1,5 @@
 # The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt on
-# trusted-branch pushes, pull request events and a schedule, and deployed from the trusted branch only. Installed only
+# trusted-branch pushes, pull request events (only without the gate runner) and a schedule, and deployed from the trusted branch only. Installed only
 # on request (bin/wf-adopt
 # --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone
 # records word them, and no other record field (no IDs, people, branches or reasons); it grants no authority. A GitHub

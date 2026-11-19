@@ -849,7 +849,8 @@ const expression = (yml, pattern) => {
   const js = text.replace(/\$\{\{\s*|\s*\}\}/g, '').replaceAll('__TRUSTED_BRANCH__', 'main')
     .replace(/!=/g, '!==').replace(/([^!=])==/g, '$1===')
     .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`)
-    .replace(/\bvars\.(\w+)/g, 'ctx.vars.$1');
+    // GitHub compares strings ignoring case (review rv1cf543db3062b4ff F3); every literal compared with a variable is lower case.
+    .replace(/\bvars\.(\w+)/g, 'String(ctx.vars.$1 ?? "").toLowerCase()');
   return ctx => new Function('ctx', `return (${js});`)({ vars: { WF_GATE: '' }, ...ctx });
 };
 test('each GitHub event runs the right job of the client page workflow', () => {
@@ -882,6 +883,7 @@ test('each GitHub event runs the right job of the client page workflow', () => {
     ['pull request opened, gate runner', { ...pr('opened'), vars: { WF_GATE: 'on' } }, 'none'],
     ['pull request marked ready, gate runner', { ...pr('ready_for_review'), vars: { WF_GATE: 'on' } }, 'none'],
     ['pull request closed without merging, gate runner', { ...pr('closed'), vars: { WF_GATE: 'on' } }, 'none'],
+    ['pull request opened, gate runner switched on in capitals', { ...pr('opened'), vars: { WF_GATE: 'ON' } }, 'none'],
     ['pull request opened, gate switch set but off', { ...pr('opened'), vars: { WF_GATE: 'off' } }, 'dispatch'],
   ];
   for (const [name, ctx, expected] of cases) {

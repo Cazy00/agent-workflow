@@ -1,5 +1,5 @@
 # The client page on GitHub Pages: `scripts/wf status --client`, the project's progress in plain words, rebuilt on
-# trusted-branch pushes, pull request events and a schedule, and deployed from the trusted branch only. Installed only
+# trusted-branch pushes, pull request events (only without the gate runner) and a schedule, and deployed from the trusted branch only. Installed only
 # on request (bin/wf-adopt
 # --client-page); delete this file to stop publishing. It shows stage titles, outcomes and progress as the milestone
 # records word them, and no other record field (no IDs, people, branches or reasons); it grants no authority. A GitHub
@@ -11,8 +11,8 @@
 # source (Settings, Pages), or: gh api -X POST repos/OWNER/REPO/pages -f build_type=workflow
 # Its jobs run on GitHub's runner unless the repository variable WF_GATE is `on`: then on the gate runner, labelled `wf-gate` (MAINT-0017).
 name: wf-client-page
-# A push to the trusted branch rebuilds. A pull request opening, closing unmerged or changing draft state asks for a
-# rebuild there, since GitHub Pages deploys only from the trusted branch. Work moving on other branches shows at the
+# A push to the trusted branch rebuilds. Without the gate runner, a pull request opening, closing unmerged or changing
+# draft state asks for a rebuild there, since GitHub Pages deploys only from the trusted branch. Work moving on other branches shows at the
 # next build: every 15 minutes with the project's own gate runner, where a run costs nothing, otherwise daily.
 # (MAINT-0017; MAINT-0014 rebuilt on every push to every branch, which cost more GitHub minutes than wf ci.) The build
 # reads the trusted branch's records and plan, then the parts moving on the branches (`--live`).
@@ -38,7 +38,10 @@ jobs:
   dispatch:
     # A pull-request run only dispatches (Pages refuses a deploy from it, MAINT-0015); a merged one does nothing, since
     # the merge's push to the trusted branch rebuilds. A fork's pull request and Dependabot get a read-only token.
-    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork
+    # Never with the gate runner (v2.19.11): the 15-minute build already shows the change, and a run this job queues is
+    # GitHub Actions' own (github-actions[bot]), which a CI pool that serves only its trusted accounts' runs never takes,
+    # so the run stays queued and the pool refuses the whole repository while it waits (server/ci-runner/README.md).
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork && vars.WF_GATE != 'on'
     runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     name: client page dispatch
     timeout-minutes: 2

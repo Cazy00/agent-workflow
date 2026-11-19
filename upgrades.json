@@ -272,5 +272,8 @@
   },
   "v2.19.10": {
     "remove_config": []
+  },
+  "v2.19.11": {
+    "remove_config": []
   }
 }

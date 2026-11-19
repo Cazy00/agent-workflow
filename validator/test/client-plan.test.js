@@ -849,7 +849,8 @@ const expression = (yml, pattern) => {
   const js = text.replace(/\$\{\{\s*|\s*\}\}/g, '').replaceAll('__TRUSTED_BRANCH__', 'main')
     .replace(/!=/g, '!==').replace(/([^!=])==/g, '$1===')
     .replace(/github(\.[A-Za-z_.]+)/g, (_, p) => `ctx${p.replace(/\./g, '?.')}`)
-    .replace(/\bvars\.(\w+)/g, 'ctx.vars.$1');
+    // GitHub compares strings ignoring case (review rv1cf543db3062b4ff F3); every literal compared with a variable is lower case.
+    .replace(/\bvars\.(\w+)/g, 'String(ctx.vars.$1 ?? "").toLowerCase()');
   return ctx => new Function('ctx', `return (${js});`)({ vars: { WF_GATE: '' }, ...ctx });
 };
 test('each GitHub event runs the right job of the client page workflow', () => {
@@ -877,6 +878,13 @@ test('each GitHub event runs the right job of the client page workflow', () => {
     ['pull request merged (trusted ref)', pr('closed', { merged: true, ref: 'refs/heads/main' }), 'none'],
     ['fork pull request', pr('opened', { fork: true }), 'none'],
     ['Dependabot push', { event_name: 'push', ref: 'refs/heads/dependabot/npm', actor: 'dependabot[bot]', event: {} }, 'none'],
+    // v2.19.11: with the gate runner, no pull request event dispatches. The dispatched run would be github-actions[bot]'s,
+    // which the CI pool never runs, and the pool refuses the whole repository while it stays queued (home, 2026-11-19).
+    ['pull request opened, gate runner', { ...pr('opened'), vars: { WF_GATE: 'on' } }, 'none'],
+    ['pull request marked ready, gate runner', { ...pr('ready_for_review'), vars: { WF_GATE: 'on' } }, 'none'],
+    ['pull request closed without merging, gate runner', { ...pr('closed'), vars: { WF_GATE: 'on' } }, 'none'],
+    ['pull request opened, gate runner switched on in capitals', { ...pr('opened'), vars: { WF_GATE: 'ON' } }, 'none'],
+    ['pull request opened, gate switch set but off', { ...pr('opened'), vars: { WF_GATE: 'off' } }, 'dispatch'],
   ];
   for (const [name, ctx, expected] of cases) {
     const ran = [dispatch(ctx) && 'dispatch', build(ctx) && 'build'].filter(Boolean);
@@ -894,4 +902,17 @@ test('each GitHub event runs the right job of the client page workflow', () => {
   assert.notEqual(group(tick), 'build', 'a tick on GitHub\'s runner stays out of the build group');
   assert.equal(group({ ...tick, vars: { WF_GATE: 'on' } }), 'build', 'a tick on the gate runner builds');
   for (const ctx of [pr('closed', { merged: true }), pr('closed', { merged: true, ref: 'refs/heads/main' }), pr('opened'), { event_name: 'push', ref: 'refs/heads/claude/T-0003' }]) assert.notEqual(group(ctx), 'build', `${ctx.event_name} ${ctx.ref}`);
+});
+
+// v2.19.11: the shared entry's dispatch condition is the copied file's, so a project on a channel never queues a
+// github-actions[bot] run on the gate runner either.
+test('the shared client page entry dispatches exactly when the copied file does', () => {
+  const copied = fs.readFileSync(path.join(root, 'templates/github/wf-client-page.yml'), 'utf8');
+  const entry = fs.readFileSync(path.join(root, '.github/workflows/wf-client-page.yml'), 'utf8');
+  const condition = /\n  dispatch:\n(?:\s+#.*\n)*\s+if: (.+)/;
+  assert.equal(entry.match(condition)?.[1], copied.match(condition)?.[1]);
+  const dispatch = expression(entry, condition);
+  const pr = { event_name: 'pull_request', ref: 'refs/pull/7/merge', actor: 'alice', event: { action: 'opened', pull_request: { merged: false, head: { repo: { fork: false } } } } };
+  assert.ok(dispatch(pr), 'dispatches without the gate runner');
+  assert.ok(!dispatch({ ...pr, vars: { WF_GATE: 'on' } }), 'never with the gate runner');
 });

@@ -1,7 +1,8 @@
 # The client page on GitHub Pages, shared (v2.19.0, docs/proposals/2026-11-07-central-release-channel.md): the reusable
 # entry a project's thin caller (templates/github/channel/wf-client-page.yml) names at an immutable release tag. It never
 # runs on this repository: its only trigger is workflow_call. It builds and deploys only from the trusted branch and never
-# runs candidate code; a pull-request event only asks for a rebuild there (Pages refuses a deploy from it, MAINT-0015).
+# runs candidate code; a pull-request event only asks for a rebuild there, and only without the gate runner (Pages refuses
+# a deploy from it, MAINT-0015).
 #
 # Like the gate and status entries (whose resolve step it repeats word for word: npm test checks that), it resolves the
 # trusted branch's config with the entry's own bin/wf-resolve and renders `wf status --client --live` with the RESOLVED revision's validator. The page shows stage
@@ -33,8 +34,9 @@ on:
 jobs:
   dispatch:
     # A pull-request run only asks for a rebuild on the trusted branch; a merged one does nothing, since the merge's push
-    # rebuilds. A fork's pull request and Dependabot get a read-only token.
-    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork
+    # rebuilds. A fork's pull request and Dependabot get a read-only token. Never with the gate runner (v2.19.11), as in
+    # the copied file: the 15-minute build shows the change, and the run it would queue is github-actions[bot]'s.
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && !github.event.pull_request.merged && !github.event.pull_request.head.repo.fork && vars.WF_GATE != 'on'
     runs-on: ${{ vars.WF_GATE == 'on' && 'wf-gate' || 'ubuntu-latest' }}
     name: dispatch
     timeout-minutes: 2
